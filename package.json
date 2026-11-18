@@ -18,7 +18,7 @@
     "resedit": "^2.0.3"
   },
   "build": {
-    "appId": "com.ruhwellmed.messenger",
+    "appId": "com.ruhwellmed.frontdesk",
     "productName": "Ruhwell Front Desk",
     "directories": {
       "output": "dist",
@@ -85,13 +85,17 @@
       "artifactName": "RuhwellFrontDesk-Setup.exe",
       "shortcutName": "Ruhwell Front Desk",
       "uninstallDisplayName": "Ruhwell Front Desk",
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "guid": "69544c5d-65b6-5e2d-83c5-3a7d2305f7d4"
     },
     "publish": [
       {
         "provider": "generic",
         "url": "https://raw.githubusercontent.com/almasbaigg/ruhwell-front-desk-updates/main/"
       }
+    ],
+    "electronLanguages": [
+      "en-US"
     ]
   },
   "dependencies": {

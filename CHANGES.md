@@ -89,3 +89,7 @@
 
 ## 1.3.2
 - First release built for Windows and Mac together from the same code.
+
+### Also in 1.3.2
+- App is ~40 MB smaller: only the English language pack is included (Electron ships 50+ by default).
+- Name: app ID is now com.ruhwellmed.frontdesk; Windows keeps its existing install key so updates still replace the app in place. Remaining "Messenger" mentions are only the one-time data carry-over from the old name.

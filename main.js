@@ -540,7 +540,7 @@ app.whenReady().then(() => {
   migrations.run();
   if (process.platform === 'win32') {
     // Windows names notifications after a Start-menu shortcut with the same app ID; without one it shows
-    // the raw ID ("com.ruhwellmed.messenger"). Keep a shortcut so they read "Ruhwell Front Desk" with our icon.
+    // the raw app ID. Keep a shortcut so they read "Ruhwell Front Desk" with our icon.
     const AUMID = 'RuhwellMed.FrontDesk';
     app.setAppUserModelId(AUMID);
     if (app.isPackaged) {

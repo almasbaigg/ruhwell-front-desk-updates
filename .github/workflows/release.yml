@@ -20,7 +20,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: win, path: "dist/RuhwellFrontDesk-Setup.exe\ndist/latest.yml" }
   mac:
-    runs-on: macos-latest
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
