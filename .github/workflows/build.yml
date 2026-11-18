@@ -1,0 +1,45 @@
+name: Build apps
+# Every push builds Windows only. Mac builds run only when asked: Actions → Build apps → Run workflow → tick "Mac".
+on:
+  # builds now run in the public updates repo (Release workflow)
+  workflow_dispatch:
+    inputs:
+      mac: { description: 'Also build the Mac version', type: boolean, default: true }
+permissions: { contents: write }
+jobs:
+  build:
+    strategy: { fail-fast: false, matrix: { os: "${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.mac && '[\"windows-latest\",\"macos-15-intel\",\"macos-14\"]' || '[\"windows-latest\"]') }}" } }   # two Mac runner types (whichever GitHub has free first publishes; each builds both Mac versions)
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npm test   # a release is only published if every check passes
+      - if: matrix.os == 'windows-latest'
+        run: npx electron-builder --win nsis --x64 --publish never
+      - if: runner.os == 'macOS'
+        run: npx electron-builder --mac dmg --arm64 --x64 --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RuhwellFrontDesk-${{ matrix.os }}
+          path: |
+            dist/*.exe
+            dist/*.dmg
+            dist/*.blockmap
+            dist/latest*.yml
+      # Publish the downloads under Releases (right sidebar of the repo page).
+      - name: Publish release files
+        shell: bash
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          V=$(node -p "require('./package.json').version")
+          gh release view "v$V" >/dev/null 2>&1 || gh release create "v$V" --title "Ruhwell Front Desk $V" --notes "Mac: open the arm64 .dmg on Apple Silicon (M1 or newer) or x64 on Intel. Windows: RuhwellFrontDesk.exe." || true
+          gh release upload "v$V" dist/*.dmg dist/latest-mac.yml --clobber 2>/dev/null || gh release upload "v$V" dist/*.exe dist/latest.yml dist/*.blockmap --clobber
+          # This is the only release: older builds are removed (with their tags).
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            gh release edit "v$V" --title "Ruhwell Front Desk $V" --notes "Windows: RuhwellFrontDesk.exe. Mac: RuhwellFrontDesk-arm64.dmg (Apple Silicon) or RuhwellFrontDesk-x64.dmg (Intel); after installing, run First open on Mac once." || true
+            for t in $(gh release list --limit 100 --json tagName -q '.[].tagName'); do
+              if [ "$t" != "v$V" ]; then gh release delete "$t" --yes --cleanup-tag || true; fi
+            done
+          fi

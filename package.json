@@ -1,0 +1,100 @@
+{
+  "name": "ruhwell-front-desk",
+  "productName": "Ruhwell Front Desk",
+  "version": "1.3.2",
+  "description": "Ruhwell Med front desk: visits, alerts and patient messaging",
+  "main": "main.js",
+  "author": "Ruhwell Medical PLLC",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win portable --x64",
+    "dist:mac": "electron-builder --mac dmg --arm64 --x64",
+    "test": "node test/data.test.js && node test/status.test.js && node test/ringrx.test.js && node test/alerts.test.js"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "resedit": "^2.0.3"
+  },
+  "build": {
+    "appId": "com.ruhwellmed.messenger",
+    "productName": "Ruhwell Front Desk",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "rxnt-reader.js",
+      "ringrx.js",
+      "store.js",
+      "renderer/**",
+      "assets/**",
+      "watcher.js",
+      "migrations.js",
+      "comms.js",
+      "gmail.js",
+      "checklist.js",
+      "rxtasks.js",
+      "backups.js",
+      "updater.js"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "nsis"
+      ],
+      "signAndEditExecutable": false
+    },
+    "mac": {
+      "icon": "build/icon.png",
+      "category": "public.app-category.medical",
+      "identity": "-",
+      "artifactName": "RuhwellFrontDesk-${arch}.dmg"
+    },
+    "afterPack": "build/afterPack.js",
+    "dmg": {
+      "contents": [
+        {
+          "x": 140,
+          "y": 170
+        },
+        {
+          "x": 420,
+          "y": 170,
+          "type": "link",
+          "path": "/Applications"
+        },
+        {
+          "x": 280,
+          "y": 330,
+          "type": "file",
+          "path": "build/First open on Mac.command"
+        }
+      ],
+      "window": {
+        "width": 560,
+        "height": 440
+      }
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "RuhwellFrontDesk-Setup.exe",
+      "shortcutName": "Ruhwell Front Desk",
+      "uninstallDisplayName": "Ruhwell Front Desk",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://raw.githubusercontent.com/almasbaigg/ruhwell-front-desk-updates/main/"
+      }
+    ]
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
+  }
+}

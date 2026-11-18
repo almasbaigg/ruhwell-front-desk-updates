@@ -1,0 +1,51 @@
+name: Release
+# Runs in the public ruhwell-front-desk-updates repo (branch "source").
+# Builds Windows and Mac from the SAME commit and version. Nothing is published unless BOTH succeed,
+# so the PC and the Mac always get the identical version.
+on:
+  push: { branches: [source] }
+  workflow_dispatch:
+permissions: { contents: write }
+concurrency: { group: release, cancel-in-progress: false }
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npm test
+      - run: npx electron-builder --win nsis --x64 --publish never
+      - uses: actions/upload-artifact@v4
+        with: { name: win, path: "dist/RuhwellFrontDesk-Setup.exe\ndist/latest.yml" }
+  mac:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npm test
+      - run: npx electron-builder --mac dmg --arm64 --x64 --publish never
+      - uses: actions/upload-artifact@v4
+        with: { name: mac, path: "dist/*.dmg\ndist/latest-mac.yml" }
+  publish:
+    needs: [windows, mac]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: main }
+      - uses: actions/download-artifact@v4
+        with: { path: out, merge-multiple: true }
+      - name: Release (installers) + update feed (main branch)
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          V=$(grep -m1 '^version:' out/latest.yml | awk '{print $2}')
+          M=$(grep -m1 '^version:' out/latest-mac.yml | awk '{print $2}')
+          [ "$V" = "$M" ] || { echo "Version mismatch $V vs $M"; exit 1; }
+          gh release create "v$V" out/* --title "Ruhwell Front Desk $V" --notes "Windows: RuhwellFrontDesk-Setup.exe · Mac: RuhwellFrontDesk-arm64.dmg (Apple Silicon) or -x64.dmg (Intel)" --latest || gh release upload "v$V" out/* --clobber
+          cp out/RuhwellFrontDesk-Setup.exe out/latest.yml out/latest-mac.yml .
+          git config user.name "release-bot"; git config user.email "release-bot@users.noreply.github.com"
+          git add RuhwellFrontDesk-Setup.exe latest.yml latest-mac.yml
+          git commit -m "$V" && git push origin main || echo "feed already current"
