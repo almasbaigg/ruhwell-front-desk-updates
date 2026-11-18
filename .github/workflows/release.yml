@@ -3,7 +3,7 @@ name: Release
 # Builds Windows and Mac from the SAME commit and version. Nothing is published unless BOTH succeed,
 # so the PC and the Mac always get the identical version.
 on:
-  push: { branches: [source] }
+  # Only when Almas asks for a build: Actions → Release → Run workflow (or Claude dispatches it).
   workflow_dispatch:
 permissions: { contents: write }
 concurrency: { group: release, cancel-in-progress: false }

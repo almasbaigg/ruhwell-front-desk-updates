@@ -22,12 +22,17 @@ function renderTextList() {
   const pick = { needs: (t) => t.needs && t.last, inbox: (t) => t.lastIn, sent: (t) => t.lastSent }[txFilter];
   const match = (t) => !q || (t.who.name || '').toLowerCase().includes(q) || (qd.length >= 3 && t.phone.includes(qd));
   const list = txData.filter((t) => pick(t) && match(t)).sort((a, b) => new Date(pick(b).at) - new Date(pick(a).at));
-  $('tx-list').innerHTML = list.length ? list.map((t) => { const m = txFilter === 'needs' ? t.last : pick(t); return `
+  // Grouped by day so a long list reads in chunks; in Needs reply, how long they've waited is colored by urgency.
+  let lastDay = '';
+  $('tx-list').innerHTML = list.length ? list.map((t) => { const m = txFilter === 'needs' ? t.last : pick(t);
+    const day = dayLabel(m.at), sep = day !== lastDay ? `<p class="list-day">${esc(day)}</p>` : ''; lastDay = day;
+    const h = hoursSince(m.at), wait = txFilter === 'needs' && m.inbound ? `<span class="wait u-${h >= 4 ? 'red' : h >= 1 ? 'amber' : 'green'}">${esc(waitLabel(m.at))}</span>` : `<span class="when">${esc(shortWhen(m.at))}</span>`;
+    return `${sep}
     <button class="trow-btn ${txOpen === t.phone ? 'active' : ''} ${t.unread ? 'unread' : ''}" data-p="${t.phone}">
       <span class="avatar ${t.who.kind === 'unknown' ? 'unk' : ''}">${whoInitials(t.who)}</span>
-      <span class="mid"><b>${esc(whoName(t.who, t.phone))}</b><span class="prev">${txFilter === 'sent' || (txFilter === 'needs' && !t.last.inbound) ? 'You: ' : ''}${esc(String(m.body || '').slice(0, 70))}</span></span>
-      <span class="when">${esc(shortWhen(m.at))}${t.unread ? '<i></i>' : ''}</span>
-    </button>`; }).join('') : `<p class="muted small" style="padding:12px">${{ needs: 'Nothing waiting for a reply.', inbox: 'No texts received in this range.', sent: 'Nothing sent in this range.' }[txFilter]}</p>`;
+      <span class="mid"><b>${esc(whoName(t.who, t.phone))}${t.unread ? '<i class="dot-new"></i>' : ''}</b><span class="prev">${txFilter === 'sent' || (txFilter === 'needs' && !t.last.inbound) ? 'You: ' : ''}${esc(String(m.body || '').slice(0, 60))}</span></span>
+      ${wait}
+    </button>`; }).join('') : `<div class="all-clear small-clear">${I.check}<b>${{ needs: 'Nothing waiting for a reply', inbox: 'No texts received in this range', sent: 'Nothing sent in this range' }[txFilter]}</b></div>`;
   $('tx-list').querySelectorAll('.trow-btn').forEach((b) => (b.onclick = () => openThread(b.dataset.p)));
 }
 
@@ -56,7 +61,7 @@ async function openThread(phone, keepDraft) {
     <div class="convo-body" id="tx-body">${bubbles || '<p class="muted small center-text" style="margin-top:30px">No texts yet.</p>'}</div>
     ${rec && rec.dnt ? '<div class="convo-foot muted small">Marked do not text.</div>' : `<div class="convo-foot" id="tx-comp">${composerHTML(p, { rows: 3, placeholder: 'Write a reply…' })}<div class="row-gap foot-actions"><span class="from-chip">${sendFrom ? `${I.phone}From ${esc(fmtPhone(sendFrom))}` : ''}</span><span style="flex:1"></span><button class="btn primary" id="tx-send">${I.send}Send</button></div></div>`}`;
   const body = $('tx-body'); body.scrollTop = body.scrollHeight;
-  if ($('tx-done')) $('tx-done').onclick = async () => { await window.api.markDone('t', phone); toast('Marked done'); loadTexts(true); };
+  if ($('tx-done')) $('tx-done').onclick = async () => { await window.api.markDone('t', phone); bumpDone(); toast('Marked done'); loadTexts(true); };
   if ($('tx-patient')) $('tx-patient').onclick = () => openPatient(rec);
   if ($('tx-who')) $('tx-who').onclick = () => whoIsThis(phone, () => loadTexts(true));
   if ($('tx-comp')) {
@@ -64,7 +69,7 @@ async function openThread(phone, keepDraft) {
     bindComposer($('tx-comp'), p, rebind);
     $('tx-send').onclick = () => {
       if (!finalMessage(p)) return toast('Write a message first.');
-      confirmAndSend([itemFor(p)], async () => { p.text = ''; await window.api.markDone('t', phone); window.api.commsSync().then(() => loadTexts(true)); history = await window.api.history(); loadTexts(true); });
+      confirmAndSend([itemFor(p)], async () => { p.text = ''; await window.api.markDone('t', phone); bumpDone(); window.api.commsSync().then(() => loadTexts(true)); history = await window.api.history(); loadTexts(true); });
     };
   }
 }
@@ -109,3 +114,6 @@ function linkToPatient(phone, after) {
 document.querySelectorAll('#tx-filter button').forEach((b) => (b.onclick = () => { txFilter = b.dataset.f; document.querySelectorAll('#tx-filter button').forEach((x) => x.classList.toggle('on', x === b)); renderTextList(); }));
 $('tx-range').onchange = () => loadTexts(true);
 $('tx-search').oninput = renderTextList;
+
+// A notification click lands on the exact conversation.
+window.api.onOpenThread(async (phone) => { if (!phone) return; go('texts'); await loadTexts(true); openThread(phone); });

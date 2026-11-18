@@ -335,7 +335,7 @@ const RX_DASH = 'https://app2.rxnt.com/ehrv9/legacy/prescriberDashboard#/dashboa
 const RX_TABS = [['Pending', 'pending'], ['Pharmacy Requests', 'refill'], ['Recent', 'sent'], ['Voided', 'voided']];
 const EHR_DASH = 'https://app2.rxnt.com/ehrv9/dashboard';
 // Counts from the EHR dashboard tiles (number above its label).
-const DASH_LABELS = { 'Sent': 'sent', 'Voided': 'voided', 'Failed': 'failed', 'Pending': 'pending', 'Pharmacy Request': 'refill', 'Labs': 'labs', 'Unsigned Encounters': 'unsigned', 'Patient Tasks': 'tasks' };
+const DASH_LABELS = { 'Sent': 'sent', 'Voided': 'voided', 'Failed': 'failed', 'Pending': 'pending', 'Pharmacy Request': 'refill', 'Labs': 'labs', 'Unsigned Encounters': 'unsigned', 'Patient Tasks': 'tasks', 'Documents': 'documents', 'Referrals': 'referrals', 'Awaiting Billing': 'awaiting' };
 function readDashCounts(labels, anchor) {
   if (/auth\.rxnt\.com/.test(location.href)) return { state: 'login' };
   const lines = (document.body.innerText || '').split('\n').map((x) => x.trim()).filter(Boolean);
@@ -450,9 +450,10 @@ async function readPending(win) {
       }
     }
   }
-  // Billing (Maria's part): encounters not yet billed, from RxNT's Billing dashboard.
+  // Billing: the biller's unbilled queue (information) and patient payments not yet posted to a visit (Maria's part).
+  let payments = null;
   try {
-    const B = { 'Unbilled Encounters': 'unbilled' };
+    const B = { 'Unbilled Encounters': 'unbilled', 'Unposted Patient Payments': 'unposted', 'Pending Statements': 'statements' };
     await win.loadURL('https://app2.rxnt.com/BillingV2/#/').catch(() => {});
     let b = await dashCounts(win, 15000, B, 'Unbilled Encounters');
     if (b.state === 'timeout' && !win.isDestroyed()) {
@@ -460,9 +461,31 @@ async function readPending(win) {
       for (let i = 0; i < 20 && !win.isDestroyed(); i++) { await sleep(600); if ((await call(win, clickCard, 'Billing')) === true) break; }
       b = await dashCounts(win, 20000, B, 'Unbilled Encounters');
     }
-    if (b.state === 'ready') Object.assign(counts, b.counts);
+    if (b.state === 'ready') {
+      Object.assign(counts, b.counts);
+      if (counts.unposted > 0) payments = await readPayments(win);
+    }
   } catch {}
-  return { items, counts };
+  return { items, counts, payments };
+}
+
+// Unposted patient payments (card charged, not yet applied to a visit). Read from RxNT Billing's grid.
+// Deep links bounce to the dashboard, so we go there first and then switch the page in place.
+function readPaymentRows() {
+  const rows = [...document.querySelectorAll('tr.dx-data-row')];
+  if (!rows.length) return null;
+  const head = [...document.querySelectorAll('.dx-header-row td')].map((t) => t.innerText.trim());
+  const col = (n) => head.indexOf(n);
+  return rows.map((r) => { const c = [...r.cells].map((x) => x.innerText.trim()); return { id: c[col('Payment #')], patient: c[col('Patient')], date: c[col('Payment Date')], method: c[col('Method')], amount: Number(String(c[col('Payment Amount')] || '').replace(/[^0-9.]/g, '')) || 0 }; });
+}
+async function readPayments(win) {
+  await call(win, () => { location.hash = '#/searchpatientpayments'; });
+  for (let i = 0; i < 20 && !win.isDestroyed(); i++) {
+    await sleep(700);
+    const rows = await call(win, readPaymentRows);
+    if (rows && rows.length) return rows.map((p) => ({ ...p, at: p.date ? new Date(p.date).toISOString() : null }));
+  }
+  return null;
 }
 
 // One read in a throwaway hidden window, capped at 150 seconds.

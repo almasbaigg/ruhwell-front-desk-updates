@@ -50,25 +50,56 @@ async function paintHealth() {
   set('ringrx', st.ringrx, (st.messages || {}).error === 'failed', (st.messages || {}).at);
   set('gmail', !!G.connected, !!G.error, G.at, 's-gmail-connect');
 }
+// Templates: a compact list. Click a row to edit it in place; tap a chip to insert a placeholder;
+// the preview shows exactly what a sample patient would get. Delete sits in a menu with a confirm.
+let tplOpen = null;
+const AUD_LABEL = Object.fromEntries(AUD);
+const CHIPS = [['{first}', 'First name'], ['{last}', 'Last name'], ['{date}', 'Visit date'], ['{time}', 'Visit time'], ['{slots}', 'Open times'], ['{review_link}', 'Review link']];
+const SAMPLE = () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(10, 30, 0, 0); return { first: 'Jordan', greet: 'Jordan', last: 'Sample', start: d.toISOString(), slots: 'Mon 9:00 AM, Tue 2:30 PM' }; };
 function renderTemplates() {
-  $('t-list').innerHTML = draft.templates.map((t, i) => `
-    <div class="tpl" data-i="${i}">
-      <div class="tpl-top"><input type="text" class="t-name" value="${esc(t.name)}" placeholder="Template name">
-        <select class="t-aud" title="Where this template is offered">${AUD.map(([k, l]) => `<option value="${k}" ${audienceOf(t) === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
-        <label class="radio" title="Pre-filled for checked-in patients"><input type="radio" name="deftpl" ${draft.defaultTemplate === t.id ? 'checked' : ''}>Default</label>
-        <button class="btn ghost t-del">Delete</button></div>
-      <textarea class="t-text" rows="5">${esc(t.text)}</textarea>
-    </div>`).join('') || '<p class="muted small" style="margin-top:8px">No templates yet.</p>';
+  $('t-list').innerHTML = draft.templates.map((t, i) => {
+    const open = tplOpen === t.id, isDef = draft.defaultTemplate === t.id;
+    return `<div class="tpl ${open ? 'open' : ''}" data-i="${i}">
+      <button class="tpl-row" type="button"><b>${esc(t.name || 'Untitled')}</b>${isDef ? '<span class="pill">★ Default</span>' : ''}<span class="tpl-aud">${esc(AUD_LABEL[audienceOf(t)] || '')}</span><span class="tpl-prev">${esc(String(t.text || '').split('\n')[0].slice(0, 90))}</span><span class="chev"></span></button>
+      ${open ? `<div class="tpl-edit">
+        <div class="tpl-top"><input type="text" class="t-name" value="${esc(t.name)}" placeholder="Template name">
+          <select class="t-aud" title="Where this template is offered">${AUD.map(([k, l]) => `<option value="${k}" ${audienceOf(t) === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+          <label class="radio" title="Pre-filled for checked-in patients"><input type="radio" name="deftpl" ${isDef ? 'checked' : ''}>Default</label>
+          <button class="icon-btn t-more" type="button" title="More"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button></div>
+        <div class="chips">${CHIPS.map(([k, l]) => `<button type="button" class="chip" data-k="${k}">+ ${l}</button>`).join('')}</div>
+        <textarea class="t-text" rows="4">${esc(t.text)}</textarea>
+        <div class="tpl-preview"><span class="muted small">Preview</span><p>${esc(withSig(fill(t.text, SAMPLE())))}</p></div>
+      </div>` : ''}
+    </div>`; }).join('') || '<p class="muted small" style="margin-top:8px">No templates yet.</p>';
   $('t-list').querySelectorAll('.tpl').forEach((el) => {
     const t = draft.templates[+el.dataset.i];
-    el.querySelector('.t-name').oninput = (e) => (t.name = e.target.value);
-    el.querySelector('.t-text').oninput = (e) => (t.text = e.target.value);
-    el.querySelector('.t-aud').onchange = (e) => { t.audience = e.target.value; delete t.seenOnly; };
-    el.querySelector('input[type=radio]').onchange = () => (draft.defaultTemplate = t.id);
-    el.querySelector('.t-del').onclick = () => { draft.templates.splice(+el.dataset.i, 1); if (draft.defaultTemplate === t.id) draft.defaultTemplate = draft.templates[0]?.id || null; renderTemplates(); };
+    el.querySelector('.tpl-row').onclick = () => { tplOpen = tplOpen === t.id ? null : t.id; renderTemplates(); };
+    if (tplOpen !== t.id) return;
+    const ta = el.querySelector('.t-text'), prev = el.querySelector('.tpl-preview p');
+    const repaint = () => { prev.textContent = withSig(fill(t.text, SAMPLE())); el.querySelector('.tpl-prev').textContent = String(t.text || '').split('\n')[0].slice(0, 90); };
+    el.querySelector('.t-name').oninput = (e) => { t.name = e.target.value; el.querySelector('.tpl-row b').textContent = t.name || 'Untitled'; };
+    ta.oninput = (e) => { t.text = e.target.value; repaint(); };
+    el.querySelector('.t-aud').onchange = (e) => { t.audience = e.target.value; delete t.seenOnly; el.querySelector('.tpl-aud').textContent = AUD_LABEL[t.audience]; };
+    el.querySelector('input[type=radio]').onchange = () => { draft.defaultTemplate = t.id; renderTemplates(); };
+    el.querySelectorAll('.chip').forEach((c) => (c.onclick = () => {
+      const pos = ta.selectionStart ?? ta.value.length; ta.value = ta.value.slice(0, pos) + c.dataset.k + ta.value.slice(ta.selectionEnd ?? pos);
+      ta.focus(); ta.selectionStart = ta.selectionEnd = pos + c.dataset.k.length; t.text = ta.value; repaint();
+    }));
+    el.querySelector('.t-more').onclick = (e) => {
+      const P = $('popover'), r = e.currentTarget.getBoundingClientRect();
+      P.innerHTML = '<div class="menu"><button data-a="dup"><i></i>Duplicate</button><hr><button data-a="del" class="danger"><i></i>Delete template</button></div>';
+      P.style.top = `${r.bottom + 6}px`; P.style.left = `${r.right - 190}px`; P.style.width = '190px'; P.classList.remove('hidden');
+      P.querySelector('[data-a="dup"]').onclick = () => { hidePopover(); const c = { ...t, id: 't' + Date.now(), name: t.name + ' (copy)' }; draft.templates.splice(+el.dataset.i + 1, 0, c); tplOpen = c.id; renderTemplates(); };
+      P.querySelector('[data-a="del"]').onclick = () => {
+        hidePopover();
+        openModal(`<h2>Delete “${esc(t.name)}”?</h2><p class="muted">This takes effect when you press Save changes.</p><div class="actions"><button class="btn" id="td-no">Keep it</button><button class="btn danger" id="td-yes">Delete</button></div>`);
+        $('td-no').onclick = closeModal;
+        $('td-yes').onclick = () => { closeModal(); draft.templates.splice(+el.dataset.i, 1); if (draft.defaultTemplate === t.id) draft.defaultTemplate = draft.templates[0]?.id || null; tplOpen = null; renderTemplates(); };
+      };
+    };
   });
 }
-$('t-add').onclick = () => { draft.templates.push({ id: 't' + Date.now(), name: 'New template', text: 'Hi {first}, ', audience: 'any' }); renderTemplates(); };
+$('t-add').onclick = () => { const t = { id: 't' + Date.now(), name: 'New template', text: 'Hi {first}, ', audience: 'any' }; draft.templates.push(t); tplOpen = t.id; renderTemplates(); };
 $('s-save').onclick = async () => {
   if (draft.templates.some((t) => !t.name.trim() || !t.text.trim())) return toast('Every template needs a name and text.');
   const cellIn = $('s-cell').value.trim(), cellD = digits(cellIn);

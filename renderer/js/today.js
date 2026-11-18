@@ -12,10 +12,9 @@ const ALERT = {
 };
 const hello = () => { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; };
 
-const hoursSince = (iso) => (Date.now() - new Date(iso)) / 36e5;
 const byAge = (iso, amberH, redH) => { const h = hoursSince(iso); return h >= redH ? 'red' : h >= amberH ? 'amber' : 'green'; };
 function urgency(i) {
-  if (i.sec === 'rx') return i.rxKind === 'failed' ? 'red' : byAge(i.at, 0, 24) === 'red' ? 'red' : 'amber';
+  if (i.sec === 'rx') return i.rxItem ? rxUrgency(i.rxItem) : 'amber';
   if (i.sec === 'patients') return byAge(i.at, 1, 4);
   if (i.sec === 'callers') return byAge(i.at, 4, 48) === 'red' ? 'amber' : 'green';
   if (i.sec === 'schedule') { if (!i.apptStart) return 'amber'; const d = (new Date(new Date(i.apptStart).toDateString()) - new Date(new Date().toDateString())) / 864e5; return d <= 1 ? 'red' : 'amber'; }
@@ -46,11 +45,18 @@ async function gatherToday() {
     items.push({ key: 'p:' + c.id, sec: 'patients', at: c.at, kind: 'text', icon: I.msg, title: c.title, tag: 'RxNT portal', sub: `“${String(c.excerpt || '').slice(0, 90)}” · ${ago(c.at)}`, action: ['Open in RxNT', () => window.api.openRxnt('messages')], done: () => window.api.portalDone(c.id) });
   }
   // Prescriptions needing action in RxNT (pended for the prescriber, refill requests, failed sends)
-  for (const r of rx.items || []) items.push({ key: `rx:${r.kind}:${r.patient}`, rxKind: r.kind, sec: 'rx', at: r.at || new Date().toISOString(), kind: 'rx', icon: I.pill, title: r.patient || 'Patient', tag: { refill: 'Refill request', pending: 'Pending Rx', failed: 'Failed' }[r.kind], sub: [r.med, r.pharmacy].filter(Boolean).join(' · ') || r.detail || 'Waiting in RxNT', action: ['Open in RxNT', () => window.api.openRxnt()] });
+  // Time-sensitive: they show how long they've waited; Schedule II ones say they need Dr. Baig.
+  for (const r of rx.items || []) items.push({ key: `rx:${r.kind}:${r.patient}`, rxItem: r, sec: 'rx', at: r.at || new Date().toISOString(), kind: 'rx', icon: I.pill, title: r.patient || 'Patient',
+    tag: r.c2 ? 'Schedule II' : { refill: 'Refill request', pending: 'Pending Rx', failed: 'Failed to send' }[r.kind],
+    sub: [r.c2 && 'Needs Dr. Baig', r.at && `waiting ${waitLabel(r.at)}`, r.med, r.pharmacy].filter(Boolean).join(' · ') || r.detail || 'Waiting in RxNT', action: ['Open in RxNT', () => window.api.openRxnt()] });
   // RxNT To-Do, only the critical ones and only when there's something
   const rc = rx.counts || {};
-  for (const [k, one, many, lvl] of [['labs', 'lab result to review', 'lab results to review', 'red'], ['unsigned', 'encounter to sign', 'encounters to sign', 'red'], ['tasks', 'patient task', 'patient tasks', 'amber'], ['unbilled', 'visit not billed yet', 'visits not billed yet', 'amber']]) {
-    if (rc[k] > 0) items.push({ key: 'todo:' + k, urg: lvl, sec: 'rx', at: new Date().toISOString(), kind: 'rx', icon: I.check, title: `${rc[k]} ${rc[k] > 1 ? many : one}`, tag: k === 'unbilled' ? 'Billing' : 'RxNT To-Do', sub: k === 'unbilled' ? 'Close the encounter so the biller can bill' : 'Waiting in RxNT', action: ['Open in RxNT', () => window.api.openRxnt(k === 'unbilled' ? 'billing' : 'todo')] });
+  const TODO = [['labs', 'lab result to review', 'lab results to review', 'red', 'RxNT To-Do'], ['unsigned', 'encounter to sign', 'encounters to sign', 'red', 'RxNT To-Do'],
+    ['documents', 'document to review', 'documents to review', 'amber', 'RxNT To-Do'], ['referrals', 'referral', 'referrals', 'amber', 'RxNT To-Do'], ['tasks', 'patient task', 'patient tasks', 'amber', 'RxNT To-Do'],
+    ['awaiting', 'visit awaiting billing', 'visits awaiting billing', 'amber', 'Billing'], ['unposted', 'payment to post', 'payments to post', 'amber', 'Billing']];
+  for (const [k, one, many, lvl, tag] of TODO) {
+    if (rc[k] > 0) items.push({ key: 'todo:' + k, urg: lvl, sec: 'rx', at: new Date().toISOString(), kind: 'rx', icon: I.check, title: `${rc[k]} ${rc[k] > 1 ? many : one}`, tag,
+      sub: { awaiting: 'Finish the encounter so the biller can bill it', unposted: 'Card charged, not applied to a visit yet' }[k] || 'Waiting in RxNT', action: ['Open in RxNT', () => window.api.openRxnt(tag === 'Billing' ? (k === 'awaiting' ? 'todo' : 'billing') : 'todo')] });
   }
   // Schedule changes that call for a message
   // A cancellation and a new booking for the same patient at the same time is RxNT moving the visit: not news.
@@ -96,7 +102,7 @@ async function loadToday() {
   loadChecklist(); loadNotes();
   if (!$('today-list').children.length) $('today-list').innerHTML = '<div class="loading-line"><span class="spinner"></span>Getting your day ready…</div>';
   const d = await loading(gatherToday);
-  paintTiles(d); paintTodo(d.items); paintVisits(d.range);
+  paintTiles(d); paintTodo(d.items); paintVisits(d.range); paintDone(); paintClosing(d);
   window.api.watchRead();
 }
 
@@ -146,7 +152,7 @@ function paintTodo(items) {
         <div class="acts">${it.action ? `<button class="btn soft act">${esc(it.action[0])}</button>` : ''}${it.key ? `<button class="icon-btn later" title="Later">${I.clock || I.bell}</button>` : ''}${it.done ? `<button class="icon-btn done" title="Mark as done">${I.check}</button>` : ''}</div>`;
       if (it.key) el.querySelector('.later').onclick = (e) => laterMenu(e.currentTarget, it);
       if (it.action) el.querySelector('.act').onclick = it.action[1];
-      if (it.done) el.querySelector('.done').onclick = async () => { el.classList.add('leaving'); await it.done(); setTimeout(loadToday, 180); };
+      if (it.done) el.querySelector('.done').onclick = async () => { el.classList.add('leaving'); await it.done(); bumpDone(); setTimeout(loadToday, 180); };
       L.appendChild(el);
     }
     if (list.length > 3) {
@@ -162,10 +168,12 @@ function paintTodo(items) {
 function laterMenu(anchor, it) {
   const P = $('popover'), inHours = (h) => Date.now() + h * 36e5;
   const tomorrow = () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(8, 0, 0, 0); return d.getTime(); };
-  P.innerHTML = `<div class="menu"><button data-t="${inHours(1)}"><i></i>In 1 hour</button><button data-t="${inHours(3)}"><i></i>Later today</button><button data-t="${tomorrow()}"><i></i>Tomorrow morning</button>${it.unk && it.phone ? '<hr><button data-ignore="1"><i></i>Ignore this number</button>' : ''}</div>`;
+  // Snoozing hides it for a while; "add to checklist" turns it into a task with a reminder and a link back.
+  P.innerHTML = `<div class="menu"><button data-t="${inHours(1)}"><i></i>In 1 hour</button><button data-t="${inHours(3)}"><i></i>Later today</button><button data-t="${tomorrow()}"><i></i>Tomorrow morning</button><hr><button data-cl="1"><i></i>Add to checklist</button>${it.unk && it.phone ? '<button data-ignore="1"><i></i>Ignore this number</button>' : ''}</div>`;
   const r = anchor.getBoundingClientRect(); P.style.top = `${r.bottom + 6}px`; P.style.left = `${Math.max(12, r.right - 200)}px`; P.style.width = '200px'; P.classList.remove('hidden');
   P.querySelectorAll('button').forEach((b) => (b.onclick = async () => {
     hidePopover(); P.style.width = '';
+    if (b.dataset.cl) { await addToChecklist(it); await window.api.snooze(it.key, tomorrow()); loadToday(); return; }
     if (b.dataset.ignore) { await window.api.ignoreNumber(it.phone, true); toast('Number ignored. It won\'t show here again.'); }
     else { await window.api.snooze(it.key, Number(b.dataset.t)); toast('Snoozed'); }
     loadToday();
@@ -180,31 +188,46 @@ function paintVisits(range) {
     $('today-visits').innerHTML = `<div class="quiet">${I.cal}<span>No visits today${next ? `<br><small>Next: ${esc(fmtDateShort(next[0].start))}, ${esc(fmtTime(next[0].start))}</small>` : ''}</span></div>`;
     return;
   }
-  $('today-visits').innerHTML = td.map((v) => { const st = stateOf(v); return `<button class="visit-line st-${st}" data-d="${esc(ymd())}"><time>${esc(fmtTime(v.start))}</time><span class="nm">${esc(fullName(v))}${v.visitType ? `<small>${esc(v.visitType)}</small>` : ''}</span>${stateTag(st)}</button>`; }).join('');
+  $('today-visits').innerHTML = timeStrip(td) + td.map((v) => { const st = stateOf(v); return `<button class="visit-line st-${st}" data-d="${esc(ymd())}"><time>${esc(fmtTime(v.start))}</time><span class="nm">${esc(fullName(v))}${v.visitType ? `<small>${esc(v.visitType)}</small>` : ''}</span>${stateTag(st)}</button>`; }).join('');
   $('today-visits').querySelectorAll('.visit-line').forEach((b) => (b.onclick = () => { go('visits'); loadDay(ymd()); }));
 }
 
-$('tv-open').onclick = () => { go('visits'); loadDay(ymd()); };
-
-/* Checklist */
-async function loadChecklist(list) {
-  const items = list || await window.api.checklist();
-  const open = items.filter((i) => !i.done).length;
-  $('cl-left').textContent = items.length ? `${open} left` : '';
-  $('cl-list').innerHTML = items.length ? items.map((i) => `<div class="cl-item ${i.done ? 'done' : ''}" data-id="${esc(i.id)}"><label class="check"><input type="checkbox" ${i.done ? 'checked' : ''}><span></span></label><span class="txt">${esc(i.text)}${i.due && !i.done ? `<span class="due ${i.reminded ? 'past' : ''}">${I.bell || ''}${esc(new Date(i.due).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))}</span>` : ''}</span>${!i.done && new Date(i.at).toDateString() !== new Date().toDateString() ? '<span class="carried" title="Carried over">since ' + esc(new Date(i.at).toLocaleDateString([], { month: 'short', day: 'numeric' })) + '</span>' : ''}<button class="x" title="Delete">${I.x}</button></div>`).join('') : '<div class="cl-ghost"><i></i><i></i><i></i></div><p class="cl-empty">Your list for today. Unfinished tasks carry over.</p>';
-  $('cl-list').querySelectorAll('.cl-item').forEach((el) => {
-    el.querySelector('input').onchange = async () => loadChecklist(await window.api.checklistToggle(el.dataset.id));
-    el.querySelector('.x').onclick = async () => loadChecklist(await window.api.checklistRemove(el.dataset.id));
-  });
+// The day as a strip: visits as blocks, gaps labeled with how much free time they hold. Makes time visible.
+function timeStrip(td) {
+  const live = td.filter((v) => category(v) !== 'cancelled'); if (!live.length) return '';
+  const S = settings.sync || {}, base = parseYmd(ymd()), at = (hm) => { const [h, m] = hm.split(':').map(Number); const d = new Date(base); d.setHours(h, m, 0, 0); return d.getTime(); };
+  const endOf = (v) => (v.end ? new Date(v.end).getTime() : new Date(v.start).getTime() + 30 * 60000);
+  const from = Math.min(at(S.busyStart || '08:00'), new Date(live[0].start).getTime()), to = Math.max(at(S.busyEnd || '17:00'), endOf(live[live.length - 1]));
+  const pct = (t) => ((t - from) / (to - from)) * 100, now = Date.now(), dur = (m) => (m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ''}` : `${m}m`);
+  let html = '', cursor = from;
+  const gap = (a, b) => { const m = Math.round((b - a) / 60000); if (m < 15) return ''; const isNow = now >= a && now < b; return `<div class="ts-gap ${isNow ? 'now' : ''} ${b < now ? 'past' : ''}" style="left:${pct(a)}%;width:${pct(b) - pct(a)}%"><span>${isNow ? 'Free now · ' + dur(Math.round((b - now) / 60000)) : 'Free ' + dur(m)}</span></div>`; };
+  for (const v of live) {
+    const s = new Date(v.start).getTime(), e = endOf(v);
+    if (s > cursor) html += gap(cursor, s);
+    html += `<div class="ts-visit st-${stateOf(v)} ${e < now ? 'past' : s <= now && now < e ? 'live' : ''}" style="left:${pct(s)}%;width:${Math.max(1.5, pct(e) - pct(s))}%" title="${esc(fmtTime(v.start))} · ${esc(fullName(v))}"></div>`;
+    cursor = Math.max(cursor, e);
+  }
+  if (to > cursor) html += gap(cursor, to);
+  const marker = now > from && now < to ? `<i class="ts-now" style="left:${pct(now)}%"></i>` : '';
+  return `<div class="timestrip">${html}${marker}</div><div class="ts-scale"><span>${esc(fmtTime(new Date(from)))}</span><span>${esc(fmtTime(new Date(to)))}</span></div>`;
 }
-$('cl-form').onsubmit = async (e) => { e.preventDefault(); const v = $('cl-input').value.trim(); if (!v) return; const t = $('cl-time').value; $('cl-input').value = ''; $('cl-time').value = ''; loadChecklist(await window.api.checklistAdd(v, t)); if (t) toast(`Reminder set for ${fmtClock(t)}`); };
-window.api.onChecklist(() => { if (view === 'today') loadChecklist(); });
-const fmtClock = (hm) => { const [h, m] = hm.split(':').map(Number); return new Date(2000, 0, 1, h, m).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
 
-/* Notes: saved a moment after typing stops. */
-let ntTimer = null;
-async function loadNotes() { const n = await window.api.notes(); if (document.activeElement !== $('nt-text')) $('nt-text').value = n.text || ''; }
-$('nt-text').oninput = () => { $('nt-state').textContent = 'Saving…'; clearTimeout(ntTimer); ntTimer = setTimeout(async () => { await window.api.notesSave($('nt-text').value); $('nt-state').textContent = 'Saved'; }, 600); };
+// Progress: a running count of what's been finished today.
+async function paintDone() { const n = await window.api.doneGet(); $('today-done').textContent = n ? `${n} done today` : ''; $('today-done').classList.toggle('hidden', !n); }
+async function bumpDone(n = 1) { await window.api.doneBump(n); if (view === 'today') paintDone(); }
+
+// After closing time: what's still open before you go, or a clear finish line.
+function paintClosing(d) {
+  const S = settings.sync || {}, now = new Date(), hm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const el = $('today-closing');
+  if (now.getDay() < 1 || now.getDay() > 5 || hm < (S.busyEnd || '17:00')) { el.classList.add('hidden'); return; }
+  const red = d.items.filter((i) => i.urg !== 'green');
+  el.classList.remove('hidden');
+  el.className = 'closing ' + (red.length ? 'open' : 'clear');
+  el.innerHTML = red.length ? `<b>Before you go</b><span>${red.slice(0, 4).map((i) => esc(i.title)).join(' · ')}${red.length > 4 ? ` · +${red.length - 4} more` : ''}</span>` : `${I.check}<b>All done for today</b><span>Nothing urgent left. See you tomorrow.</span>`;
+}
+
+$('tv-open').onclick = () => { go('visits'); loadDay(ymd()); };
 
 $('today-refresh').onclick = async () => {
   $('today-refresh').classList.add('spin');

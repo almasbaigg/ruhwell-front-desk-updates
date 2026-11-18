@@ -60,7 +60,10 @@ const DEFAULT_SETTINGS = {
   alertPrefs: {
     schedule: { desk: true, text: false },   // new bookings, cancellations, no-shows, reschedules
     reply: { desk: true, text: false },      // patient texts and RxNT portal messages
-    newpatient: { desk: true, text: false }, task: { desk: true, text: false }, soon: { desk: true, text: false, minutes: 15 },
+    newpatient: { desk: true, text: false },
+    rx: { desk: true, text: false },         // prescriptions waiting over an hour
+    nudge: { desk: true },                   // wrap-up and chart-this-visit pop-ups
+    task: { desk: true, text: false }, soon: { desk: true, text: false, minutes: 15 },
   },
 
   autoBackup: true,

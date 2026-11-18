@@ -125,8 +125,10 @@
     <section class="view hidden" id="view-today">
       <header class="hero">
         <div><p class="eyebrow" id="today-date"></p><h1 id="today-hello">Good morning</h1></div>
+        <span class="done-chip hidden" id="today-done"></span>
         <button class="icon-btn" id="today-refresh" title="Check everything now"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></button>
       </header>
+      <div class="closing hidden" id="today-closing"></div>
       <div class="tiles" id="today-tiles"></div>
       <div class="board">
         <section class="panel attn">
@@ -140,12 +142,16 @@
         <div class="board-col">
           <section class="panel pad checklist">
             <div class="panel-head"><h2 class="ph"><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1.2 1.2L7 5M3.5 12l1.2 1.2L7 11M3.5 18l1.2 1.2L7 17"/></svg>Checklist</h2><span class="count" id="cl-left"></span></div>
-            <form id="cl-form"><span class="cl-plus"><svg viewBox="0 0 24 24"><path d="M12 6v12M6 12h12"/></svg></span><input id="cl-input" placeholder="Add a task" maxlength="300" autocomplete="off"><input type="time" id="cl-time" title="Remind me at (optional)"></form>
+            <form id="cl-form"><span class="cl-plus"><svg viewBox="0 0 24 24"><path d="M12 6v12M6 12h12"/></svg></span><input id="cl-input" placeholder="Add a task, e.g. call pharmacy at 3" maxlength="300" autocomplete="off"><button type="button" class="icon-btn cl-when" id="cl-when" title="Remind me"><svg viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg></button></form>
+            <p class="cl-hint hidden" id="cl-hint"></p>
             <div id="cl-list" class="scroll"></div>
           </section>
           <section class="panel pad notes">
-            <div class="panel-head"><h2 class="ph"><svg viewBox="0 0 24 24"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v4h4M8 12h8M8 16h6"/></svg>Notes</h2><span class="count" id="nt-state">Saved automatically</span></div>
-            <textarea id="nt-text" placeholder="Jot anything down."></textarea>
+            <div class="panel-head"><h2 class="ph"><svg viewBox="0 0 24 24"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v4h4M8 12h8M8 16h6"/></svg>Notes</h2>
+              <div class="nt-nav"><button class="icon-btn" id="nt-prev" title="Earlier day"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button><button class="nt-day" id="nt-day">Today</button><button class="icon-btn" id="nt-next" title="Later day"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button><button class="icon-btn" id="nt-find" title="Search notes"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg></button><button class="icon-btn" id="nt-pin" title="Pin this page"><svg viewBox="0 0 24 24"><path d="M9 4h6l-1 5 3 3v2H7v-2l3-3zM12 14v6"/></svg></button></div></div>
+            <div class="nt-pins" id="nt-pins"></div>
+            <textarea id="nt-text" placeholder="Jot anything down. Type @ to link a patient."></textarea>
+            <div class="nt-foot"><span id="nt-links"></span><span class="muted small" id="nt-state"></span><button class="link-btn" id="nt-task" title="Turn the line you're on into a checklist task">Line → task</button></div>
           </section>
         </div>
       </div>
@@ -189,9 +195,7 @@
         <div><p class="eyebrow" id="rx-sub"></p><h1>RxNT work</h1></div>
         <div class="head-actions"><button class="btn" id="rx-open"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>Open RxNT</button></div>
       </header>
-      <div class="section-head"><h2>Needs you</h2></div>
-      <div id="rx-needs" class="list"></div>
-      <div id="rx-clear" class="clear-chips"></div>
+      <div id="rx-groups"></div>
       <details class="history" id="rx-history"><summary><span>History</span><em id="rx-hist-sum"></em></summary><div id="rx-hist"></div></details>
     </section>
 
@@ -212,6 +216,8 @@
           <span>Schedule changes <small class="muted">(new, cancelled, no-show, rescheduled)</small></span><label class="check"><input type="checkbox" data-k="schedule" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="schedule" data-c="text"><span></span></label>
           <span>Patient messages <small class="muted">(texts and RxNT portal)</small></span><label class="check"><input type="checkbox" data-k="reply" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="reply" data-c="text"><span></span></label>
           <span>New patient registered</span><label class="check"><input type="checkbox" data-k="newpatient" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="newpatient" data-c="text"><span></span></label>
+          <span>Prescriptions waiting <small class="muted">(over 1 hour)</small></span><label class="check"><input type="checkbox" data-k="rx" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="rx" data-c="text"><span></span></label>
+          <span>Wrap-up &amp; chart reminders <small class="muted">(pop-up only)</small></span><label class="check"><input type="checkbox" data-k="nudge" data-c="desk"><span></span></label><span class="muted center-text">–</span>
           <span>Checklist reminder</span><label class="check"><input type="checkbox" data-k="task" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="task" data-c="text"><span></span></label>
           <span>Visit starting in <select id="w-soon"><option value="10">10</option><option value="15">15</option><option value="30">30</option></select> min</span><label class="check"><input type="checkbox" data-k="soon" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="soon" data-c="text"><span></span></label>
         </div>
@@ -257,7 +263,7 @@
       </div>
       <div class="card">
         <div class="card-head"><h3>Templates</h3><button class="btn" id="t-add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add template</button></div>
-        <p class="muted small">Placeholders: {first} · {last} · {date} · {time} · {slots} · {review_link}</p>
+        <p class="muted small">Click a template to edit it. Tap a chip to add the patient's name, visit time and more.</p>
         <div id="t-list"></div>
       </div>
       <div class="card">
@@ -281,6 +287,7 @@
 <script src="js/schedule.js"></script>
 <script src="js/patients.js"></script>
 <script src="js/today.js"></script>
+<script src="js/pad.js"></script>
 <script src="js/texts.js"></script>
 <script src="js/calls.js"></script>
 <script src="js/rx.js"></script>

@@ -93,3 +93,16 @@
 ### Also in 1.3.2
 - App is ~40 MB smaller: only the English language pack is included (Electron ships 50+ by default).
 - Name: app ID is now com.ruhwellmed.frontdesk; Windows keeps its existing install key so updates still replace the app in place. Remaining "Messenger" mentions are only the one-time data carry-over from the old name.
+
+## 1.4.0
+- RxNT work grouped like RxNT: Clinical (encounters to sign, labs, documents to review, referrals, portal messages, patient tasks) · Prescriptions · Billing. Counts or "All clear" per group, red first, sent/voided in History.
+- Prescriptions are time-sensitive: "waiting 2 h" on every one; amber after 1 hour, red after 3 hours or after closing; failed = red. Schedule II (stimulants, opioids) tagged "needs Dr. Baig, see patient first". Visit-today time shown. Pop-up (and optional text) once one waits over an hour in office hours; texts give only counts.
+- Billing: "Payments to post" (unposted patient payments from RxNT Billing, with the oldest age), "Review payment" when the same patient is charged twice within 2 days, "awaiting billing" from the EHR To-Do (Maria's part). The biller's unbilled queue shows as information only.
+- Today: the day as a time strip (visits as blocks, gaps labeled "Free 1h 20m", "Free now"), "6 done today" progress, and after closing time "Before you go …" or "All done for today".
+- Wrap-up pop-up 5 minutes before the next visit while one is still going; "Chart this visit?" when a visit ends (opens RxNT). End-of-day pop-up at closing time. New alert rows: Prescriptions waiting, Wrap-up & chart reminders.
+- Clicking a notification opens the exact place: the text conversation, the visit's day, RxNT work, or Patients.
+- Checklist: plain-language times ("call pharmacy at 3", "payroll tomorrow", "fax check every day at 9"), a live hint of the reminder time, quick reminder picks (In 1 hour, In 3 hours, After visits, Tomorrow 8 AM, or a time), Top 3 stars, overdue amber → red, daily/weekly repeats, drag to reorder, friendly empty state. "Later → Add to checklist" on any Today item, with a link back.
+- Notes: a page per day (older days kept), search all notes, pin a page, @ to link a patient (opens their record), "Line → task". The old single notes pad is kept as a pinned "Earlier notes" page.
+- Texts: grouped by day; Needs reply shows how long each has waited (green → amber → red). Calls: callbacks show waiting time with urgency; today open, earlier days folded.
+- Templates: compact list, click to edit in place, tap-to-insert chips, live preview with a sample patient, delete in a ⋯ menu with confirm, duplicate.
+- CLAUDE.md: instructions for any Claude (including Maria's) to build the Mac version and keep both versions identical.

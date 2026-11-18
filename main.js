@@ -107,10 +107,16 @@ ipcMain.handle('gmail:signin', async () => { const ok = await gmail.signIn(win);
 ipcMain.handle('gmail:signout', async () => { await gmail.signOut(); send('sync', syncStatus()); return true; });
 ipcMain.handle('gmail:open', (_e, id) => shell.openExternal(gmail.url(id)));
 ipcMain.handle('checklist:list', () => checklist.list(pid()));
-ipcMain.handle('checklist:add', (_e, t, hm) => checklist.add(pid(), t, hm));
+ipcMain.handle('checklist:add', (_e, t, opts) => checklist.add(pid(), t, opts || {}));
+ipcMain.handle('checklist:star', (_e, id) => checklist.star(pid(), id));
+ipcMain.handle('checklist:due', (_e, id, due) => checklist.setDue(pid(), id, due));
+ipcMain.handle('checklist:reorder', (_e, ids) => checklist.reorder(pid(), ids));
+ipcMain.handle('checklist:parse', (_e, t) => checklist.parse(t));
 ipcMain.handle('gmail:check', async () => { const g = await gmail.check(); send('sync', syncStatus()); return g; });
-ipcMain.handle('notes:get', () => checklist.notes.get(pid()));
-ipcMain.handle('notes:set', (_e, text) => checklist.notes.set(pid(), text));
+ipcMain.handle('notes:get', (_e, day) => checklist.notes.get(pid(), day || checklist.dayKey()));
+ipcMain.handle('notes:set', (_e, day, text) => checklist.notes.set(pid(), day, text));
+ipcMain.handle('notes:pin', (_e, day, on) => checklist.notes.pin(pid(), day, on));
+ipcMain.handle('notes:search', (_e, q) => checklist.notes.search(pid(), q));
 ipcMain.handle('checklist:toggle', (_e, id) => checklist.toggle(pid(), id));
 ipcMain.handle('checklist:remove', (_e, id) => checklist.remove(pid(), id));
 ipcMain.handle('rx:list', () => rxtasks.list());
@@ -120,7 +126,23 @@ async function refreshRx() {
   if (!store.settings.get().rxntConnected?.[pid()]) return;
   // Its own hidden window, so prescriptions never hold up or reset the schedule reader.
   await rxtasks.refresh(() => rxnt.readPendingOnce(pid()));
+  rxWaitingAlerts();
   send('sync', syncStatus());
+}
+// Prescriptions are time-sensitive: once one has waited an hour during office hours, alert (once per item).
+// Texts say only how many are waiting, never a name or a drug.
+function rxWaitingAlerts() {
+  if (!watcher.officeHours()) return;
+  const st = store.syncState.get(), seen = st.rxAlerted || {};
+  const due = rxtasks.list().items.filter((i) => ['pending', 'refill', 'failed'].includes(i.kind) && i.at && (i.kind === 'failed' || Date.now() - new Date(i.at) >= 36e5));
+  const fresh = due.filter((i) => !seen[`${i.kind}|${i.patient}|${i.med || ''}|${i.at}`]);
+  if (!fresh.length) return;
+  fresh.forEach((i) => { seen[`${i.kind}|${i.patient}|${i.med || ''}|${i.at}`] = Date.now(); });
+  for (const k of Object.keys(seen)) if (Date.now() - seen[k] > 14 * 864e5) delete seen[k];
+  store.syncState.set({ rxAlerted: seen });
+  const c2 = fresh.filter((i) => rxtasks.needsPhysician(i));
+  const text = c2.length ? `${fresh.length} prescription${fresh.length > 1 ? 's' : ''} waiting (${c2.length} Schedule II, needs Dr. Baig)` : `${fresh.length} prescription${fresh.length > 1 ? 's' : ''} waiting over an hour`;
+  watcher.deliver([{ kind: 'rx', text }]);
 }
 // Checklist reminders: desktop notification, and a text if chosen. Texts never include the task wording (it may name a patient).
 setInterval(() => {
@@ -457,6 +479,58 @@ function soonCheck() {
   if (evs.length) watcher.addEvents(evs);
 }
 setInterval(soonCheck, 60000);
+
+// Wrap-up and charting nudges (pop-ups only, never texts):
+//  - 5 minutes before the next visit, while a visit is still going: "Wrap up".
+//  - Right after a visit ends: "Chart this visit?", which opens RxNT.
+const nudged = new Set();
+const liveVisit = (a) => !/cancel|delet|no.?show|missed|resched/i.test(a.statusText || '');
+function nudgeCheck() {
+  const pref = (store.settings.get().alertPrefs || {}).nudge || { desk: true };
+  if (!pref.desk) return;
+  const day = dayCache[ymd(new Date())]; if (!day || !day.items) return;
+  const now = Date.now(), visits = day.items.filter(liveVisit).sort((a, b) => new Date(a.start) - new Date(b.start));
+  const tm = (iso) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const nm = (a) => `${a.first || ''} ${a.last || ''}`.trim();
+  for (const a of visits) {
+    const start = new Date(a.start).getTime(), end = a.end ? new Date(a.end).getTime() : start + 30 * 60000;
+    const inVisit = visits.some((b) => b !== a && new Date(b.start).getTime() <= now && (b.end ? new Date(b.end).getTime() : new Date(b.start).getTime() + 30 * 60000) > now);
+    const mins = (start - now) / 60000;
+    if (inVisit && mins <= 5 && mins > 3 && !nudged.has('w' + a.appointmentId)) {
+      nudged.add('w' + a.appointmentId);
+      notify('Wrap up', `Next visit at ${tm(a.start)}: ${nm(a)}`, () => { showWindow(); send('nav-date', ymd(new Date())); });
+    }
+    const after = (now - end) / 60000;
+    if (after >= 0 && after < 3 && !nudged.has('c' + a.appointmentId)) {
+      nudged.add('c' + a.appointmentId);
+      notify('Chart this visit?', `${nm(a)} · ${tm(a.start)} visit ended`, () => shell.openExternal('https://app2.rxnt.com/ehrv9/dashboard'));
+    }
+  }
+}
+setInterval(nudgeCheck, 60000);
+
+// End of day: at closing time on weekdays, one check of what's still open (or a clear "all done").
+let eodStamp = '';
+function endOfDay() {
+  const s = store.settings.get(), now = new Date(), end = (s.sync || {}).busyEnd || '17:00';
+  if (now.getDay() < 1 || now.getDay() > 5 || hhmm(now) !== end || eodStamp === ymd(now) || !pid()) return;
+  eodStamp = ymd(now);
+  const st = syncStatus(), c = (rxtasks.list().counts) || {}, N = st.needs || {};
+  const left = [
+    c.unsigned && `${c.unsigned} note${c.unsigned > 1 ? 's' : ''} to sign`,
+    (rxtasks.status().count) && `${rxtasks.status().count} prescription${rxtasks.status().count > 1 ? 's' : ''} waiting`,
+    N.texts && `${N.texts} text${N.texts > 1 ? 's' : ''} unanswered`,
+    N.calls && `${N.calls} call${N.calls > 1 ? 's' : ''} to return`,
+    c.labs && `${c.labs} lab${c.labs > 1 ? 's' : ''} to review`,
+    c.unposted && `${c.unposted} payment${c.unposted > 1 ? 's' : ''} to post`,
+  ].filter(Boolean);
+  notify(left.length ? 'Before you go' : 'All done for today', left.length ? left.join(' · ') : 'Nothing left waiting. Nice work.', () => { showWindow(); send('nav', 'today'); });
+}
+setInterval(endOfDay, 30000);
+
+// "Done today": a running count of things finished, for a visible sense of progress.
+ipcMain.handle('done:get', () => { const d = store.syncState.get().doneToday || {}; return d.day === ymd(new Date()) ? d.n : 0; });
+ipcMain.handle('done:bump', (_e, by = 1) => { const d = store.syncState.get().doneToday || {}, day = ymd(new Date()); const n = (d.day === day ? d.n : 0) + by; store.syncState.set({ doneToday: { day, n } }); return n; });
 // Keep the Windows safety copy fresh (small files only; browser caches are skipped).
 
 // ---------- Backup: one password-protected file (works on any computer) ----------
@@ -559,7 +633,7 @@ app.whenReady().then(() => {
     loadDay,
     afterCheck: () => { preload(); },
     onEvent: (ev) => {
-      if (ev.type === 'open-alerts') { showWindow(); send('nav', 'today'); return; }
+      if (ev.type === 'open-alerts') { showWindow(); const t = ev.target || { view: 'today' }; if (t.date) send('nav-date', t.date); else send('nav', t.view); if (t.phone) send('open-thread', t.phone); return; }
       send('watch', ev);
       if (ev.type === 'watch-status' && !ev.running) { if (!ev.lastError) store.syncState.set({ schedule: { at: new Date().toISOString() } }); send('sync', syncStatus()); }
     },

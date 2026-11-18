@@ -1,0 +1,46 @@
+# Ruhwell Front Desk
+
+A local Electron desktop app for Ruhwell Med (telehealth psychiatry, Texas). Maria Baig PA-C uses it every day on her
+MacBook; Almas Baig MD develops and tests it on Windows. It reads RxNT (schedule, prescriptions, To-Do, billing),
+RingRx (texts and calls) and Gmail, and puts the day's work in one calm, color-coded place.
+
+## Rules that never change
+- **Patient data stays on the computer.** Nothing patient-related is sent anywhere except texts the user sends on purpose.
+- **RxNT is read-only.** The app never writes prescriptions, charts, payments or anything else into RxNT. Every item has "Open in RxNT".
+- **Alert texts never include patient names** (or drug names).
+- **No passwords handled by Claude.** The user signs in to RxNT, RingRx and Gmail themselves.
+- **Updates keep the user's sign-ins, settings and data.** They live outside the app (Mac: ~/Library/Application Support/Ruhwell Front Desk; Windows: %APPDATA%\Ruhwell Front Desk).
+- Name is always **Ruhwell Front Desk** (and the practice is **Ruhwell Med**).
+
+## Releases: Windows and Mac are always the exact same version
+- Changes are logged in `CHANGES.md` and committed, but **nothing is built or published until Almas asks for a build.**
+- A release builds Windows and Mac from the same commit and version (`.github/workflows/release.yml`, run manually in the
+  public repo `almasbaigg/ruhwell-front-desk-updates`, branch `source`). The update feed is only updated if **both** succeed.
+- Update feed (main branch of that repo): `latest.yml` + `RuhwellFrontDesk-Setup.exe` (Windows installs on restart),
+  `latest-mac.yml` (Mac shows "Update available" and opens the download; unsigned Mac apps can't self-install).
+  Mac installers are attached to the GitHub Release `v<version>`.
+
+## Building the Mac version on Maria's MacBook (only when GitHub's Mac machines are stuck)
+Do this only for a version Almas has already asked to release, so both computers stay on the same version.
+1. Get the code for that version: `git clone --branch source https://github.com/almasbaigg/ruhwell-front-desk-updates.git` into the connected
+   `RuhwellBuild` folder (or `git pull` if it's already there). Check `package.json` "version" matches the version asked for.
+2. Needs Node 22 and Apple's Command Line Tools (already installed on her Mac). Then: `npm ci && npm test`.
+3. Build: `npx electron-builder --mac dmg --arm64 --x64 --publish never` → `dist/RuhwellFrontDesk-arm64.dmg`, `-x64.dmg`, `latest-mac.yml`.
+4. Publish: attach both DMGs and `latest-mac.yml` to the GitHub Release `v<version>` (the Windows part should already be
+   there), and commit `latest-mac.yml` to the main branch of `ruhwell-front-desk-updates` (normal push, never force-push).
+5. Install on her Mac: open the arm64 DMG, drag to Applications (replace), then double-click "First open on Mac" once.
+   If macOS asks to allow Keychain access, click "Always Allow". Her sign-ins and data stay.
+Don't change app code from the Mac build chat. Code changes happen in Almas's chat and come through a release.
+
+## Code map
+- `main.js`: app shell, IPC, sync planner, notifications (wrap-up/chart nudges, end of day, prescriptions waiting).
+- `watcher.js`: schedule alerts (confirmed cancellations, corrections, cancel+rebook = reschedule, delivery tiers, click targets).
+- `rxnt-reader.js`: hidden RxNT windows (schedule, EHR To-Do counts, prescriber dashboard, Billing alerts and unposted payments, portal messages).
+- `rxtasks.js`: prescriptions/To-Do/billing state, Schedule II flag, payment review flags.
+- `comms.js`, `ringrx.js`, `gmail.js`: texts, calls, email. `checklist.js`: checklist (plain-language times, repeats, Top 3) and day-page notes.
+- `renderer/`: one page app. `js/today.js` (home), `js/pad.js` (checklist + notes), `js/rx.js` (RxNT work), `js/texts.js`, `js/calls.js`, `js/settings.js`.
+- Tests: `npm test` (must pass before any release).
+
+## Style
+Ruhwell palette: teal #005758, sage #a3b18a, terracotta #e4926e, ivory #f6f1eb, porcelain #fcf7f5. Fonts: DM Serif Display, Plus Jakarta Sans.
+Built for an ADHD-friendly day: urgency colors (red → amber → green), the most urgent thing first, few things at once, visible time, no clutter.

@@ -147,11 +147,12 @@ function schedule() {
           texts (if chosen) only during office hours.
    Soon – everything else worth knowing: bundled into one notification every 30 minutes, never texted.
    FYI  – quiet events: shown in the app only. */
-const PREF_KEY = { new: 'schedule', cancelled: 'schedule', noshow: 'schedule', rescheduled: 'schedule', correction: 'schedule', optout: 'reply', confirmed: 'reply', reply: 'reply', soon: 'soon', newpatient: 'newpatient', portal: 'reply' };
-const TEXT_LABEL = { new: 'New booking', cancelled: 'Cancellation', rescheduled: 'Reschedule', noshow: 'No-show', correction: 'Correction: still scheduled', optout: 'Patient replied STOP', confirmed: 'Patient confirmed', reply: 'New patient text', soon: 'Starting soon', newpatient: 'New patient registered', portal: 'RxNT portal message' };
+const PREF_KEY = { rx: 'rx', new: 'schedule', cancelled: 'schedule', noshow: 'schedule', rescheduled: 'schedule', correction: 'schedule', optout: 'reply', confirmed: 'reply', reply: 'reply', soon: 'soon', newpatient: 'newpatient', portal: 'reply' };
+const TEXT_LABEL = { rx: 'Prescription waiting', new: 'New booking', cancelled: 'Cancellation', rescheduled: 'Reschedule', noshow: 'No-show', correction: 'Correction: still scheduled', optout: 'Patient replied STOP', confirmed: 'Patient confirmed', reply: 'New patient text', soon: 'Starting soon', newpatient: 'New patient registered', portal: 'RxNT portal message' };
 const SCHEDULE_KINDS = ['new', 'cancelled', 'noshow', 'rescheduled', 'correction'];
 function tierOf(e) {
   if (e.quiet) return 'fyi';
+  if (e.kind === 'rx') return 'now';
   if (e.kind === 'soon') return 'now';
   if (SCHEDULE_KINDS.includes(e.kind) && e.appt && e.appt.start) {
     const days = (new Date(new Date(e.appt.start).toDateString()) - new Date(new Date().toDateString())) / 864e5;
@@ -163,21 +164,30 @@ function officeHours(d = new Date()) {
   const s = store.settings.get().sync || {}, hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   return d.getDay() >= 1 && d.getDay() <= 5 && hm >= (s.busyStart || '08:00') && hm < (s.busyEnd || '17:00');
 }
-function popup(title, lines) {
+function popup(title, lines, target = { view: 'today' }) {
   if (!lines.length || !Notification.isSupported()) return;
   const n = new Notification({ title, body: lines.slice(0, 4).join('\n') + (lines.length > 4 ? `\n+${lines.length - 4} more` : ''), icon: ICON, silent: !store.settings.get().sound });
-  n.on('click', () => onEvent({ type: 'open-alerts' }));
+  n.on('click', () => onEvent({ type: 'open-alerts', target }));
   n.show();
 }
+// Where a click on an alert should land: the exact place to act on it.
+function targetOf(e) {
+  if (!e) return { view: 'today' };
+  if (e.kind === 'reply' || e.kind === 'optout' || e.kind === 'confirmed') return { view: 'texts', phone: e.phone || (e.appt && e.appt.phone) };
+  if (e.kind === 'portal' || e.kind === 'rx') return { view: 'rx' };
+  if (e.kind === 'newpatient') return { view: 'patients' };
+  if (e.appt && e.appt.start) return { view: 'visits', date: new Date(e.appt.start).toISOString().slice(0, 10) };
+  return { view: 'today' };
+}
 let digest = [];
-setInterval(() => { if (digest.length) { const d = digest; digest = []; popup(d.length === 1 ? (TEXT_LABEL[d[0].kind] || 'Update') : `${d.length} updates`, d.map((e) => e.text)); } }, 30 * 60000);
+setInterval(() => { if (digest.length) { const d = digest; digest = []; popup(d.length === 1 ? (TEXT_LABEL[d[0].kind] || 'Update') : `${d.length} updates`, d.map((e) => e.text), d.length === 1 ? targetOf(d[0]) : { view: 'today' }); } }, 30 * 60000);
 
 function deliver(events) {
   const settings = store.settings.get(), prefs = settings.alertPrefs || {}, pid = getProfile();
   const wants = (e, ch) => (prefs[PREF_KEY[e.kind]] || {})[ch];
   const now = events.filter((e) => tierOf(e) === 'now' && wants(e, 'desk'));
   digest.push(...events.filter((e) => tierOf(e) === 'soon' && wants(e, 'desk')));
-  popup(now.length === 1 ? (TEXT_LABEL[now[0].kind] || 'Update') : `${now.length} updates`, now.map((e) => e.text));
+  popup(now.length === 1 ? (TEXT_LABEL[now[0].kind] || 'Update') : `${now.length} updates`, now.map((e) => e.text), now.length === 1 ? targetOf(now[0]) : { view: 'today' });
   const text = events.filter((e) => tierOf(e) === 'now' && wants(e, 'text'));
   if (text.length && officeHours() && pid && ringrx.status(pid).connected) ringrx.alertNumber(pid).then((to) => {
     if (!to) return;
@@ -201,6 +211,7 @@ module.exports = {
     deliver(stamped);
   },
   deliver,
+  officeHours,
   handle(id) { const s = store.watchState.get(); (s.alerts || []).forEach((a) => { if (a.id === id) a.handled = true; }); store.watchState.set(s); },
   markRead() { const s = store.watchState.get(); s.unread = 0; store.watchState.set(s); },
   unread: () => store.watchState.get().unread || 0,
