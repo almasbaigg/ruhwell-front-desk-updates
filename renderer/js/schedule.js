@@ -3,7 +3,7 @@
 const dayMode = () => currentDate > ymd() ? 'future' : currentDate === ymd() ? 'today' : 'past';
 function buildVisit(it, prev) {
   const rec = recordFor(it), cat = category(it);
-  const v = { ...it, cat, rec, already: sentSince(it.phone, currentDate), review: lastReview(it.phone), confirmed: isConfirmed(it.phone) || statusOf(it) === 'confirmed' };
+  const v = { ...it, cat, rec, already: sentSince(it.phone, currentDate), review: lastReview(it.phone), confirmed: isConfirmed(it.phone, `${it.first || ''} ${it.last || ''}`.trim()) || statusOf(it) === 'confirmed' };
   if (rec && rec.phoneSource === 'Typed' && rec.phone) v.phone = rec.phone;
   v.greet = greetName(v, rec);
   if (prev) return { ...v, text: prev.text, templateId: prev.templateId, selected: prev.selected, open: prev.open, editing: prev.editing };
@@ -245,7 +245,7 @@ function renderWeek() {
     const v = (weekData[x.dataset.d].items || []).find((i) => String(i.appointmentId) === x.dataset.id); if (!v) return;
     const rec = recordFor(v), cat = category(v);
     openModal(`<div class="compose-top"><div class="avatar">${esc(initials(v))}</div><div><h2>${esc(fullName(v))}</h2><p class="muted small">${esc(parseYmd(x.dataset.d).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' }))} · ${esc(fmtTime(v.start))}–${esc(fmtTime(v.end))}</p></div></div>
-      <div class="meta">${stateTag(stateOf(v))}${stateOf(v) === 'notin' ? '<span class="pill">Still Pending in RxNT</span>' : ''}${v.visitType ? `<span class="pill">${esc(v.visitType)}</span>` : ''}${phoneBadge(v, rec)}${minorBadge(v, rec, false)}${rec && rec.dnt ? '<span class="pill red">Do not text</span>' : ''}${isConfirmed(v.phone) ? `<span class="pill green">${I.check}Confirmed</span>` : ''}</div>
+      <div class="meta">${stateTag(stateOf(v))}${stateOf(v) === 'notin' ? '<span class="pill">Still Pending in RxNT</span>' : ''}${v.visitType ? `<span class="pill">${esc(v.visitType)}</span>` : ''}${phoneBadge(v, rec)}${minorBadge(v, rec, false)}${rec && rec.dnt ? '<span class="pill red">Do not text</span>' : ''}${isConfirmed(v.phone, `${v.first || ''} ${v.last || ''}`.trim()) ? `<span class="pill green">${I.check}Confirmed</span>` : ''}</div>
       <p>${esc(fmtPhone(v.phone) || 'No phone in RxNT')}</p>
       <div class="actions"><button class="btn" id="ev-day">Open day</button>${rec && rec.dnt ? '' : `<button class="btn primary" id="ev-msg">${I.msg}Message</button>`}</div>`);
     $('ev-day').onclick = () => { closeModal(); go('visits'); loadDay(x.dataset.d); };

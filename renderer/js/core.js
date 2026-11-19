@@ -17,6 +17,9 @@ const dayLabel = (iso) => { const d = new Date(iso), t = new Date(); t.setHours(
 const waitLabel = (iso) => { const m = Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000)); return m < 60 ? `${m} min` : m < 1440 ? `${Math.floor(m / 60)} h${m % 60 && m < 600 ? ` ${m % 60} m` : ''}` : `${Math.floor(m / 1440)} d`; };
 const ago = (iso) => { if (!iso) return 'never'; const m = Math.round((Date.now() - new Date(iso)) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m}m ago` : m < 1440 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`; };
 const isMac = navigator.platform.toLowerCase().includes('mac');
+// Small remembered choices (filters), kept on this computer only.
+const remember = (k, v) => { try { localStorage.setItem('rfd-' + k, v); } catch {} };
+const recall = (k, d) => { try { return localStorage.getItem('rfd-' + k) || d; } catch { return d; } };
 const I = {
   send: '<svg viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-2-7z"/></svg>',
   msg: '<svg viewBox="0 0 24 24"><path d="M4 20l1.2-4A8 8 0 1 1 8 19z"/></svg>',
@@ -50,7 +53,12 @@ let settings = null, accounts = { rxnt: {}, ringrx: {} }, info = null, sendFrom 
 let visits = [], history = [], patients = [], confirmed = {}, idx = { byPhone: {}, byPid: {}, byChart: {} };
 let currentDate = ymd(), weekStart = null, weekData = {}, activePatient = null, pTab = 'contacts', pFilter = 'all', lastSync = null, busy = { high: 0, low: 0 }, localLoading = 0;
 
-function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.remove('hidden'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add('hidden'), 3200); }
+// Toasts. With an undo function they get an Undo button and stay a little longer (misclicks happen when rushing).
+function toast(msg, undo) {
+  const t = $('toast'); t.innerHTML = ''; t.append(document.createTextNode(msg));
+  if (undo) { const b = document.createElement('button'); b.className = 'toast-undo'; b.textContent = 'Undo'; b.onclick = async () => { t.classList.add('hidden'); await undo(); }; t.append(b); }
+  t.classList.remove('hidden'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add('hidden'), undo ? 6000 : 3200);
+}
 function openModal(html) { $('modal').innerHTML = html; $('overlay').classList.remove('hidden'); }
 function closeModal() { $('overlay').classList.add('hidden'); }
 const modalLocked = () => !!$('modal').querySelector('.ring.counting, .send-list.live');
@@ -195,7 +203,13 @@ const CAT = { seen: 'Checked in', pending: 'Booked', cancelled: 'Cancelled / no-
 const isReview = (h) => h.templateId === 'review' || /^review/i.test(h.template || '') || (h.direction !== 'in' && settings.reviewLink && String(h.message || '').includes(settings.reviewLink));
 const lastReview = (phone) => { const d = digits(phone); const h = history.find((x) => x.ok && x.direction !== 'in' && isReview(x) && digits(x.phone) === d); return h && Date.now() - new Date(h.at) < 90 * 864e5 ? new Date(h.at) : null; };
 const sentSince = (phone, since) => { const t = parseYmd(since).getTime() - 864e5; return history.filter((h) => h.ok && h.direction !== 'in' && digits(h.phone) === digits(phone) && new Date(h.at).getTime() >= t); };
-const isConfirmed = (phone) => { const c = confirmed[digits(phone)]; return c && Date.now() - new Date(c) < 4 * 864e5; };
+// "C" confirmations: tied to the person who was texted (older entries are just a time). On a shared family
+// number only that person's visit shows Confirmed.
+const isConfirmed = (phone, who) => {
+  const c = confirmed[digits(phone)]; if (!c) return false;
+  const at = typeof c === 'string' ? c : c.at; if (Date.now() - new Date(at) >= 4 * 864e5) return false;
+  return typeof c === 'string' || !c.name || !who || c.name.toLowerCase() === String(who).toLowerCase();
+};
 
 // Phone status badges: no phone · not a cell · edited in app
 function phoneBadge(p, rec) {
@@ -225,6 +239,16 @@ function parentModal(rec, after) {
   setTimeout(() => $('pm-name').focus(), 50);
 }
 
+// Placeholders a template uses that came out blank for this person (e.g. no visit time), or leftover {braces}.
+function missingFields(tplText, p, msg) {
+  const out = [], t = String(tplText || '');
+  if (/\{first\}|\[First Name\]/i.test(t) && !(p.greet || p.first)) out.push('the first name');
+  if (/\{date\}|\{time\}/i.test(t) && !p.start) out.push('the visit date and time');
+  if (/\{slots\}/i.test(t) && !p.slots) out.push('the open times');
+  if (/\{review_link\}|\[Review Link\]/i.test(t) && !settings.reviewLink) out.push('the review link');
+  if (/\{(first|last|date|time|slots|review_link)\}/i.test(msg || '')) out.push('a placeholder that was never filled in');
+  return [...new Set(out)];
+}
 function itemFor(p) {
   const warn = [], t = tplById(p.templateId) || {}, aud = audienceOf(t);
   if (p.cat === 'pending' && aud === 'after') warn.push('Not checked in');
@@ -234,7 +258,10 @@ function itemFor(p) {
   if (p.age != null && p.age < 18 && !(rec && rec.contactType === 'parent')) warn.push('Minor · parent not set');
   if (rec && /home|listed/i.test(rec.phoneSource || '')) warn.push('Not a cell number');
   if (rec && rec.phoneSource === 'Typed') warn.push('Number edited in app');
-  return { name: fullName(p), phone: digits(p.phone), message: finalMessage(p), templateName: templateName(p), templateId: p.templateId || 'custom', warn };
+  const d = digits(p.phone), sharers = patients.filter((x) => x.phone === d || (x.otherPhones || []).includes(d));
+  if (sharers.length > 1) warn.push(`Shared number: ${sharers.map((x) => x.first || x.last).filter(Boolean).slice(0, 3).join(', ')}`);
+  const msg = finalMessage(p), gaps = missingFields(t.text, p, msg);
+  return { name: fullName(p), phone: d, message: msg, templateName: templateName(p), templateId: p.templateId || 'custom', warn, blocked: gaps.length ? `This text is missing ${gaps.join(' and ')}. Fix it before sending.` : '' };
 }
 
 

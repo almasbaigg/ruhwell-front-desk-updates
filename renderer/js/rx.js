@@ -57,7 +57,7 @@ function groups(rx, portal) {
   ];
 }
 
-function rowHTML(r, id) {
+function rxRowHTML(r, id) {
   return `<div class="rx-row u-${r.urg}"><span class="ic">${r.icon}</span>
     <div class="body"><p class="t">${esc(r.title)}${r.tag ? `<span class="pill ${r.urg === 'red' ? 'red' : r.urg === 'amber' ? 'amber' : ''}">${esc(r.tag)}</span>` : ''}${r.c2 ? '<span class="pill c2">Schedule II · needs Dr. Baig, see patient first</span>' : ''}</p><p class="d">${esc(r.sub)}</p></div>
     ${r.wait ? `<span class="wait u-${r.urg}">waiting ${esc(waitLabel(r.wait))}</span>` : '<span></span>'}
@@ -76,7 +76,7 @@ function renderWork(rx, portal) {
   $('rx-groups').innerHTML = gs.map((g) => {
     const red = g.rows.filter((r) => r.urg === 'red').length;
     const head = `<div class="group-title"><h2>${g.label}</h2>${g.rows.length ? `<span class="gcount ${red ? 'red' : 'amber'}">${g.rows.length}</span>` : `<span class="gclear">${I.check}All clear</span>`}${g.info ? `<em>${esc(g.info)}</em>` : ''}</div>`;
-    return `<section class="rx-group">${head}${g.rows.length ? `<div class="list">${g.rows.map((r) => { if (r.done) done.push(r.done); return rowHTML(r, done.length - 1); }).join('')}</div>` : ''}</section>`;
+    return `<section class="rx-group">${head}${g.rows.length ? `<div class="list">${g.rows.map((r) => { if (r.done) done.push(r.done); return rxRowHTML(r, done.length - 1); }).join('')}</div>` : ''}</section>`;
   }).join('');
   $('rx-groups').querySelectorAll('[data-open]').forEach((b) => (b.onclick = () => window.api.openRxnt(b.dataset.open)));
   $('rx-groups').querySelectorAll('[data-done]').forEach((b) => (b.onclick = async () => { await done[+b.dataset.done](); loadRx(); }));
@@ -84,7 +84,7 @@ function renderWork(rx, portal) {
   const hist = rx.sent || [], sent = hist.filter((i) => i.kind === 'sent'), voided = hist.filter((i) => i.kind === 'voided');
   $('rx-history').classList.toggle('hidden', !(c.sent || c.voided));
   $('rx-hist-sum').textContent = `${c.sent || 0} sent · ${c.voided || 0} voided`;
-  const block = (label, list, total) => total ? `<p class="hist-label">${label} <span class="muted">${total}</span></p>` + list.map((i) => `<div class="hist-row"><b>${esc(i.patient || 'Patient')}</b><span>${esc([i.pharmacy, i.detail].filter(Boolean).join(' · ').slice(0, 140))}</span><time>${esc(i.at ? fmtDateShort(i.at) : '')}</time></div>`).join('') + (total > list.length ? `<p class="muted small hist-more">${list.length ? `Showing ${list.length} of ${total}. ` : ''}Open RxNT for the full list.</p>` : '') : '';
+  const block = (label, list, total) => total ? `<p class="hist-label">${label} <span class="muted">${total}</span></p>` + list.map((i, k) => `<div class="hist-row"><b><i class="hist-n">${k + 1}</i>${esc(i.patient || 'Patient')}</b><span>${esc([i.pharmacy, i.detail].filter(Boolean).join(' · ').slice(0, 140))}</span><time>${esc(i.at ? fmtDateShort(i.at) : '')}</time></div>`).join('') + (total > list.length ? `<p class="muted small hist-more">${list.length ? `Showing ${list.length} of ${total}. ` : ''}Open RxNT for the full list.</p>` : '') : '';
   $('rx-hist').innerHTML = block('Sent', sent, c.sent) + block('Voided', voided, c.voided);
 }
 $('rx-open').onclick = () => window.api.openRxnt();

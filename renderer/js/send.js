@@ -30,15 +30,24 @@ function messageModal(src, preset) {
 const RING_C = 2 * Math.PI * 40;
 const ring = (offset, inner, cls = '', style = '') => `<div class="ring-wrap"><div class="ring ${cls}"><svg viewBox="0 0 92 92"><circle class="bg" cx="46" cy="46" r="40"/><circle class="fg" id="m-arc" cx="46" cy="46" r="40" stroke-dasharray="${RING_C}" stroke-dashoffset="${offset}" style="${style}"/></svg><b id="m-count">${inner}</b></div></div>`;
 function confirmAndSend(items, after) {
+  const blocked = items.find((i) => i.blocked);
+  if (blocked) return toast(items.length > 1 ? `${blocked.name}: ${blocked.blocked}` : blocked.blocked);
   const TOTAL = 5, flagged = items.filter((i) => i.warn.length), single = items.length === 1;
   let n = TOTAL, stop = false, t = null;
   openModal(`<div class="send-head"><h2>${single ? esc(items[0].name) : `Send ${items.length} messages`}</h2><button class="icon-btn" id="m-x" aria-label="Cancel">${I.x}</button></div>
     <p class="muted small">${single ? `${esc(fmtPhone(items[0].phone))} · ${esc(items[0].templateName)}` : esc([...new Set(items.map((i) => i.templateName))].join(', '))}${sendFrom ? ` · from ${esc(fmtPhone(sendFrom))}` : ''}</p>
     ${single ? `<div class="bubble">${esc(items[0].message)}</div>` : `<div class="lines">${items.map((i) => `<div class="line"><div><strong>${esc(i.name)}</strong>${i.warn.length ? `<div class="warnline">${esc(i.warn.join(' · '))}</div>` : ''}</div><span class="r">${esc(fmtPhone(i.phone))}</span></div>`).join('')}</div>`}
     ${flagged.length ? `<div class="warnbox">${I.bell}<span>${single ? esc(items[0].warn.join(' · ')) : `Check ${flagged.length === 1 ? 'the flagged patient' : `the ${flagged.length} flagged patients`} before sending.`}</span></div>` : ''}
+    ${single ? `<label class="follow-row">${I.bell}<span>Remind me if no reply</span><select id="m-follow"><option value="">Off</option><option value="4">In 4 hours</option><option value="t">Tomorrow 9 AM</option><option value="48">In 2 days</option></select></label>` : ''}
     <div class="send-foot">${flagged.length ? '<span class="muted small">Waiting for you</span>' : `<div class="ring sm counting"><svg viewBox="0 0 92 92"><circle class="bg" cx="46" cy="46" r="40"/><circle class="fg" id="m-arc" cx="46" cy="46" r="40" stroke-dasharray="${RING_C}" stroke-dashoffset="0"/></svg><b id="m-count">${TOTAL}</b></div><span class="muted small">Sending in <b id="m-sec">${TOTAL}</b> s · nothing sent yet</span>`}
       <span style="flex:1"></span><button class="btn primary" id="m-now">${I.send}${flagged.length ? 'Send anyway' : 'Send now'}</button></div>`);
   const cancel = () => { stop = true; clearInterval(t); closeModal(); toast('Cancelled. Nothing was sent.'); };
+  // Choosing a follow-up pauses the countdown so it can't send mid-choice; Send now carries on.
+  if ($('m-follow')) $('m-follow').onchange = (e) => {
+    items[0].follow = e.target.value; clearInterval(t);
+    const foot = $('m-sec') && $('m-sec').parentElement; if (foot) foot.innerHTML = 'Paused · press <b>Send now</b> when ready';
+    const r = document.querySelector('.send-foot .ring'); if (r) r.classList.remove('counting');
+  };
   $('m-x').onclick = cancel;
   $('m-now').onclick = () => { if (stop) return; stop = true; clearInterval(t); doSend(items, after); };
   if (flagged.length) return;
@@ -54,6 +63,11 @@ async function doSend(items, after) {
   openModal(`<h2>Sending…</h2><div class="progress"><div id="m-bar"></div></div>
     <div class="send-list live">${items.map((i, k) => `<div class="send-item" id="si-${k}"><strong>${esc(i.name)}</strong><span class="muted small">${esc(fmtPhone(i.phone))}</span><span class="st">${k === 0 ? '<span class="spinner"></span>Sending' : 'Waiting'}</span></div>`).join('')}</div>`);
   const results = await window.api.sendBatch(items);
+  // "Remind me if no reply": a checklist task with a reminder, which checks itself off when they reply.
+  for (const r of results) if (r.ok && r.follow) {
+    const due = r.follow === 't' ? (() => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d.toISOString(); })() : new Date(Date.now() + Number(r.follow) * 36e5).toISOString();
+    await window.api.checklistAdd(`Follow up: no reply from ${r.name}`, { raw: true, due, link: { phone: r.phone }, followUp: r.phone });
+  }
   const ok = results.filter((r) => r.ok).length, out = results.find((r) => r.code === 'SIGNED_OUT'), all = ok === items.length;
   if (out) paintConnections();
   if (all && items.length === 1) { closeModal(); toast(`Sent to ${results[0].name}`); if (after) after(results); return; }

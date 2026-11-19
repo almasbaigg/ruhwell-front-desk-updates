@@ -42,6 +42,14 @@
 <div id="shell" class="shell hidden">
   <aside class="sidebar">
     <div class="clock" id="clock"><b id="clock-time"></b><span id="clock-date"></span><em id="clock-next"></em></div>
+    <div class="timer" id="timer">
+      <button class="timer-start" id="tm-start" title="Start a timer for what you're doing"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2M9 2h6"/></svg>Start a timer</button>
+      <div class="timer-run hidden" id="tm-run">
+        <div class="disc" id="tm-disc"></div>
+        <div class="timer-side"><span class="timer-label" id="tm-label"></span><b class="timer-left" id="tm-left"></b>
+          <div class="timer-btns"><button class="tbtn" id="tm-pause" title="Pause"></button><button class="tbtn" id="tm-add" title="Add 5 minutes">+5</button><button class="tbtn" id="tm-stop" title="Stop the timer"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button></div></div>
+      </div>
+    </div>
     <button class="btn primary block" id="new-msg"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New message</button>
     <nav>
       <button class="nav" data-view="today"><svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></svg>Today<span class="badge hidden" id="nb-today"></span></button>
@@ -203,13 +211,20 @@
     <section class="view hidden" id="view-settings">
       <header class="head"><div><p class="eyebrow">Preferences</p><h1>Settings</h1></div><div class="head-actions"><span class="muted small" id="s-saved"></span><button class="btn primary" id="s-save">Save changes</button></div></header>
       <div class="card">
-        <h3>Accounts</h3>
-        <div class="row-line"><div><strong>RxNT <span class="health" id="s-rxnt-health"></span></strong><span class="muted small" id="s-rxnt-state"></span></div><div class="row-gap"><button class="btn" id="s-rxnt-connect">Reconnect</button><button class="btn ghost" id="s-rxnt-out">Sign out</button></div></div>
-        <div class="row-line"><div><strong>RingRx <span class="health" id="s-ringrx-health"></span></strong><span class="muted small" id="s-ringrx-state"></span><span class="from-line" id="s-from"></span></div><button class="btn ghost" id="s-ringrx-out">Sign out</button></div>
-        <div class="row-line"><div><strong>Gmail <span class="health" id="s-gmail-health"></span></strong><span class="muted small" id="s-gmail-state"></span></div><div class="row-gap"><button class="btn" id="s-gmail-connect">Sign in</button><button class="btn ghost" id="s-gmail-out">Sign out</button></div></div>
+        <h3>About you</h3>
+        <p class="card-sub">Used across the app: the greeting, when alerts may text you, and the end-of-day check.</p>
+        <div class="row-line first"><div><strong>Your name</strong><span class="muted small">Today says "Good morning, …"</span></div><input id="s-name" placeholder="e.g. Maria" style="width:210px" maxlength="30"></div>
+        <div class="row-line"><div><strong>Office hours</strong><span class="muted small">Weekdays. Alerts text you only in these hours; the end-of-day check runs at closing.</span></div><div class="row-gap"><input type="time" id="sy-start" class="w-time"><span class="muted small">to</span><input type="time" id="sy-end" class="w-time"><span class="muted small" style="white-space:nowrap">look ahead</span><select id="w-days"><option value="3">3 days</option><option value="7">7 days</option><option value="14">14 days</option></select></div></div>
+        <div class="row-line"><div><strong>Daily summaries</strong><span class="muted small">A pop-up with the day ahead, and a nudge to send tomorrow's reminders</span></div></div>
+        <div class="daily">
+          <label class="check"><input type="checkbox" id="s-sum-on"><span></span>Today's schedule</label><span class="muted small">at</span><input type="time" id="s-sum-time" class="w-time">
+          <label class="check"><input type="checkbox" id="s-nudge-on"><span></span>Tomorrow's reminders</label><span class="muted small">at</span><input type="time" id="s-nudge-time" class="w-time">
+        </div>
       </div>
       <div class="card">
-        <h3>Alerts</h3>
+        <h3>How should we reach you?</h3>
+        <p class="card-sub">Pick where each kind of alert shows up. Pop-ups appear on this computer; texts go to the cell below.</p>
+
         <div class="row-line first"><div><strong>Send alert texts to</strong><span class="muted small">Leave empty to use the practice's RingRx number. Texts say what changed and when, never patient names.</span></div><div class="row-gap"><input id="s-cell" placeholder="(555) 555-5555" style="width:210px"><button class="btn" id="s-cell-test">Send test</button></div></div>
         <div class="alert-grid">
           <span></span><b>Notify on this computer</b><b>Text alert cell</b>
@@ -223,13 +238,30 @@
         </div>
       </div>
       <div class="card">
-        <div class="card-head"><h3>Updates</h3><button class="btn" id="up-check">Check for updates</button></div>
-        <div class="row-line first"><div><strong id="up-ver"></strong><span class="muted small" id="up-msg">The app checks on its own every few hours and downloads quietly.</span></div><button class="btn primary hidden" id="up-restart">Restart to update</button></div>
+        <h3>Your accounts</h3>
+        <p class="card-sub">The app reads these to fill in your day. Sign-ins stay on this computer.</p>
+
+        <div class="row-line"><div><strong>RxNT <span class="health" id="s-rxnt-health"></span></strong><span class="muted small" id="s-rxnt-state"></span><span class="muted small" id="s-rxnt-saved"></span></div><div class="row-gap"><button class="btn" id="s-rxnt-connect">Reconnect</button><button class="btn ghost" id="s-rxnt-out">Sign out</button></div></div>
+        <div class="row-line"><div><strong>RingRx <span class="health" id="s-ringrx-health"></span></strong><span class="muted small" id="s-ringrx-state"></span><span class="from-line" id="s-from"></span></div><button class="btn ghost" id="s-ringrx-out">Sign out</button></div>
+        <div class="row-line"><div><strong>Gmail <span class="health" id="s-gmail-health"></span></strong><span class="muted small" id="s-gmail-state"></span></div><div class="row-gap"><button class="btn" id="s-gmail-connect">Sign in</button><button class="btn ghost" id="s-gmail-out">Sign out</button></div></div>
       </div>
       <div class="card">
-        <div class="card-head"><h3>Sync</h3><button class="btn" id="sy-now">Sync now</button></div>
+        <h3>Your messages</h3>
+        <p class="card-sub">Added to the texts you send.</p>
+
+        <div class="set-grid">
+          <span>Review link</span><input id="s-review">
+          <span>Sign-off</span><div class="row-gap"><input id="s-sig"><label class="switch"><input type="checkbox" id="s-sig-on"><span></span></label></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Message templates</h3><button class="btn" id="t-add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add template</button></div>
+        <p class="muted small">Click a template to edit it. Tap a chip to add the patient's name, visit time and more.</p>
+        <div id="t-list"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Staying up to date</h3><button class="btn" id="sy-now">Sync now</button></div>
         <div class="row-line first"><div><strong>Smart sync</strong><span class="muted small">New and cancelled appointments, texts and calls update every 15 minutes during office hours and hourly otherwise. Email every 30 minutes (2 hours after hours), prescriptions and RxNT To-Do hourly (4 hours after hours), patient list every 4 hours. Opening the app catches up anything older than 15 minutes.</span></div></div>
-        <div class="row-line"><div><strong>Office hours</strong><span class="muted small">Weekdays</span></div><div class="row-gap"><input type="time" id="sy-start" class="w-time"><span class="muted small">to</span><input type="time" id="sy-end" class="w-time"><span class="muted small" style="white-space:nowrap">look ahead</span><select id="w-days"><option value="3">3 days</option><option value="7">7 days</option><option value="14">14 days</option></select></div></div>
         <div class="sync-list">
           <span>Appointments</span><em id="sx-rxnt"></em>
           <span>Texts and calls</span><em id="sx-comms"></em>
@@ -239,21 +271,11 @@
         </div>
       </div>
       <div class="card">
-        <h3>Messages</h3>
-        <div class="set-grid">
-          <span>Review link</span><input id="s-review">
-          <span>Sign-off</span><div class="row-gap"><input id="s-sig"><label class="switch"><input type="checkbox" id="s-sig-on"><span></span></label></div>
-        </div>
+        <div class="card-head"><h3>App updates</h3><button class="btn" id="up-check">Check for updates</button></div>
+        <div class="row-line first"><div><strong id="up-ver"></strong><span class="muted small" id="up-msg">The app checks on its own every few hours and downloads quietly.</span></div><button class="btn primary hidden" id="up-restart">Restart to update</button></div>
       </div>
       <div class="card">
-        <h3>Daily notifications</h3>
-        <div class="daily">
-          <label class="check"><input type="checkbox" id="s-sum-on"><span></span>Today's schedule</label><span class="muted small">at</span><input type="time" id="s-sum-time" class="w-time">
-          <label class="check"><input type="checkbox" id="s-nudge-on"><span></span>Tomorrow's reminders</label><span class="muted small">at</span><input type="time" id="s-nudge-time" class="w-time">
-        </div>
-      </div>
-      <div class="card">
-        <h3>App</h3>
+        <h3>This computer</h3>
         <div class="toggles">
           <label class="switch"><input type="checkbox" id="s-login"><span></span><b id="s-login-label">Start with Windows</b></label>
           <label class="switch"><input type="checkbox" id="s-close"><span></span><b>Keep running in tray when closed</b></label>
@@ -262,12 +284,9 @@
         </div>
       </div>
       <div class="card">
-        <div class="card-head"><h3>Templates</h3><button class="btn" id="t-add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add template</button></div>
-        <p class="muted small">Click a template to edit it. Tap a chip to add the patient's name, visit time and more.</p>
-        <div id="t-list"></div>
-      </div>
-      <div class="card">
-        <h3>Data</h3>
+        <h3>Your data</h3>
+        <p class="card-sub">Everything is saved on this computer, encrypted, and backed up daily.</p>
+
         <div class="row-line"><div><strong>History</strong><span class="muted small">How long sent messages are kept</span></div><select id="s-keep"><option value="forever">Keep forever</option><option value="2y">Keep 2 years</option><option value="1y">Keep 1 year</option></select></div>
         <div class="row-line"><div><strong>Automatic backup</strong><span class="muted small" id="b-auto-line">Every day, last 14 kept in the data folder</span></div><div class="row-gap"><button class="btn" id="b-auto-restore">Restore…</button><label class="switch"><input type="checkbox" id="s-autobackup"><span></span></label></div></div>
         <div class="row-line"><div><strong>Backup file</strong><span class="muted small">Password-protected file with everything: patients, history, calls, contacts, checklists, notes and settings</span></div><div class="row-gap"><button class="btn" id="b-restore">Restore file</button><button class="btn" id="b-export">Save backup file</button></div></div>
@@ -288,6 +307,8 @@
 <script src="js/patients.js"></script>
 <script src="js/today.js"></script>
 <script src="js/pad.js"></script>
+<script src="js/timer.js"></script>
+<script src="js/tips.js"></script>
 <script src="js/texts.js"></script>
 <script src="js/calls.js"></script>
 <script src="js/rx.js"></script>

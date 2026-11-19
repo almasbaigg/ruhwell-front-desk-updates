@@ -26,13 +26,18 @@ async function loadSettings() {
   $('w-days').value = String(draft.watch.daysAhead);
   $('sy-start').value = (draft.sync || {}).busyStart || '08:00'; $('sy-end').value = (draft.sync || {}).busyEnd || '17:00';
   paintSyncTimes();
+  $('s-name').value = draft.userName || '';
   $('s-review').value = draft.reviewLink || ''; $('s-sig').value = draft.signature || ''; $('s-sig-on').checked = !!draft.signatureOn;
   $('s-sum-on').checked = !!draft.summary.on; $('s-sum-time').value = draft.summary.time;
   $('s-nudge-on').checked = !!draft.nudge.on; $('s-nudge-time').value = draft.nudge.time;
   $('s-login').checked = !!draft.openAtLogin; $('s-close').checked = !!draft.closeToTray; $('s-min').checked = !!draft.minimizeToTray; $('s-sound').checked = draft.sound !== false;
   $('s-keep').value = draft.historyKeep || 'forever';
   $('s-autobackup').checked = draft.autoBackup !== false;
-  window.api.backupList().then((l) => { $('b-auto-line').textContent = l.length ? `Every day · last saved ${new Date(l[0].date + 'T12:00').toLocaleDateString([], { month: 'short', day: 'numeric' })} · ${l.length} kept` : 'Every day, last 14 kept in the data folder'; });
+  Promise.all([window.api.backupList(), window.api.syncStatus()]).then(([l, st]) => {
+    const b = st.backup || {}, failed = b.ok === false;
+    $('b-auto-line').textContent = failed ? `Last backup failed: ${b.error || 'unknown reason'}` : l.length ? `Every day · last saved ${new Date(l[0].date + 'T12:00').toLocaleDateString([], { month: 'short', day: 'numeric' })} · ${l.length} kept` : 'Every day, last 14 kept in the data folder';
+    $('b-auto-line').classList.toggle('warn-text', failed);
+  });
   $('data-path').textContent = info?.dataDir || ''; $('s-saved').textContent = '';
   renderTemplates();
   paintHealth();
@@ -46,6 +51,13 @@ async function paintHealth() {
     pill.textContent = !ok ? 'Signed out' : warn ? "Can't reach · retrying" : `Connected${when ? ' · checked ' + minsAgo(when) : ''}`;
     if (btn) { $(btn).classList.toggle('hidden', ok && !warn); $(btn).textContent = ok ? 'Reconnect' : 'Sign in'; }
   };
+  window.api.rxntHasLogin().then((has) => {
+    const el = $('s-rxnt-saved'); if (!el) return;
+    el.innerHTML = has === 'ok' ? `Sign-in saved on this computer, so the app signs itself back in. <button class="link-btn" id="s-rxnt-forget">Forget it</button>`
+      : has === 'bad' ? `<span class="warn-text">The saved sign-in stopped working (password changed?). Reconnect to save the new one.</span> <button class="link-btn" id="s-rxnt-forget">Forget it</button>`
+      : 'Sign in once and the app remembers it (saved encrypted on this computer).';
+    if (has) $('s-rxnt-forget').onclick = async () => { const ok = await window.api.rxntForgetLogin(); toast(ok ? 'Saved RxNT sign-in removed' : "Couldn't remove the saved sign-in. Try again."); paintHealth(); };
+  });
   set('rxnt', st.rxnt, !!(st.alerts || {}).lastError, (st.alerts || {}).lastRun || (st.schedule || {}).at, 's-rxnt-connect');
   set('ringrx', st.ringrx, (st.messages || {}).error === 'failed', (st.messages || {}).at);
   set('gmail', !!G.connected, !!G.error, G.at, 's-gmail-connect');
@@ -111,7 +123,7 @@ $('s-save').onclick = async () => {
     alertPrefs: prefs, alertCells: { ...(draft.alertCells || {}), [settings.currentProfile]: cellD },
     watch: { ...draft.watch, enabled: true, daysAhead: +$('w-days').value },
     sync: { busyStart: $('sy-start').value || '08:00', busyEnd: $('sy-end').value || '17:00' },
-    reviewLink: $('s-review').value.trim(), signature: $('s-sig').value.trim(), signatureOn: $('s-sig-on').checked,
+    userName: $('s-name').value.trim(), reviewLink: $('s-review').value.trim(), signature: $('s-sig').value.trim(), signatureOn: $('s-sig-on').checked,
     summary: { on: $('s-sum-on').checked, time: $('s-sum-time').value || '07:30', sms: false },
     nudge: { on: $('s-nudge-on').checked, time: $('s-nudge-time').value || '17:00' },
     openAtLogin: $('s-login').checked, closeToTray: $('s-close').checked, minimizeToTray: $('s-min').checked, sound: $('s-sound').checked,

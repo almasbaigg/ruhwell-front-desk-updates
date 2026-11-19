@@ -15,6 +15,17 @@ function entries(xml) {
 
 function ua() { return session.fromPartition(PART).getUserAgent().replace(/\s(Electron|ruhwell[^ ]*|Ruhwell Front Desk)\/[\d.]+/gi, ''); }
 
+// Keep the Google sign-in from ending when the app closes: cookies that would vanish at the end of the
+// session are kept for 6 months on this computer (the same way the browser's "stay signed in" works).
+async function keepSignedIn() {
+  try {
+    const ses = session.fromPartition(PART), until = Math.floor(Date.now() / 1000) + 180 * 86400;
+    for (const c of (await ses.cookies.get({})).filter((x) => x.session && /google\.com$/.test(x.domain.replace(/^\./, '')))) {
+      await ses.cookies.set({ url: `https://${c.domain.replace(/^\./, '')}${c.path || '/'}`, name: c.name, value: c.value, path: c.path, domain: c.hostOnly ? undefined : c.domain, secure: c.secure, httpOnly: c.httpOnly, sameSite: c.sameSite, expirationDate: until }).catch(() => {});
+    }
+    await ses.cookies.flushStore();
+  } catch {}
+}
 async function check() {
   try {
     const ses = session.fromPartition(PART);
@@ -24,6 +35,7 @@ async function check() {
     const n = Number((xml.match(/<fullcount>(\d+)<\/fullcount>/) || [])[1]);
     const account = ((xml.match(/<title>[^<]*for ([^<\s]+)<\/title>/) || [])[1] || '').trim();
     last = { connected: !isNaN(n), unread: isNaN(n) ? null : n, account, at: new Date().toISOString(), error: isNaN(n) ? 'failed' : null, items: isNaN(n) ? [] : entries(xml) };
+    if (last.connected) keepSignedIn();
   } catch { last = { ...last, error: 'failed', at: new Date().toISOString() }; }
   return last;
 }
@@ -48,4 +60,4 @@ function url(messageId) {
   return `https://mail.google.com/mail/?authuser=${who}#inbox${messageId && /^[0-9a-f]+$/.test(messageId) ? '/' + messageId : ''}`;
 }
 
-module.exports = { check, signIn, signOut, status, url };
+module.exports = { keepSignedIn, check, signIn, signOut, status, url };

@@ -82,7 +82,8 @@ function paintSync(st) {
   navBadge('nb-texts', N.texts); navBadge('nb-calls', N.calls); navBadge('nb-rx', ((st.rx || {}).count || 0) + ((st.rx || {}).work || 0));
   const G = st.gmail || {}, P = st.patients || {};
   // The one line: green when all is well, otherwise the first thing that needs you.
-  const problem = !st.rxnt ? 'RxNT sign-in needed' : !st.ringrx ? 'RingRx sign-in needed' : !G.connected ? 'Gmail sign-in needed' : (st.alerts || {}).lastError ? 'Can\'t reach RxNT · retrying' : (st.messages || {}).error === 'failed' ? 'Can\'t reach RingRx · retrying' : null;
+  const backupFailed = st.backup && st.backup.ok === false && st.backup.failedAt && Date.now() - new Date(st.backup.failedAt) < 2 * 864e5;
+  const problem = st.locked ? 'Saved data locked · restart the app' : !st.rxnt ? 'RxNT sign-in needed' : !st.ringrx ? 'RingRx sign-in needed' : !G.connected ? 'Gmail sign-in needed' : (st.alerts || {}).lastError ? 'Can\'t reach RxNT · retrying' : (st.messages || {}).error === 'failed' ? 'Can\'t reach RingRx · retrying' : backupFailed ? 'Backup failed · see Settings' : null;
   const working = busy.high || busy.low || P.running || (st.messages || {}).running;
   $('status-line').className = 'status-line ' + (problem ? 'warn' : working ? 'busy' : 'on');
   $('status-text').textContent = problem || (working ? 'Syncing…' : `All connected · ${minsAgo((st.alerts || {}).lastRun || (st.schedule || {}).at) || 'just now'}`);
@@ -158,6 +159,7 @@ function paintClock() {
   const mins = Math.round((new Date(next.start) - now) / 60000);
   el.textContent = mins <= 0 ? `Visit now · ${fullName(next)}` : `Next visit in ${mins < 60 ? mins + ' min' : Math.floor(mins / 60) + ' h ' + (mins % 60) + ' min'} · ${fullName(next)}`;
   el.className = mins <= 5 ? 'u-red' : mins <= 10 ? 'u-amber' : '';
+  el.title = typeof visitBrief === 'function' ? visitBrief(next) : '';
 }
 paintClock();
 setInterval(paintClock, 15000);

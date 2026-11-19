@@ -42,6 +42,10 @@ function restore(b) {
     [...(b.ringrxContacts.items || []), ...(now.items || [])].forEach((c) => { map[c.id] = c; });
     store.ringrxContacts.set({ ...now, items: Object.values(map) });
   }
+  if (b.inbound) {   // reply history: STOP/confirm processing and confirmations
+    const now = store.inbound.get();
+    store.inbound.set({ ...b.inbound, ...now, confirmed: { ...(b.inbound.confirmed || {}), ...(now.confirmed || {}) } });
+  }
   if (b.personal) checklist.importAll(b.personal);
   return { patients: Object.keys(b.patients || {}).length, history: (b.history || []).length };
 }
@@ -67,15 +71,26 @@ function list() {
   } catch { return []; }
 }
 
-// Once a day (called on launch and hourly). Skips if today's backup exists.
+// Once a day (called on launch and hourly). Skips if today's backup exists and opens.
+// Never backs up while saved data is locked (the backup would be empty). Every outcome is recorded,
+// so a failing backup shows up in Settings and the status line instead of failing quietly.
+const STATUS = 'backup-status.json';
+const status = () => store.raw.readPlain(STATUS, {});
 function autoDaily() {
   if (store.settings.get().autoBackup === false) return false;
-  const name = `auto-${ymd()}.bin`;
-  if (list().some((b) => b.file === name)) return false;
-  fs.mkdirSync(store.raw.file(DIR), { recursive: true });
-  store.raw.writeSecure(path.join(DIR, name), snapshot());
-  list().slice(KEEP).forEach((b) => { try { fs.unlinkSync(store.raw.file(path.join(DIR, b.file))); } catch {} });
-  return true;
+  const name = `auto-${ymd()}.bin`, rel = path.join(DIR, name);
+  try {
+    if (list().some((b) => b.file === name) && store.raw.readSecure(rel, null)) return false;
+    if (store.raw.lockedFiles().length) throw new Error('Your saved data is locked right now, so no backup was made.');
+    store.raw.writeSecure(rel, snapshot());
+    if (!store.raw.readSecure(rel, null)) throw new Error('The backup could not be read back.');
+    list().slice(KEEP).forEach((b) => { try { fs.unlinkSync(store.raw.file(path.join(DIR, b.file))); } catch {} });
+    store.raw.writePlain(STATUS, { at: new Date().toISOString(), ok: true });
+    return true;
+  } catch (e) {
+    store.raw.writePlain(STATUS, { ...status(), failedAt: new Date().toISOString(), ok: false, error: String(e.message || e).slice(0, 200) });
+    return false;
+  }
 }
 function restoreAuto(file) {
   if (!/^auto-\d{4}-\d{2}-\d{2}\.bin$/.test(file)) throw new Error('Unknown backup.');
@@ -84,4 +99,4 @@ function restoreAuto(file) {
   return restore(b);
 }
 
-module.exports = { snapshot, restore, list, autoDaily, restoreAuto, contactsCsv };
+module.exports = { snapshot, restore, list, autoDaily, restoreAuto, contactsCsv, status };

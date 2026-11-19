@@ -60,5 +60,18 @@ const comms = require(APP + '/comms');
   assert(!comms.textThreads(30).find((x) => x.phone === '5125550101').needs, 'text done clears it');
   offline = true;
   assert((await ringrx.messages('almas')) === null && (await ringrx.calls('almas')) === null, 'unavailable -> null');
+  // STOP blocks the number for everyone on it (a parent's phone shared by two children, and an extra number).
+  store.patients.upsert([{ first: 'Kid', last: 'One', phone: '5125550160', chart: 'S1' }, { first: 'Kid', last: 'Two', phone: '5125550160', chart: 'S2' }, { first: 'Teen', last: 'Three', phone: '5125550161', otherPhones: ['5125550160'], chart: 'S3' }]);
+  const evs = [];
+  comms.handleReplies([{ phone: '5125550160', body: 'STOP', at: new Date().toISOString(), inbound: true }], (e) => evs.push(...e));
+  const ps = Object.values(store.patients.all()).filter((x) => ['S1', 'S2', 'S3'].includes(x.chart));
+  assert(ps.length === 3 && ps.every((x) => x.dnt) && comms.optedOut('5125550160'), 'everyone on the number blocked');
+  assert(/shared number/.test(evs[0].text), 'alert names the shared number, not one child');
+  // A START that's older than the STOP (replies arriving newest-first) must not lift the block.
+  const t0 = Date.now();
+  comms.handleReplies([{ phone: '5125550170', body: 'STOP', at: new Date(t0 - 60000).toISOString(), inbound: true }, { phone: '5125550170', body: 'START', at: new Date(t0 - 120000).toISOString(), inbound: true }], () => {});
+  assert(comms.optedOut('5125550170'), 'older START does not undo a newer STOP');
+  comms.handleReplies([{ phone: '5125550170', body: 'START', at: new Date(t0).toISOString(), inbound: true }], () => {});
+  assert(!comms.optedOut('5125550170'), 'a newer START lifts it');
   console.log('RingRx + conversations OK');
 })().catch((e) => { console.error(e.message); process.exit(1); });

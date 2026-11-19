@@ -27,9 +27,9 @@ jobs:
         with: { node-version: 22 }
       - run: npm ci
       - run: npm test
-      - run: npx electron-builder --mac dmg --arm64 --x64 --publish never
+      - run: npx electron-builder --mac dmg zip --arm64 --x64 --publish never
       - uses: actions/upload-artifact@v4
-        with: { name: mac, path: "dist/*.dmg\ndist/latest-mac.yml" }
+        with: { name: mac, path: "dist/*.dmg\ndist/*.zip\ndist/latest-mac.yml" }
   publish:
     needs: [windows, mac]
     runs-on: ubuntu-latest

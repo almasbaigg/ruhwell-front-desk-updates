@@ -106,3 +106,71 @@
 - Texts: grouped by day; Needs reply shows how long each has waited (green → amber → red). Calls: callbacks show waiting time with urgency; today open, earlier days folded.
 - Templates: compact list, click to edit in place, tap-to-insert chips, live preview with a sample patient, delete in a ⋯ menu with confirm, duplicate.
 - CLAUDE.md: instructions for any Claude (including Maria's) to build the Mac version and keep both versions identical.
+
+## 1.5.3 (Windows test build)
+- Saved RxNT sign-in made safe (from the 1.5.2 review, verified): saved only after RxNT lets you in (a typo never replaces a good one); each sign-in step is submitted once, and a "wrong password" stops it immediately (no repeated attempts that could lock the account) and Settings says the saved sign-in needs updating; it only fills in on RxNT's own pages; nothing goes through the page console; "Forget it" deletes the file and confirms.
+- RingRx: a dropped connection no longer signs you out (only a truly expired login does), and the password is kept encrypted so the app can sign back in once by itself.
+- Gmail: the Google sign-in is kept for 6 months instead of ending with the session (no password stored; Google blocks automated sign-ins).
+- STOP/START: replies are handled oldest-first, and START only counts if it came after the STOP. The retry after a RingRx session refresh re-checks STOP too.
+- Mac self-update: the new version is staged on the same disk, must report it started fine within 3 minutes, otherwise the old version is put back automatically.
+- Home screen: Needs attention is wider; names and details use up to two lines instead of being cut off; tags sit beside or under the title; more spacing. Visits show the status under the name. "Before you go" shows counts (2 texts · 1 call · 3 prescriptions). Notes header never gets cut off.
+- RxNT history rows are numbered.
+
+## 1.5.2 (Windows test build)
+- RxNT stays signed in: the app remembers your RxNT sign-in (encrypted on this computer) the next time you sign in, and if RxNT ever signs it out, it signs itself back in quietly (also when the app opens). Only a verification-code step needs you. Session kept alive every 5 minutes. Settings → Your accounts shows "Sign-in saved" with Forget it.
+- (Verified from the 1.5.0 review) Reschedule pairing only within 2 weeks; a same-slot replacement is a quiet edit; "Back on the schedule" alerts right away for today/tomorrow.
+- STOP is separate from the Do-not-text switch: a number that replied STOP stays blocked until they text START (automatic) or you confirm they opted back in. The block is re-checked before every single text, with all numbers compared as 10 digits.
+- Saving: written to disk before swapping in; an existing file that can't be read, or is empty, is locked (never treated as "no data").
+- Mac self-update: the download must match the release checksum; the old app is kept until the new one runs (and put back if it doesn't); no shell tricks with file paths.
+
+## 1.5.1 (Windows test build)
+- Fix: RxNT work and dashboard counts failed to load (an empty value broke the reader). Regression test added.
+- Fix: Schedule day view showed "undefined" cards on days with closed or out-of-office blocks.
+- Timer: a clean pie that empties as time runs out.
+
+## 1.5.0 (first Windows test build)
+- Mac updates install themselves (needs the Mac build of 1.5.0 installed once): the app downloads the new version, replaces itself and restarts. Files the app downloads itself aren't flagged by macOS, so no "damaged" warning and no Terminal command after this first install.
+- Timer (for anything she's doing): a timer button under the sidebar clock. Quick picks (5, 10, 15, 25, 45 min, or type a time) and an optional label ("Charting", "Call pharmacy"). While running, the sidebar clock becomes a big shrinking disc with the time left (teal → amber at 5 min → terracotta at 1 min), plus Pause, +5 min and Stop. At the end: a soft chime and a pop-up "Time's up: Charting" with +5 min / Done. The time left also shows in the Mac menu bar so she sees it while working in RxNT. One timer at a time, nothing to set up.
+- (From code review, all verified in the code) Data safety: if saved data can't be decrypted (e.g. Mac Keychain access denied after an update), never treat it as empty and never overwrite it. Show a clear "Can't unlock your data" message instead. Refuse to save patient data unencrypted.
+- Sync retries: a failed sync retries within a few minutes instead of waiting for the full interval (track last success separately from last attempt).
+- RingRx: a failed pull is reported as failed, so old texts/calls are labeled stale instead of looking current.
+- RxNT portal: fix new-message alerts when the inbox was empty before (the first message after an empty inbox could be missed).
+- Prescriptions: if RxNT shows counts but the patient details didn't load, say "3 pending, details didn't load" instead of a short list that looks complete.
+- Links: only open https links to known sites (RxNT, RingRx, Google, GitHub, review link) from the app.
+- Today: the Next up item no longer repeats in the list below it. "Later today" becomes "In 3 hours" (or "Before closing" when that's sooner).
+- Never show "All caught up" while a source failed to load; show which source is stale and when it last worked, right on Today.
+- (From ChatGPT ideas, checked against the app) Wake from sleep: when the laptop wakes, catch up right away (today's schedule and messages first) and send one summary, not a replay of every change.
+- Source health on Today: a small line per source (RxNT schedule, prescriptions, RingRx, Gmail) with when it last worked; stale ones amber with "check RxNT directly".
+- Patient timeline: in a patient's record, one list of visits, texts, calls and prescriptions in time order (from what's already on the computer).
+- Texts: if a send times out, check whether it actually went out before allowing a retry (no duplicate texts).
+- Follow-up on outreach: when sending a text that needs an answer, optionally "remind me if no reply by …"; clears itself when they reply.
+- (Verified from the ChatGPT backlog) Safe saving: write each data file to a temporary copy and swap it in, so a crash or power loss mid-save can't corrupt it.
+- Automatic backups: if the daily backup fails, say so (Settings and the status line) instead of failing silently.
+- Templates: if a text would go out with a blank where the date, time or name should be (e.g. "your appointment on  at "), stop and point it out before sending.
+- Internet back: when the connection returns, catch up right away (same as waking from sleep).
+- Schedule alerts (from a targeted review of watcher.js / rxnt-reader.js, each verified in the code), with regression tests:
+  - A visit moved to a new time without a status change (same appointment, new time) now alerts as "Rescheduled". Today it's missed.
+  - Cancel/rebook pairing becomes one-to-one and nearest-in-time, so a patient with several bookings can't get a wrong "rescheduled from…".
+  - A day RxNT won't open is "couldn't read", not "closed". Only weekends/hidden days count as closed. (A failed weekday read could otherwise look like every visit was cancelled.)
+  - A visit that disappears outright (RxNT normally keeps cancelled visits visible with a Canceled status) must stay gone across more reads before alerting, even on a day with a single visit.
+  - A visit rebooked into the same slot after its cancellation was already reported alerts "Back on the schedule" instead of staying silent.
+  - Small: the schedule-loaded check also compares visit times; the watched date range uses calendar days (daylight-saving edge).
+- Texting safety (from a targeted review of comms.js / ringrx.js / send.js, verified in the code), with tests:
+  - STOP blocks the phone number itself, for everyone who uses it. Today it marks only the first matching patient, and the send-time block checks only main phone numbers, so a sibling or a patient listed under the parent's number could still be texted after STOP.
+  - Shared family numbers: a reply or "C" confirmation isn't pinned on one child. It names everyone on that number and confirms only the visit that was actually reminded. The send countdown says "Shared number: Jordan, Sam" so the recipient is clear.
+- RxNT reading (verified from review 2): a failed portal-inbox read is "couldn't read", never an empty inbox (today a failed read wipes the known conversations); read all recent portal conversations, not just 40; the prescription counts are accepted only when all prescription tiles (Pending, Pharmacy Request, Failed) are present; prescription lists say "details for 2 of 3" when the grid shows fewer rows than the count; one bad payment date can't throw away the whole payments read.
+- Data safety (verified from review 3): restoring a backup also restores reply/confirmation state (it's saved but was never restored); the checklist's size cap only trims old finished tasks, never unfinished ones.
+- Quick capture from anywhere: a keyboard shortcut (Cmd+Shift+Space on Mac, Ctrl+Shift+Space on Windows) opens a small box over any app; type a task (times like "at 3" work), press Return, it's on the checklist.
+- One-line brief before each visit, in Next up and the visit list: open items for that patient (pending prescription, unanswered text, missed call) and last visit.
+- Undo for a few seconds after Done, snooze or delete.
+- Tomorrow preview in the end-of-day check: first visit time, number of visits, new patients.
+- Background reliability on Mac: keep macOS from putting the app to sleep (App Nap) during office hours, so checks and alerts stay on time while the window is hidden; pop-ups use the app's own icon, a short title saying what happened, one line of detail, and open the right place when clicked. On first run on the Mac, a one-time tip to set Ruhwell Front Desk's notifications to "Alerts" (they stay on screen until dismissed) in System Settings.
+- Intuitive without a tutorial (applies to the whole build, checked screen by screen before release):
+  - Every action says what it does in words (icon-only buttons get a label or a hover hint); same action, same place and wording everywhere.
+  - Every empty area says what will show there and how to add it.
+  - New features teach themselves with one small, dismissible tip the first time they appear (e.g. "Tip: type 'at 3' to set a reminder"), never more than one tip at a time, never a tour.
+  - Settings reorganized around plain questions: "Who are you?" (name for the greeting, office hours), "How should we reach you?" (alerts, sounds), "Your messages" (templates), "Your accounts", "Your data". Each setting has one line explaining it, good defaults, and shows its effect right away.
+  - Personal touch: Today greets her by name ("Good morning, Maria"), uses her office hours everywhere, and remembers her choices (filters, last view).
+
+### Deferred
+- Splitting main.js into smaller files (no behavior change): saved for a quiet release, so it can't mix with these fixes.

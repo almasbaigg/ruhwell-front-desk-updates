@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>Quick task</title>
+<style>
+  @font-face { font-family: 'Plus Jakarta Sans'; src: url('fonts/PlusJakartaSans.woff2') format('woff2'); font-weight: 200 800; }
+  html, body { margin: 0; background: transparent; font-family: 'Plus Jakarta Sans', system-ui, sans-serif; }
+  .box { margin: 8px; padding: 14px 16px 12px; border-radius: 16px; background: #fcf7f5; border: 1px solid rgba(0,87,88,.18); box-shadow: 0 12px 32px rgba(0,40,40,.22); }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .row svg { width: 20px; height: 20px; flex: none; stroke: #005758; fill: none; stroke-width: 2; stroke-linecap: round; }
+  input { flex: 1; border: 0; outline: 0; background: transparent; font: inherit; font-size: 17px; color: #1f2d2d; }
+  input::placeholder { color: #9aa5a3; }
+  .hint { margin: 8px 0 0 30px; font-size: 12px; color: #6b7a77; min-height: 16px; }
+  .hint b { color: #005758; }
+</style>
+</head>
+<body>
+<div class="box">
+  <div class="row"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><input id="t" placeholder="Add a task, e.g. call pharmacy at 3" maxlength="300" autocomplete="off" autofocus></div>
+  <p class="hint" id="h">Return to add to your checklist · Esc to close</p>
+</div>
+<script src="js/capture.js"></script>
+</body>
+</html>

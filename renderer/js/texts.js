@@ -1,5 +1,5 @@
 /* Texts: one conversation per number (patients, parents, new callers), answered right here. */
-let txFilter = 'needs', txData = [], txOpen = null;
+let txFilter = recall('tx-filter', 'needs'), txData = [], txOpen = null;
 const WHO_TAG = { unknown: ['amber', 'Not a patient'], pending: ['blue', 'Not in RxNT yet'], contact: ['', 'RingRx contact'], shared: ['', 'Shared number'] };
 const whoTag = (w) => (WHO_TAG[w.kind] ? `<span class="pill ${WHO_TAG[w.kind][0]}">${WHO_TAG[w.kind][1]}</span>` : '');
 const whoName = (w, phone) => w.name || fmtPhone(phone);
@@ -111,9 +111,11 @@ function linkToPatient(phone, after) {
   $('lk-q').oninput = draw; draw(); $('lk-cancel').onclick = closeModal; setTimeout(() => $('lk-q').focus(), 50);
 }
 
-document.querySelectorAll('#tx-filter button').forEach((b) => (b.onclick = () => { txFilter = b.dataset.f; document.querySelectorAll('#tx-filter button').forEach((x) => x.classList.toggle('on', x === b)); renderTextList(); }));
+document.querySelectorAll('#tx-filter button').forEach((b) => (b.onclick = () => { txFilter = b.dataset.f; remember('tx-filter', txFilter); document.querySelectorAll('#tx-filter button').forEach((x) => x.classList.toggle('on', x === b)); renderTextList(); }));
 $('tx-range').onchange = () => loadTexts(true);
 $('tx-search').oninput = renderTextList;
 
 // A notification click lands on the exact conversation.
 window.api.onOpenThread(async (phone) => { if (!phone) return; go('texts'); await loadTexts(true); openThread(phone); });
+
+document.querySelectorAll('#tx-filter button').forEach((x) => x.classList.toggle('on', x.dataset.f === txFilter));

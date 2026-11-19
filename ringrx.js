@@ -9,11 +9,11 @@ class RingRxError extends Error {
   constructor(msg, code) { super(msg); this.code = code; }
 }
 
-async function post(path, body, token, query) {
+async function post(path, body, token, query, timeoutMs) {
   const url = new URL(BASE + path);
   if (query) Object.entries(query).forEach(([k, v]) => url.searchParams.set(k, v));
   const res = await fetch(url, {
-    method: 'POST',
+    method: 'POST', signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
     headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
@@ -22,13 +22,17 @@ async function post(path, body, token, query) {
   return { status: res.status, ok: res.ok, data, text };
 }
 
-function keep(pid, tokens, username) {
+function keep(pid, tokens, username, password) {
   const exp = Number(tokens.expires_in) || 0;
   cache[pid] = { access: tokens.access_token, exp: exp > 1e9 ? exp * 1000 : Date.now() + 5 * 60 * 1000 };
   const saved = store.ringrx.get(pid) || {};
+  // The password is kept (encrypted on this computer) only so the app can sign back in by itself if the
+  // long-lived RingRx token ever expires. It is saved only after RingRx accepted it.
+  const pw = password !== undefined ? password : saved.password;
   store.ringrx.set(pid, {
     username: username || saved.username,
     refreshToken: tokens.refresh_token || saved.refreshToken,
+    ...(pw && store.settings.get().rememberRingrx !== false ? { password: pw } : {}),
   });
 }
 
@@ -39,7 +43,7 @@ async function login(pid, username, password, otp) {
   if (r.status === 423) throw new RingRxError('Enter the 6-digit code from your authenticator.', 'OTP_REQUIRED');
   if (r.status === 401) throw new RingRxError('That username or password (or code) is incorrect.', 'BAD_LOGIN');
   if (!r.ok || !r.data?.access_token) throw new RingRxError(`RingRx sign-in failed (${r.status}).`, 'FAILED');
-  keep(pid, r.data, username);
+  keep(pid, r.data, username, password);
   return { username };
 }
 
@@ -48,13 +52,18 @@ async function token(pid) {
   if (c && Date.now() < c.exp - 30000) return c.access;
   const saved = store.ringrx.get(pid);
   if (!saved?.refreshToken) throw new RingRxError('Sign in to RingRx first.', 'SIGNED_OUT');
-  const r = await post('/auth/refresh', { refresh_token: saved.refreshToken });
-  if (!r.ok || !r.data?.access_token) {
-    store.ringrx.clear(pid);
-    throw new RingRxError('Your RingRx sign-in expired. Please sign in again.', 'SIGNED_OUT');
+  let r;
+  try { r = await post('/auth/refresh', { refresh_token: saved.refreshToken }); }
+  catch { throw new RingRxError("Can't reach RingRx right now.", 'OFFLINE'); }   // offline is not signed out
+  if (r.ok && r.data?.access_token) { keep(pid, r.data); return cache[pid].access; }
+  if (r.status >= 500 || r.status === 429) throw new RingRxError("RingRx isn't answering right now.", 'OFFLINE');
+  // The token really expired: sign back in once with the saved sign-in (never retried, so it can't lock anything).
+  if (saved.password && saved.username) {
+    try { await login(pid, saved.username, saved.password); return cache[pid].access; }
+    catch (e) { if (e.code === 'BAD_LOGIN' || e.code === 'OTP_REQUIRED') store.ringrx.set(pid, { ...store.ringrx.get(pid), password: undefined }); }
   }
-  keep(pid, r.data);
-  return cache[pid].access;
+  store.ringrx.clear(pid);
+  throw new RingRxError('Your RingRx sign-in expired. Please sign in again.', 'SIGNED_OUT');
 }
 
 function normalize(phone) {
@@ -64,12 +73,30 @@ function normalize(phone) {
   return d;
 }
 
+// A send whose answer never arrived (connection dropped, timeout, server error) may still have gone out.
+// Before reporting anything, look in RingRx's sent texts: if it's there it was sent; if not, say we couldn't
+// confirm it, so nobody blindly sends it twice.
 async function sendSms(pid, to, message) {
-  const num = normalize(to);
-  const r = await post('/messaging/send_message', null, await token(pid), { to: num, message });
-  if (r.status === 401) { delete cache[pid]; throw new RingRxError('RingRx session expired. Try again.', 'RETRY'); }
-  if (!r.ok) throw new RingRxError(`RingRx couldn't send (${r.status}). ${String(r.text).slice(0, 160)}`, 'SEND_FAILED');
-  return true;
+  const num = normalize(to), started = Date.now();
+  let r;
+  try { r = await post('/messaging/send_message', null, await token(pid), { to: num, message }, 30000); }
+  catch { r = null; }
+  if (r && r.status === 401) { delete cache[pid]; throw new RingRxError('RingRx session expired. Try again.', 'RETRY'); }
+  if (r && r.ok) return true;
+  if (r && r.status >= 400 && r.status < 500) throw new RingRxError(`RingRx couldn't send (${r.status}). ${String(r.text).slice(0, 160)}`, 'SEND_FAILED');
+  if (await wentOut(pid, num, message, started)) return true;
+  throw new RingRxError("Couldn't confirm this text went out. Check the conversation in Texts in a minute before sending it again.", 'UNCERTAIN');
+}
+async function wentOut(pid, num, message, since) {
+  const d = String(num).replace(/\D/g, '').slice(-10), body = String(message).trim();
+  for (let i = 0; i < 3; i++) {
+    await new Promise((res) => setTimeout(res, 3000));
+    try {
+      const list = await messages(pid, new Date(since - 2 * 60000).toISOString());
+      if (list && list.some((m) => !m.inbound && m.phone === d && String(m.body || '').trim() === body)) return true;
+    } catch {}
+  }
+  return false;
 }
 
 function status(pid) {

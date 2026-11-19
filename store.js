@@ -7,26 +7,64 @@ const path = require('path');
 const dir = () => app.getPath('userData');
 const file = (name) => path.join(dir(), name);
 
+// Saving is crash-safe: write a temporary copy next to the file, then swap it in, so a crash or power
+// loss mid-save can never leave a half-written file behind.
+function atomicWrite(f, data, mode) {
+  fs.mkdirSync(path.dirname(f), { recursive: true });
+  const tmp = `${f}.tmp-${process.pid}`;
+  try {
+    const fd = fs.openSync(tmp, 'w', mode || 0o644);
+    try { fs.writeFileSync(fd, data); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }   // on disk before the swap
+    fs.renameSync(tmp, f);
+  } catch (e) { try { fs.unlinkSync(tmp); } catch {} throw e; }
+}
 function readPlain(name, fallback) {
   try { return JSON.parse(fs.readFileSync(file(name), 'utf8')); } catch { return fallback; }
 }
-function writePlain(name, data) {
-  fs.mkdirSync(dir(), { recursive: true });
-  fs.writeFileSync(file(name), JSON.stringify(data, null, 2));
-}
+function writePlain(name, data) { atomicWrite(file(name), JSON.stringify(data, null, 2)); }
+
+/* Encrypted files. Patient data is never saved unencrypted, and data that can't be unlocked is never
+   treated as empty: if a file exists but can't be decrypted (for example the Mac Keychain refused access
+   after an update), it's marked locked, reads return nothing, and saving over it is refused until access
+   comes back. Format: "RFE1" + encrypted bytes. Older files (no header) are read the old way. */
+const ENC = Buffer.from('RFE1'), DEV = Buffer.from('RFP1');
+const locked = new Set();
+const devMode = () => !app.isPackaged;   // tests and development only: no OS keychain there
 function readSecure(name, fallback) {
+  const f = file(name);
+  let buf;
+  try { buf = fs.readFileSync(f); }
+  catch (e) { if (e.code === 'ENOENT') return fallback; locked.add(name); return fallback; }   // only "no file yet" means empty; other read errors lock it
+  if (!buf.length) { locked.add(name); return fallback; }   // an existing but empty file is damaged, not 'no data'
   try {
-    const buf = fs.readFileSync(file(name));
-    const text = safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(buf) : buf.toString('utf8');
-    return JSON.parse(text);
-  } catch { return fallback; }
+    let text;
+    const head = buf.subarray(0, 4);
+    if (head.equals(ENC)) text = safeStorage.decryptString(buf.subarray(4));
+    else if (head.equals(DEV)) text = buf.subarray(4).toString('utf8');
+    else {   // older file without a header
+      try { text = safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(buf) : buf.toString('utf8'); }
+      catch { text = buf.toString('utf8'); }
+    }
+    const v = JSON.parse(text);
+    locked.delete(name);
+    return v;
+  } catch (e) {
+    locked.add(name);
+    return fallback;
+  }
 }
 function writeSecure(name, data) {
-  fs.mkdirSync(dir(), { recursive: true });
+  if (locked.has(name)) throw Object.assign(new Error(`Saved data (${name}) is locked, not overwriting it.`), { code: 'LOCKED' });
   const text = JSON.stringify(data);
-  const out = safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(text) : Buffer.from(text, 'utf8');
-  fs.writeFileSync(file(name), out, { mode: 0o600 });
+  let out;
+  if (safeStorage.isEncryptionAvailable()) out = Buffer.concat([ENC, safeStorage.encryptString(text)]);
+  else if (devMode()) out = Buffer.concat([DEV, Buffer.from(text, 'utf8')]);
+  else throw Object.assign(new Error('Encryption is not available, so patient data was not saved.'), { code: 'NOENC' });
+  atomicWrite(file(name), out, 0o600);
 }
+// Files that exist but couldn't be unlocked. Clearing lets the app try again (e.g. after "Always Allow").
+const lockedFiles = () => [...locked];
+const retryLocked = () => { const names = [...locked]; locked.clear(); return names; };
 
 const REVIEW = `Hi {first}, this is Ruhwell Med!
 
@@ -226,6 +264,6 @@ module.exports = {
     set: (v) => writeSecure('inbound.bin', v),
   },
   // Raw access for backup/restore.
-  raw: { readSecure, writeSecure, readPlain, writePlain, file },
+  raw: { readSecure, writeSecure, readPlain, writePlain, file, lockedFiles, retryLocked },
   DEFAULT_TEMPLATES,
 };

@@ -15,8 +15,9 @@ function list(pid) {
     .sort((a, b) => (b.top ? 1 : 0) - (a.top ? 1 : 0) || (a.order ?? 1e9) - (b.order ?? 1e9) || new Date(a.at) - new Date(b.at));
 }
 function save(pid, items) {
-  // Keep open items and a short tail of finished ones.
-  const keep = items.filter((i) => !i.done || Date.now() - new Date(i.doneAt) < 30 * 864e5).slice(-400);
+  // Keep every open item; finished ones for 30 days (at most the latest 300).
+  const open = items.filter((i) => !i.done), fin = items.filter((i) => i.done && Date.now() - new Date(i.doneAt) < 30 * 864e5).slice(-300);
+  const keep = items.filter((i) => open.includes(i) || fin.includes(i));
   store.raw.writeSecure(file(pid), keep);
 }
 
@@ -63,7 +64,7 @@ function add(pid, input, opts = {}) {
   const t = p.text.slice(0, 300); if (!t) return list(pid);
   const items = read(pid);
   const due = opts.due || p.due, showFrom = due && new Date(due).toDateString() !== today() && new Date(due) > new Date() ? new Date(new Date(due).setHours(0, 0, 0, 0)).toISOString() : null;
-  items.push({ id: newId(), text: t, done: false, at: new Date().toISOString(), due, repeat: opts.repeat || p.repeat, link: opts.link || null, showFrom });
+  items.push({ id: newId(), text: t, done: false, at: new Date().toISOString(), due, repeat: opts.repeat || p.repeat, link: opts.link || null, showFrom, followUp: opts.followUp || null });
   save(pid, items); return list(pid);
 }
 // Done: a repeating task comes back on its next day.
@@ -72,6 +73,7 @@ function toggle(pid, id) {
   const i = items.find((x) => x.id === id);
   if (i) {
     i.done = !i.done; i.doneAt = i.done ? new Date().toISOString() : null;
+    if (!i.done && i.nextId) { const k = items.findIndex((x) => x.id === i.nextId && !x.done); if (k >= 0) items.splice(k, 1); i.nextId = null; }   // un-done: drop the next repeat it created
     if (i.done && i.repeat && !i.nextId) {
       const step = i.repeat === 'weekly' ? 7 : 1, base = new Date(i.due || Date.now()), next = new Date(base);
       next.setDate(next.getDate() + step); while (next < new Date()) next.setDate(next.getDate() + step);
@@ -96,7 +98,16 @@ function dueNow(pid) {
   if (hits.length) save(pid, items);
   return hits;
 }
+// "Remind me if no reply": when that number writes back, the follow-up task checks itself off.
+function resolveFollowUps(pid, phone, at) {
+  const items = read(pid); let n = 0;
+  for (const i of items) if (!i.done && i.followUp === phone && new Date(at) > new Date(i.at)) { i.done = true; i.doneAt = new Date().toISOString(); i.autoDone = 'They replied'; n++; }
+  if (n) save(pid, items);
+  return n;
+}
 function remove(pid, id) { save(pid, read(pid).filter((x) => x.id !== id)); return list(pid); }
+// Undo a delete: put the exact task back.
+function restore(pid, item) { const items = read(pid); if (item && item.id && !items.some((x) => x.id === item.id)) items.push(item); save(pid, items); return list(pid); }
 
 /* Notes: one page per day, older days kept and searchable; any page can be pinned to stay on top. */
 const notesFile = (pid) => `notes-${pid}.bin`;
@@ -145,4 +156,4 @@ function importAll(data) {
   }
 }
 
-module.exports = { list, add, toggle, star, setDue, reorder, remove, dueNow, parse, notes, dayKey, exportAll, importAll };
+module.exports = { restore, resolveFollowUps, list, add, toggle, star, setDue, reorder, remove, dueNow, parse, notes, dayKey, exportAll, importAll };
