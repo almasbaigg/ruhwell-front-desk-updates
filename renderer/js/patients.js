@@ -51,7 +51,9 @@ function renderCompose() {
     </div>
     ${p.phoneSource === 'Typed' && p.rxPhone && p.rxPhone !== p.phone ? `<p class="small muted">RxNT has ${esc(fmtPhone(p.rxPhone))} · <button class="link-btn" id="c-revert">Use RxNT number</button></p>` : ''}
     ${p.dnt ? '<div class="empty-state" style="padding:20px">Marked do not text</div>' : `<div id="c-comp">${composerHTML(p, { rows: 7 })}</div>
-    <div class="row-gap"><span class="from-chip">${sendFrom ? `${I.phone}From ${esc(fmtPhone(sendFrom))}` : ''}</span><span style="flex:1"></span><button class="btn primary" id="c-send">${I.send}Send</button></div>`}`;
+    <div class="row-gap"><span class="from-chip">${sendFrom ? `${I.phone}From ${esc(fmtPhone(sendFrom))}` : ''}</span><span style="flex:1"></span><button class="btn primary" id="c-send">${I.send}Send</button></div>`}
+    <div id="c-timeline"></div>`;
+  paintTimeline(p);
   const save = async (f) => { Object.assign(p, f); await window.api.updatePatient(p.key, f); const i = patients.findIndex((x) => x.key === p.key); if (i >= 0) Object.assign(patients[i], f); };
   $('c-dnt').onchange = async (e) => { await save({ dnt: e.target.checked, dntReason: e.target.checked ? 'Marked in app' : '' }); renderPatients(); renderCompose(); toast(e.target.checked ? 'Moved to Do not text' : 'Moved to Contacts'); };
   $('c-phone').onchange = async (e) => { const d = digits(e.target.value); if (d && d.length !== 10) return toast('Enter a 10-digit number.'); await save({ phone: d, phoneSource: d ? 'Typed' : '' }); renderPatients(); renderCompose(); };
@@ -140,4 +142,14 @@ function openPatient(rec) {
   if (!rec) return;
   go('patients');
   setTimeout(() => { const r = patients.find((p) => p.key === rec.key) || rec; activePatient = { ...r, text: '', templateId: null }; renderPatients(); renderCompose(); }, 150);
+}
+
+// Timeline: everything about this patient in one list (newest first), so nobody has to piece it together.
+const TL_ICON = { text: () => I.msg, call: () => I.phone, visit: () => I.cal, change: () => I.bell, rx: () => I.pill };
+async function paintTimeline(p) {
+  const host = $('c-timeline'); if (!host || !p.key) return;
+  const list = await window.api.patientTimeline(p.key);
+  if (!activePatient || activePatient.key !== p.key) return;
+  host.innerHTML = `<details class="history" ${list.length ? '' : ''}><summary><span>Timeline</span><em>${list.length ? `${list.length} item${list.length > 1 ? 's' : ''} · last ${esc(ago(list[0].at))}` : 'Nothing yet'}</em></summary>
+    <div class="tl">${list.map((e) => `<div class="tl-row k-${e.kind}"><span class="tl-ic">${(TL_ICON[e.kind] || TL_ICON.change)()}</span><div><b>${esc(e.title)}</b>${e.detail ? `<p>${esc(e.detail)}</p>` : ''}</div><time>${esc(new Date(e.at).toLocaleDateString([], { month: 'short', day: 'numeric' }))}</time></div>`).join('') || '<p class="muted small" style="padding:8px 2px">Texts, calls, visits and prescriptions for this patient will show here.</p>'}</div></details>`;
 }

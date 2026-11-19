@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, nativeImage, Tray, Menu, dialog, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, nativeImage, Tray, Menu, dialog, Notification, powerMonitor, powerSaveBlocker, net, globalShortcut } = require('electron');
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
@@ -38,6 +38,7 @@ const gmail = require('./gmail');
 const checklist = require('./checklist');
 const rxtasks = require('./rxtasks');
 const backups = require('./backups');
+const timer = require('./timer');
 const migrations = require('./migrations');
 const updater = require('./updater');
 
@@ -60,7 +61,8 @@ function createWindow() {
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   if (startHidden) win.once('ready-to-show', () => win.hide());
-  win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
+  win.webContents.setWindowOpenHandler(({ url }) => { openLink(url); return { action: 'deny' }; });
+  win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('file:')) { e.preventDefault(); openLink(url); } });
   // Tray options: close and/or minimize keep the app running in the tray (alerts keep working).
   win.on('close', (e) => { if (!quitting && store.settings.get().closeToTray) { e.preventDefault(); win.hide(); } });
   win.on('minimize', (e) => { if (store.settings.get().minimizeToTray) { e.preventDefault(); win.hide(); } });
@@ -68,11 +70,18 @@ function createWindow() {
 }
 function showWindow() { if (!win || win.isDestroyed()) createWindow(); win.show(); win.focus(); }
 
+// Links leave the app only if they're https and go to a site we expect.
+const LINK_OK = /^https:\/\/([\w-]+\.)*(rxnt\.com|ringrx\.com|google\.com|g\.page|goo\.gl|github\.com|ruhwellmed\.com)(\/|$)/i;
+function openLink(url) {
+  const review = store.settings.get().reviewLink;
+  if (LINK_OK.test(String(url)) || (review && url === review && /^https:/i.test(url))) shell.openExternal(url);
+}
 function createTray() {
   tray = new Tray(icon().resize({ width: 16, height: 16 }));
   tray.setToolTip('Ruhwell Front Desk');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Open Ruhwell Front Desk', click: showWindow },
+    { label: 'Quick task…', accelerator: 'CommandOrControl+Shift+Space', click: () => openCapture() },
     { label: 'Sync now', click: () => Object.values(RUN).forEach((f) => Promise.resolve().then(f).catch(() => {})) },
     { type: 'separator' },
     { label: 'Quit', click: () => { quitting = true; app.quit(); } },
@@ -94,7 +103,7 @@ function setRxntFlag(id, v) { const s = store.settings.get(); s.rxntConnected = 
 ipcMain.handle('app:info', () => ({ platform: process.platform, version: app.getVersion(), dataDir: store.dataDir() }));
 ipcMain.handle('update:status', () => updater.status());
 ipcMain.handle('update:check', () => updater.checkNow());
-ipcMain.handle('update:restart', () => { quitting = true; return updater.restart(); });
+ipcMain.handle('update:restart', () => { const st = updater.status(); if (st.status === 'ready') quitting = true; return updater.restart(); });
 ipcMain.handle('app:openData', () => shell.openPath(store.dataDir()));
 
 ipcMain.handle('accounts:status', async () => {
@@ -108,6 +117,7 @@ ipcMain.handle('gmail:signout', async () => { await gmail.signOut(); send('sync'
 ipcMain.handle('gmail:open', (_e, id) => shell.openExternal(gmail.url(id)));
 ipcMain.handle('checklist:list', () => checklist.list(pid()));
 ipcMain.handle('checklist:add', (_e, t, opts) => checklist.add(pid(), t, opts || {}));
+ipcMain.handle('checklist:restore', (_e, item) => checklist.restore(pid(), item));
 ipcMain.handle('checklist:star', (_e, id) => checklist.star(pid(), id));
 ipcMain.handle('checklist:due', (_e, id, due) => checklist.setDue(pid(), id, due));
 ipcMain.handle('checklist:reorder', (_e, ids) => checklist.reorder(pid(), ids));
@@ -265,7 +275,11 @@ ipcMain.handle('settings:set', (_e, s) => {
   return true;
 });
 ipcMain.handle('patients:list', () => Object.values(store.patients.all()));
-ipcMain.handle('patients:update', (_e, key, fields) => store.patients.update(key, fields));
+ipcMain.handle('patients:update', (_e, key, fields) => {
+  // Turning do-not-text off in the app also lifts the STOP block on that person's numbers.
+  if (fields && fields.dnt === false) { const p = store.patients.all()[key]; if (p) comms.clearOptOut([p.phone, ...(p.otherPhones || [])].filter(Boolean)); }
+  return store.patients.update(key, fields);
+});
 ipcMain.handle('sync:status', () => syncStatus());
 ipcMain.handle('sync:patients', () => { syncPatientsNow(); return true; });
 ipcMain.handle('patients:add', (_e, p) => { const db = store.patients.upsert([p]); send('sync', syncStatus()); return Object.values(db).find((x) => x.phone === p.phone && (x.first || '') === (p.first || '') && (x.last || '') === (p.last || ''))?.key || null; });
@@ -276,9 +290,13 @@ async function syncComms(force) {
   if (!force && st.at && Date.now() - new Date(st.at) < 4 * 60000) return false;
   send('sync', syncStatus());
   const r = await comms.sync(pid());
-  if (r && r.fresh) comms.handleReplies(r.fresh, (ev) => watcher.addEvents(ev));
+  if (r && r.fresh) {
+    comms.handleReplies(r.fresh, (ev) => watcher.addEvents(ev));
+    let n = 0; for (const m of r.fresh) n += checklist.resolveFollowUps(pid(), m.phone, m.at);
+    if (n) send('checklist-updated', true);
+  }
   send('sync', syncStatus()); send('comms-updated', true);
-  return true;
+  return !r || r.skipped ? true : !!r.ok;
 }
 // Sent texts (Front Desk + RingRx app) used for "already messaged" and "review already asked" checks.
 function historyForChecks() {
@@ -298,16 +316,16 @@ async function refreshPortal() {
   const id = pid(); if (!id || !store.settings.get().rxntConnected?.[id]) return portal;
   try {
     const r = await rxnt.readMessages(id);
-    if (r.error) { portal = { ...portal, error: r.error, at: new Date().toISOString() }; return portal; }
-    const before = new Map(portal.conversations.map((c) => [c.id, c.at]));
-    portal = { at: new Date().toISOString(), error: null, me: r.me, conversations: r.conversations };
-    if (before.size || portal.seeded) {
+    // A failed read keeps what we knew (it's not an empty inbox) and says so.
+    if (r.error) { portal = { ...portal, error: r.error, failedAt: new Date().toISOString() }; return portal; }
+    const before = new Map(portal.conversations.map((c) => [c.id, c.at])), seeded = portal.seeded;
+    portal = { at: new Date().toISOString(), error: null, me: r.me, conversations: r.conversations, seeded: true };
+    if (seeded) {   // after the first successful read, anything new or updated that needs a reply alerts (even if the inbox was empty before)
       const fresh = r.conversations.filter((c) => c.needsReply && c.unread && before.get(c.id) !== c.at);
       if (fresh.length) watcher.addEvents(fresh.map((c) => ({ kind: 'portal', text: `RxNT portal message from ${c.title}` })));
     }
-    portal.seeded = true;
     send('comms-updated', true); send('sync', syncStatus());
-  } catch (e) { portal = { ...portal, error: 'failed', at: new Date().toISOString() }; }
+  } catch (e) { portal = { ...portal, error: 'failed', failedAt: new Date().toISOString() }; }
   return portal;
 }
 ipcMain.handle('portal:list', () => ({ ...portal, conversations: portal.conversations.map((c) => ({ ...c, done: comms.doneSince('p:' + c.id, c.at) })) }));
@@ -327,6 +345,12 @@ ipcMain.handle('watch:check', () => watcher.check());
 ipcMain.handle('watch:alerts', () => watcher.alerts());
 ipcMain.handle('watch:read', () => { watcher.markRead(); return true; });
 ipcMain.handle('watch:handle', (_e, id) => { watcher.handle(id); return true; });
+// Undo for "Done" on Today: t:/c:/p: are texts, calls, portal messages; a: is a schedule alert.
+ipcMain.handle('undo:done', (_e, key) => {
+  const [kind, ...rest] = String(key || '').split(':'), id = rest.join(':');
+  if (kind === 'a') watcher.handle(id, false); else if (['t', 'c', 'p'].includes(kind)) comms.unmarkDone(kind, id);
+  send('sync', syncStatus()); return true;
+});
 
 // ---------- Sync status + patient directory sync ----------
 let patientSync = { running: false, progress: null };
@@ -344,6 +368,9 @@ function syncStatus() {
     messages: comms.status(),
     portal: { at: portal.at, error: portal.error, waiting: portal.conversations.filter((c) => c.needsReply && !comms.doneSince('p:' + c.id, c.at)).length },
     rxntUser: portal.me ? portal.me.name : '',
+    locked: store.raw.lockedFiles().length > 0,
+    health: Object.fromEntries(Object.keys(PLAN).filter((k) => k !== 'patients').map((k) => [k, { ok: lastOk[k] || null, failing: (fails[k] || 0) > 0 }])),
+    backup: backups.status(),
   };
 }
 async function syncPatientsNow() {
@@ -407,14 +434,52 @@ const RUN = {
   rx: () => refreshRx(),
   patients: () => syncPatientsNow(),
 };
+// Did a run work? A failure is retried within minutes (3, then 6, 12…) instead of waiting the full interval.
+const lastOk = {}, fails = {}, syncRunning = {};
+const worked = (k, r) => {
+  if (r === false || (r && (r.error || r.needsLogin))) return false;
+  if (k === 'rx') return rxtasks.list().available !== false;
+  if (k === 'gmail') return !gmail.status().error;
+  return true;
+};
 function syncDue(maxAgeMin) {
   const busy = busyNow(), now = Date.now();
   for (const [k, [b, q]] of Object.entries(PLAN)) {
-    const every = maxAgeMin && (k === 'schedule' || k === 'comms' || k === 'portal') ? Math.min(maxAgeMin, b) : busy ? b : q;
-    if (now - lastSync[k] >= every * 60000) { lastSync[k] = now; Promise.resolve().then(RUN[k]).catch(() => {}); }
+    if (syncRunning[k]) continue;   // never two runs of the same source at once
+    const every = maxAgeMin != null && (k === 'schedule' || k === 'comms' || k === 'portal') ? Math.min(maxAgeMin, b) : busy ? b : q;
+    if (now - lastSync[k] < every * 60000) continue;
+    lastSync[k] = now; syncRunning[k] = true;
+    Promise.resolve().then(RUN[k]).then((r) => worked(k, r), () => false).then((ok) => {
+      syncRunning[k] = false;
+      if (ok) { lastOk[k] = Date.now(); fails[k] = 0; return; }
+      fails[k] = (fails[k] || 0) + 1;
+      const retry = Math.min(3 * 2 ** (fails[k] - 1), every) * 60000;
+      lastSync[k] = Date.now() - every * 60000 + retry;   // due again after `retry`
+      send('sync', syncStatus());
+    });
   }
 }
 setInterval(() => syncDue(), 60000);
+
+// Waking from sleep or getting the internet back: catch up right away (schedule, texts and portal first).
+let wasOnline = true;
+function catchUp() { setTimeout(() => syncDue(0), 4000); }
+app.whenReady().then(() => {
+  powerMonitor.on('resume', catchUp);
+  powerMonitor.on('unlock-screen', () => syncDue(15));
+  setInterval(() => { const on = net.isOnline(); if (on && !wasOnline) catchUp(); wasOnline = on; }, 20000);
+  // Mac: keep macOS from napping the app while its window is hidden during office hours, so checks
+  // and alerts stay on time. Released outside office hours to save battery.
+  if (process.platform === 'darwin') {
+    let napBlock = null;
+    const nap = () => {
+      const want = busyNow();
+      if (want && napBlock === null) napBlock = powerSaveBlocker.start('prevent-app-suspension');
+      else if (!want && napBlock !== null) { powerSaveBlocker.stop(napBlock); napBlock = null; }
+    };
+    nap(); setInterval(nap, 5 * 60000);
+  }
+});
 function syncSoon() { syncDue(15); }   // on open / focus
 
 // ---------- RingRx extras: sending number, replies (STOP opt-out, C confirm) ----------
@@ -524,13 +589,76 @@ function endOfDay() {
     c.labs && `${c.labs} lab${c.labs > 1 ? 's' : ''} to review`,
     c.unposted && `${c.unposted} payment${c.unposted > 1 ? 's' : ''} to post`,
   ].filter(Boolean);
-  notify(left.length ? 'Before you go' : 'All done for today', left.length ? left.join(' · ') : 'Nothing left waiting. Nice work.', () => { showWindow(); send('nav', 'today'); });
+  // Tomorrow at a glance, so the next day doesn't start with a surprise.
+  const tm = new Date(now); tm.setDate(tm.getDate() + 1);
+  const tv = ((dayCache[ymd(tm)] || {}).items || []).filter(liveVisit).sort((a, b) => new Date(a.start) - new Date(b.start));
+  const tomorrow = tv.length ? `Tomorrow: first visit ${new Date(tv[0].start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} · ${tv.length} visit${tv.length > 1 ? 's' : ''}${tv.filter((v) => /new/i.test(v.visitType || '')).length ? ` · ${tv.filter((v) => /new/i.test(v.visitType || '')).length} new` : ''}` : '';
+  notify(left.length ? 'Before you go' : 'All done for today', [left.length ? left.join(' · ') : 'Nothing left waiting. Nice work.', tomorrow].filter(Boolean).join('\n'), () => { showWindow(); send('nav', 'today'); });
 }
 setInterval(endOfDay, 30000);
 
 // "Done today": a running count of things finished, for a visible sense of progress.
+// Timer: one at a time. When it ends: a gentle chime, a pop-up, and an in-app "Time's up" with +5 min / Done.
+ipcMain.handle('timer:start', (_e, min, label) => timer.start(min, label));
+ipcMain.handle('timer:pause', () => timer.pause());
+ipcMain.handle('timer:resume', () => timer.resume());
+ipcMain.handle('timer:add', (_e, m) => timer.add(m || 5));
+ipcMain.handle('timer:stop', () => timer.stop());
+ipcMain.handle('timer:get', () => timer.state());
+app.whenReady().then(() => timer.init({
+  onChange: (st) => send('timer', st),
+  menuBar: (txt) => { if (!tray || tray.isDestroyed()) return; if (isMac) tray.setTitle(txt ? ` ${txt}` : ''); tray.setToolTip(txt ? `Ruhwell Front Desk · timer ${txt}` : 'Ruhwell Front Desk'); },
+  onEnd: (label) => {
+    if (Notification.isSupported()) {
+      const n = new Notification({ title: label ? `Time's up: ${label}` : "Time's up", body: 'Open to add 5 minutes or finish.', icon: icon(), silent: false, sound: isMac ? 'Glass' : undefined });
+      n.on('click', () => { showWindow(); send('timer-end', label); });
+      n.show();
+    }
+    send('timer-end', label);
+  },
+}));
+// Quick capture from anywhere: Cmd/Ctrl+Shift+Space opens a small box over any app; Return adds the task.
+let capWin = null;
+function openCapture() {
+  if (!pid()) return;
+  if (capWin && !capWin.isDestroyed()) { capWin.show(); capWin.focus(); return; }
+  const { screen } = require('electron');
+  const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+  capWin = new BrowserWindow({ width: 560, height: 118, x: Math.round(area.x + (area.width - 560) / 2), y: Math.round(area.y + area.height * 0.22),
+    frame: false, transparent: true, resizable: false, movable: true, alwaysOnTop: true, skipTaskbar: true, show: false, fullscreenable: false,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true } });
+  capWin.setVisibleOnAllWorkspaces?.(true, { visibleOnFullScreen: true });
+  capWin.loadFile(path.join(__dirname, 'renderer', 'capture.html'));
+  capWin.once('ready-to-show', () => { capWin.show(); capWin.focus(); });
+  capWin.on('closed', () => { capWin = null; });
+}
+ipcMain.handle('capture:close', (_e, added) => { if (capWin && !capWin.isDestroyed()) capWin.close(); if (added) send("checklist-updated", true); return true; });
+const CAPTURE_KEY = 'CommandOrControl+Shift+Space';
+app.whenReady().then(() => { try { globalShortcut.register(CAPTURE_KEY, openCapture); } catch {} });
+app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch {} });
+// Patient timeline: visits, schedule changes, texts, calls and prescriptions in one list, newest first.
+// Built only from what's already on this computer.
+ipcMain.handle('patient:timeline', (_e, key) => {
+  const p = store.patients.all()[key]; if (!p) return [];
+  const phones = new Set([p.phone, ...(p.otherPhones || [])].filter(Boolean)), name = `${p.first || ''} ${p.last || ''}`.trim().toLowerCase();
+  const out = [], since = Date.now() - 180 * 864e5, hm = (iso) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  for (const e of comms.events()) {
+    if (!phones.has(e.phone) || new Date(e.at) < since) continue;
+    if (e.type === 'text') out.push({ at: e.at, kind: 'text', title: e.inbound ? 'Text from them' : `Text sent${e.via ? ' · ' + e.via : ''}`, detail: String(e.body || '').slice(0, 160) });
+    else out.push({ at: e.at, kind: 'call', title: e.voicemail ? 'Voicemail' : e.inbound ? (e.missed ? 'Missed call' : 'Call in') : 'Call out', detail: e.transcription ? String(e.transcription).slice(0, 160) : e.secs ? `${Math.round(e.secs / 60) || '<1'} min` : '' });
+  }
+  const seen = new Set();
+  for (const day of Object.values(dayCache)) for (const a of (day && day.items) || []) {
+    if (String(a.patientId) !== String(p.patientId || '') && `${a.first} ${a.last}`.toLowerCase() !== name) continue;
+    if (seen.has(a.appointmentId)) continue; seen.add(a.appointmentId);
+    out.push({ at: a.start, kind: 'visit', title: `Visit ${new Date(a.start) > new Date() ? 'booked' : ''}`.trim() + ` · ${hm(a.start)}`, detail: [a.visitType, a.statusText].filter(Boolean).join(' · ') });
+  }
+  for (const al of store.watchState.get().alerts || []) if (al.appt && (String(al.appt.patientId) === String(p.patientId || '') || phones.has(al.appt.phone)) && !al.quiet && new Date(al.at) >= since) out.push({ at: al.at, kind: 'change', title: al.text, detail: '' });
+  for (const r of [...rxtasks.list().items, ...(rxtasks.list().sent || [])]) if (String(r.patient || '').toLowerCase() === name) out.push({ at: r.at || new Date().toISOString(), kind: 'rx', title: { pending: 'Prescription pending', refill: 'Refill request', failed: 'Prescription failed to send', sent: 'Prescription sent', voided: 'Prescription voided' }[r.kind] || 'Prescription', detail: [r.med, r.pharmacy].filter(Boolean).join(' · ') });
+  return out.sort((a, b) => new Date(b.at) - new Date(a.at)).slice(0, 80);
+});
 ipcMain.handle('done:get', () => { const d = store.syncState.get().doneToday || {}; return d.day === ymd(new Date()) ? d.n : 0; });
-ipcMain.handle('done:bump', (_e, by = 1) => { const d = store.syncState.get().doneToday || {}, day = ymd(new Date()); const n = (d.day === day ? d.n : 0) + by; store.syncState.set({ doneToday: { day, n } }); return n; });
+ipcMain.handle('done:bump', (_e, by = 1) => { const d = store.syncState.get().doneToday || {}, day = ymd(new Date()); const n = Math.max(0, (d.day === day ? d.n : 0) + by); store.syncState.set({ doneToday: { day, n } }); return n; });
 // Keep the Windows safety copy fresh (small files only; browser caches are skipped).
 
 // ---------- Backup: one password-protected file (works on any computer) ----------
@@ -575,7 +703,9 @@ setInterval(() => { try { backups.autoDaily(); } catch {} }, 60 * 60 * 1000);
 
 ipcMain.handle('send:batch', async (e, items) => {
   const id = pid();
-  const dnt = new Set(Object.values(store.patients.all()).filter((p) => p.dnt && p.phone).map((p) => p.phone));
+  // Blocked numbers: anyone marked do-not-text (main or extra numbers) and every number that replied STOP.
+  const dnt = new Set(Object.values(store.patients.all()).filter((p) => p.dnt).flatMap((p) => [p.phone, ...(p.otherPhones || [])]).filter(Boolean));
+  Object.keys(store.inbound.get().optOut || {}).forEach((ph) => dnt.add(ph));
   const results = [];
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
@@ -607,6 +737,24 @@ function applyLoginItem() {
   try { app.setLoginItemSettings({ openAtLogin: !!store.settings.get().openAtLogin, args: ['--hidden'], openAsHidden: true }); } catch {}
 }
 
+// Saved data that can't be unlocked (e.g. the Mac Keychain said no after an update) is never treated
+// as empty or overwritten. Ask the user to allow access, then try again.
+function unlockCheck() {
+  const touch = () => { store.patients.all(); store.syncState.get(); store.inbound.get(); store.ringrxHistory.get(); store.calls.get(); };
+  touch();
+  while (store.raw.lockedFiles().length) {
+    const r = dialog.showMessageBoxSync({
+      type: 'warning', buttons: ['Try again', 'Continue without it', 'Quit'], defaultId: 0, cancelId: 2,
+      title: 'Ruhwell Front Desk', message: "Can't unlock your saved data",
+      detail: isMac ? 'Your Mac needs to let Ruhwell Front Desk use its saved key. Click "Try again", then choose "Always Allow" when macOS asks (you may need your Mac password).\n\nNothing has been lost. The app won\'t save over it until it can be unlocked.'
+        : 'Windows could not unlock the saved data for this account. Make sure you are signed in to the same Windows account, then click "Try again".\n\nNothing has been lost. The app won\'t save over it until it can be unlocked.',
+    });
+    if (r === 2) { quitting = true; app.exit(0); return; }
+    if (r === 1) return;   // stays locked: shows in the status line, nothing is overwritten
+    store.raw.retryLocked(); touch();
+  }
+}
+
 app.whenReady().then(() => {
   applyLoginItem();
   store.log.migrate();
@@ -625,6 +773,7 @@ app.whenReady().then(() => {
     }
   }
   if (isMac) app.dock?.setIcon(path.join(__dirname, 'assets', 'icon-256.png'));
+  unlockCheck();
   createWindow();
   createTray();
   updater.init((st) => send('update', st));

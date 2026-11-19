@@ -9,11 +9,11 @@ class RingRxError extends Error {
   constructor(msg, code) { super(msg); this.code = code; }
 }
 
-async function post(path, body, token, query) {
+async function post(path, body, token, query, timeoutMs) {
   const url = new URL(BASE + path);
   if (query) Object.entries(query).forEach(([k, v]) => url.searchParams.set(k, v));
   const res = await fetch(url, {
-    method: 'POST',
+    method: 'POST', signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
     headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
@@ -64,12 +64,30 @@ function normalize(phone) {
   return d;
 }
 
+// A send whose answer never arrived (connection dropped, timeout, server error) may still have gone out.
+// Before reporting anything, look in RingRx's sent texts: if it's there it was sent; if not, say we couldn't
+// confirm it, so nobody blindly sends it twice.
 async function sendSms(pid, to, message) {
-  const num = normalize(to);
-  const r = await post('/messaging/send_message', null, await token(pid), { to: num, message });
-  if (r.status === 401) { delete cache[pid]; throw new RingRxError('RingRx session expired. Try again.', 'RETRY'); }
-  if (!r.ok) throw new RingRxError(`RingRx couldn't send (${r.status}). ${String(r.text).slice(0, 160)}`, 'SEND_FAILED');
-  return true;
+  const num = normalize(to), started = Date.now();
+  let r;
+  try { r = await post('/messaging/send_message', null, await token(pid), { to: num, message }, 30000); }
+  catch { r = null; }
+  if (r && r.status === 401) { delete cache[pid]; throw new RingRxError('RingRx session expired. Try again.', 'RETRY'); }
+  if (r && r.ok) return true;
+  if (r && r.status >= 400 && r.status < 500) throw new RingRxError(`RingRx couldn't send (${r.status}). ${String(r.text).slice(0, 160)}`, 'SEND_FAILED');
+  if (await wentOut(pid, num, message, started)) return true;
+  throw new RingRxError("Couldn't confirm this text went out. Check the conversation in Texts in a minute before sending it again.", 'UNCERTAIN');
+}
+async function wentOut(pid, num, message, since) {
+  const d = String(num).replace(/\D/g, '').slice(-10), body = String(message).trim();
+  for (let i = 0; i < 3; i++) {
+    await new Promise((res) => setTimeout(res, 3000));
+    try {
+      const list = await messages(pid, new Date(since - 2 * 60000).toISOString());
+      if (list && list.some((m) => !m.inbound && m.phone === d && String(m.body || '').trim() === body)) return true;
+    } catch {}
+  }
+  return false;
 }
 
 function status(pid) {

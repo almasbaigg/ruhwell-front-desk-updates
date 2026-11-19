@@ -1,6 +1,6 @@
 /* Calls: the RingRx call log. Calls can't be answered from the app, so this shows who called, what's
    still waiting for a callback, and a quick way to text back. */
-let caFilter = 'all', caData = [];
+let caFilter = recall('ca-filter', 'all'), caData = [];
 
 async function loadCalls() {
   const days = +$('ca-range').value;
@@ -52,6 +52,8 @@ function renderCalls() {
     const d = el.querySelector('.act-done'); if (d) d.onclick = async () => { await window.api.markDone('c', c.phone); bumpDone(); toast('Marked done'); loadCalls(); };
   });
 }
-document.querySelectorAll('#ca-filter button').forEach((b) => (b.onclick = () => { caFilter = b.dataset.f; document.querySelectorAll('#ca-filter button').forEach((x) => x.classList.toggle('on', x === b)); renderCalls(); }));
+document.querySelectorAll('#ca-filter button').forEach((b) => (b.onclick = () => { caFilter = b.dataset.f; remember('ca-filter', caFilter); document.querySelectorAll('#ca-filter button').forEach((x) => x.classList.toggle('on', x === b)); renderCalls(); }));
 $('ca-range').onchange = loadCalls;
 $('ca-search').oninput = renderCalls;
+
+document.querySelectorAll('#ca-filter button').forEach((x) => x.classList.toggle('on', x.dataset.f === caFilter));

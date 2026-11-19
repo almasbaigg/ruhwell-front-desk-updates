@@ -17,7 +17,7 @@ async function refresh(readPending) {
     // Anything counted but not read by name still shows, as one line per kind.
     for (const [kind, label] of [['pending', 'pending prescription'], ['refill', 'refill request']]) {
       const missing = (c[kind] || 0) - items.filter((i) => i.kind === kind).length;
-      if (missing > 0) items.push({ kind, patient: `${missing} ${label}${missing > 1 ? 's' : ''}`, detail: 'Open RxNT to see who' });
+      if (missing > 0) items.push({ kind, patient: `${missing} ${label}${missing > 1 ? 's' : ''}`, detail: "Details didn't load · open RxNT to see who", partial: true });
     }
     const unnamedFailed = (c.failed || 0) - failed.length;
     if (unnamedFailed > 0) items.unshift({ kind: 'failed', patient: `${unnamedFailed} prescription${unnamedFailed > 1 ? 's' : ''} failed to send`, detail: 'Check and resend in RxNT' });

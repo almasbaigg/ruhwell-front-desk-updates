@@ -22,37 +22,47 @@ const isCancel = (a) => /cancel|delet/i.test(a.statusText) || (!a.statusText && 
 const isNoShow = (a) => /no.?show|missed/i.test(a.statusText) || (!a.statusText && /^(NS|MIS)/i.test(a.statusCode));
 const isSeen = (a) => /^(completed|check-?in completed)$/i.test(String(a.statusText).trim()) || (!a.statusText && /^(CKC|COM|CMP)/i.test(a.statusCode));
 
+// Pairs each new booking with at most one earlier visit of the same patient that went away (removed or
+// cancelled), the nearest in time, so a patient with several bookings can't get a wrong "rescheduled from".
+function pairMoves(newOnes, goneOnes) {
+  const pairs = new Map(), used = new Set();
+  const cand = newOnes.map((n) => goneOnes.filter((g) => g.patientId === n.patientId).map((g) => ({ n, g, d: Math.abs(new Date(n.start) - new Date(g.start)) })))
+    .flat().sort((x, y) => x.d - y.d);
+  for (const { n, g } of cand) { if (pairs.has(n.appointmentId) || used.has(g.appointmentId)) continue; pairs.set(n.appointmentId, g); used.add(g.appointmentId); }
+  return pairs;
+}
+
 function diff(prev, cur, prevRange) {
   const events = [];
   const inPrev = (date) => prevRange && date >= prevRange.from && date <= prevRange.to;
   const today = ymd(new Date());
-  const curByPatient = {};
-  Object.values(cur).forEach((a) => { (curByPatient[a.patientId] = curByPatient[a.patientId] || []).push(a); });
+  const added = Object.values(cur).filter((a) => !prev[a.appointmentId] && inPrev(a.date));
+  // Visits that went away since last time: no longer listed, or newly cancelled.
+  const gone = [...Object.values(prev).filter((p) => !cur[p.appointmentId] && p.date >= today && inPrev(p.date)),
+    ...Object.values(cur).filter((x) => isCancel(x) && prev[x.appointmentId] && !isCancel(prev[x.appointmentId]))];
+  const moves = pairMoves(added.filter((a) => !isCancel(a)), gone);
+  const movedFrom = new Set([...moves.values()].map((g) => g.appointmentId));
+  for (const a of added) {
+    // RxNT often "moves" a visit by cancelling it and booking a new one. Same patient + same time = just an edit.
+    const twin = Object.values(cur).find((x) => x !== a && x.patientId === a.patientId && x.start === a.start && isCancel(x));
+    if (twin && !isCancel(a)) { events.push({ kind: 'rebooked', appt: a, text: `${name(a)} rebooked for ${when(a.start)}`, quiet: true }); continue; }
+    if (isCancel(a)) continue;
+    const from = moves.get(a.appointmentId);
+    if (from && from.start !== a.start) events.push({ kind: 'rescheduled', appt: a, text: `${name(a)} rescheduled from ${when(from.start)} to ${when(a.start)}` });
+    else if (!from) events.push({ kind: 'new', appt: a, text: `New appointment: ${name(a)}, ${when(a.start)}${a.visitType ? ' · ' + a.visitType : ''}` });
+  }
   for (const [id, a] of Object.entries(cur)) {
-    const p = prev[id];
-    if (!p) {
-      if (!inPrev(a.date)) continue;
-      // RxNT often "moves" a visit by cancelling it and booking a new one. Same patient + same time = just an edit.
-      const twin = Object.values(cur).find((x) => x !== a && x.patientId === a.patientId && x.start === a.start && isCancel(x));
-      if (twin) { events.push({ kind: 'rebooked', appt: a, text: `${name(a)} rebooked for ${when(a.start)}`, quiet: true }); continue; }
-      const moved = Object.values(prev).find((x) => x.patientId === a.patientId && !cur[x.appointmentId])
-        || Object.values(cur).find((x) => x !== a && x.patientId === a.patientId && isCancel(x) && prev[x.appointmentId] && !isCancel(prev[x.appointmentId]));
-      if (moved) events.push({ kind: 'rescheduled', appt: a, text: `${name(a)} rescheduled from ${when(moved.start)} to ${when(a.start)}` });
-      else events.push({ kind: 'new', appt: a, text: `New appointment: ${name(a)}, ${when(a.start)}${a.visitType ? ' · ' + a.visitType : ''}` });
-    } else if (p.statusCode !== a.statusCode) {
-      if (isCancel(a)) {
-        const replaced = Object.values(cur).some((x) => x !== a && x.patientId === a.patientId && !isCancel(x) && !prev[x.appointmentId]);
-        if (!replaced) events.push({ kind: 'cancelled', appt: a, text: `Cancelled: ${name(a)}, ${when(a.start)}` });
-      }
-      else if (isNoShow(a)) events.push({ kind: 'noshow', appt: a, text: `No-show: ${name(a)}, ${when(a.start)}` });
-      else if (isSeen(a) && !isSeen(p)) events.push({ kind: 'checkin', appt: a, text: `Checked in: ${name(a)}`, quiet: true });
-      else events.push({ kind: 'status', appt: a, text: `${name(a)}: ${p.statusText || p.statusCode} → ${a.statusText || a.statusCode}`, quiet: true });
-    }
+    const p = prev[id]; if (!p) continue;
+    // Same visit moved to a new time (no cancel/rebook in RxNT): that's a reschedule too.
+    if (p.start !== a.start && !isCancel(a) && !isNoShow(a)) { events.push({ kind: 'rescheduled', appt: a, text: `${name(a)} rescheduled from ${when(p.start)} to ${when(a.start)}` }); continue; }
+    if (p.statusCode === a.statusCode) continue;
+    if (isCancel(a)) { if (!movedFrom.has(id)) events.push({ kind: 'cancelled', appt: a, text: `Cancelled: ${name(a)}, ${when(a.start)}` }); }
+    else if (isNoShow(a)) events.push({ kind: 'noshow', appt: a, text: `No-show: ${name(a)}, ${when(a.start)}` });
+    else if (isSeen(a) && !isSeen(p)) events.push({ kind: 'checkin', appt: a, text: `Checked in: ${name(a)}`, quiet: true });
+    else events.push({ kind: 'status', appt: a, text: `${name(a)}: ${p.statusText || p.statusCode} → ${a.statusText || a.statusCode}`, quiet: true });
   }
   for (const [id, p] of Object.entries(prev)) {
-    if (cur[id] || p.date < today || !inPrev(p.date)) continue;
-    const movedTo = (curByPatient[p.patientId] || []).find((x) => !prev[x.appointmentId]);
-    if (movedTo) continue; // reported as rescheduled above
+    if (cur[id] || p.date < today || !inPrev(p.date) || movedFrom.has(id)) continue;   // moved: reported as rescheduled above
     events.push({ kind: 'cancelled', removed: true, appt: p, text: `Removed from schedule: ${name(p)}, ${when(p.start)}` });
   }
   return events;
@@ -74,7 +84,8 @@ async function check({ silent = false } = {}) {
       if (r.error) throw new Error(r.error);
       for (const a of r.items) { cur[a.appointmentId] = { ...a, date: ymd(d) }; all.push(a); }
     }
-    const range = { from: ymd(start), to: ymd(new Date(start.getTime() + (days - 1) * 864e5)) };
+    const lastDay = new Date(start); lastDay.setDate(lastDay.getDate() + days - 1);
+    const range = { from: ymd(start), to: ymd(lastDay) };
     const state = store.watchState.get(), prevSnap = state.snapshot || {};
     // Guard against half-loaded reads: a day that suddenly lost most of its visits is re-checked, not believed.
     const byDay = (snap) => { const m = {}; Object.values(snap).forEach((a) => { m[a.date] = (m[a.date] || 0) + 1; }); return m; };
@@ -92,10 +103,14 @@ async function check({ silent = false } = {}) {
     // Same-day/next-day changes confirm on the next read; later visits wait 20 minutes, because staff usually
     // cancel and rebook in one go and that should arrive as one "rescheduled", not two alerts.
     const hold = (e) => { const d = (new Date(new Date(e.appt.start).toDateString()) - new Date(new Date().toDateString())) / 864e5; return d <= 1 ? 90000 : 20 * 60000; };
-    const confirmed = (state.pending || []).filter((p) => Date.now() - p.seen >= hold(p.e) && stillTrue(p.e)).map((p) => p.e);
-    const waiting = (state.pending || []).filter((p) => Date.now() - p.seen < hold(p.e) && stillTrue(p.e));
+    // A visit that vanished outright (RxNT normally keeps cancelled visits, marked Canceled) is more likely a bad
+    // read, so it must still be gone on at least 3 reads, 10+ minutes apart in total, even on a one-visit day.
+    const still = (state.pending || []).filter((p) => stillTrue(p.e)).map((p) => ({ ...p, n: (p.n || 1) + 1 }));   // n = reads it has held true
+    const ready = (p) => Date.now() - p.seen >= (p.e.removed ? Math.max(hold(p.e), 10 * 60000) : hold(p.e)) && (!p.e.removed || p.n >= 3);
+    const confirmed = still.filter(ready).map((p) => p.e);
+    const waiting = still.filter((p) => !ready(p));
     const fresh = events.filter(isCx).filter((e) => ![...confirmed, ...waiting.map((p) => p.e)].some((x) => x.appt.appointmentId === e.appt.appointmentId && x.kind === e.kind));
-    const pending = [...waiting, ...fresh.map((e) => ({ e, seen: Date.now() }))];
+    const pending = [...waiting, ...fresh.map((e) => ({ e, seen: Date.now(), n: 1 }))];
     // A cancellation we already reported that turns out to still be scheduled gets a correction.
     const corrections = [];
     for (const old of state.alerts || []) {
@@ -106,19 +121,26 @@ async function check({ silent = false } = {}) {
     // Cancel + rebook for the same patient = one "Rescheduled" (whether the rebooking comes in now or arrived earlier).
     let out = [...events.filter((e) => !isCx(e)), ...confirmed, ...corrections];
     const pid = (e) => e.appt && e.appt.patientId;
-    const pendingCx = [...waiting.map((p) => p.e), ...fresh];
+    const pendingCx = [...waiting.map((p) => p.e), ...fresh], usedCx = new Set();
+    const near = (list, nw) => list.filter((c) => pid(c) === pid(nw) && !usedCx.has(c)).sort((x, y) => Math.abs(new Date(x.appt.start) - new Date(nw.appt.start)) - Math.abs(new Date(y.appt.start) - new Date(nw.appt.start)))[0];
     for (const nw of out.filter((e) => e.kind === 'new')) {
-      const cx = pendingCx.find((c) => pid(c) === pid(nw)) || confirmed.find((c) => pid(c) === pid(nw));
-      const earlier = (state.alerts || []).find((a) => isCx(a) && !a.handled && pid(a) === pid(nw) && Date.now() - new Date(a.at) < 864e5);
+      const cx = near(pendingCx, nw) || near(confirmed, nw);
+      const earlier = cx ? null : near((state.alerts || []).filter((a) => isCx(a) && !a.handled && Date.now() - new Date(a.at) < 864e5), nw);
+      if (cx) usedCx.add(cx); if (earlier) usedCx.add(earlier);
       const from = cx || earlier; if (!from) continue;
       out = out.filter((e) => e !== nw && e !== cx);
-      for (let i = pending.length - 1; i >= 0; i--) if (pid(pending[i].e) === pid(nw)) pending.splice(i, 1);
+      for (let i = pending.length - 1; i >= 0; i--) if (pending[i].e === cx) pending.splice(i, 1);
       if (earlier) earlier.handled = true;
       out.push({ kind: 'rescheduled', appt: nw.appt, text: `${name(nw.appt)} rescheduled from ${when(from.appt.start)} to ${when(nw.appt.start)}` });
     }
     const stamped = out.map((e) => ({ ...e, at: new Date().toISOString(), id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}` }));
-    // A visit cancelled earlier and now rebooked at the same time: the old "cancelled" alert no longer needs you.
-    for (const e of out.filter((x) => x.kind === 'rebooked')) (state.alerts || []).forEach((old) => { if (old.kind === 'cancelled' && old.appt && old.appt.patientId === e.appt.patientId && old.appt.start === e.appt.start) old.handled = true; });
+    // A visit cancelled earlier and now rebooked at the same time: if that cancellation was already reported,
+    // say it's back on the schedule; either way the old "cancelled" alert no longer needs you.
+    for (const e of stamped.filter((x) => x.kind === 'rebooked')) (state.alerts || []).forEach((old) => {
+      if (old.kind === 'cancelled' && !old.handled && old.appt && old.appt.patientId === e.appt.patientId && old.appt.start === e.appt.start) {
+        old.handled = true; e.quiet = false; e.kind = 'backon'; e.text = `Back on the schedule: ${name(e.appt)}, ${when(e.appt.start)}`;
+      }
+    });
     store.watchState.set({ snapshot: cur, range, pending, suspect: Object.fromEntries(Object.entries(strikes).filter(([d]) => suspect.has(d))), alerts: [...stamped, ...(state.alerts || [])].slice(0, 500), unread: (state.unread || 0) + stamped.filter((e) => !e.quiet).length });
     lastRun = new Date().toISOString(); lastError = null;
     if (stamped.length) { onEvent({ type: 'alerts', events: stamped }); if (!silent) deliver(stamped); }
@@ -147,8 +169,8 @@ function schedule() {
           texts (if chosen) only during office hours.
    Soon – everything else worth knowing: bundled into one notification every 30 minutes, never texted.
    FYI  – quiet events: shown in the app only. */
-const PREF_KEY = { rx: 'rx', new: 'schedule', cancelled: 'schedule', noshow: 'schedule', rescheduled: 'schedule', correction: 'schedule', optout: 'reply', confirmed: 'reply', reply: 'reply', soon: 'soon', newpatient: 'newpatient', portal: 'reply' };
-const TEXT_LABEL = { rx: 'Prescription waiting', new: 'New booking', cancelled: 'Cancellation', rescheduled: 'Reschedule', noshow: 'No-show', correction: 'Correction: still scheduled', optout: 'Patient replied STOP', confirmed: 'Patient confirmed', reply: 'New patient text', soon: 'Starting soon', newpatient: 'New patient registered', portal: 'RxNT portal message' };
+const PREF_KEY = { backon: 'schedule', rx: 'rx', new: 'schedule', cancelled: 'schedule', noshow: 'schedule', rescheduled: 'schedule', correction: 'schedule', optout: 'reply', confirmed: 'reply', reply: 'reply', soon: 'soon', newpatient: 'newpatient', portal: 'reply' };
+const TEXT_LABEL = { backon: 'Back on the schedule', rx: 'Prescription waiting', new: 'New booking', cancelled: 'Cancellation', rescheduled: 'Reschedule', noshow: 'No-show', correction: 'Correction: still scheduled', optout: 'Patient replied STOP', confirmed: 'Patient confirmed', reply: 'New patient text', soon: 'Starting soon', newpatient: 'New patient registered', portal: 'RxNT portal message' };
 const SCHEDULE_KINDS = ['new', 'cancelled', 'noshow', 'rescheduled', 'correction'];
 function tierOf(e) {
   if (e.quiet) return 'fyi';
@@ -212,7 +234,7 @@ module.exports = {
   },
   deliver,
   officeHours,
-  handle(id) { const s = store.watchState.get(); (s.alerts || []).forEach((a) => { if (a.id === id) a.handled = true; }); store.watchState.set(s); },
+  handle(id, on = true) { const s = store.watchState.get(); (s.alerts || []).forEach((a) => { if (a.id === id) a.handled = on; }); store.watchState.set(s); },
   markRead() { const s = store.watchState.get(); s.unread = 0; store.watchState.set(s); },
   unread: () => store.watchState.get().unread || 0,
 };

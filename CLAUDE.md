@@ -17,16 +17,16 @@ RingRx (texts and calls) and Gmail, and puts the day's work in one calm, color-c
 - A release builds Windows and Mac from the same commit and version (`.github/workflows/release.yml`, run manually in the
   public repo `almasbaigg/ruhwell-front-desk-updates`, branch `source`). The update feed is only updated if **both** succeed.
 - Update feed (main branch of that repo): `latest.yml` + `RuhwellFrontDesk-Setup.exe` (Windows installs on restart),
-  `latest-mac.yml` (Mac shows "Update available" and opens the download; unsigned Mac apps can't self-install).
-  Mac installers are attached to the GitHub Release `v<version>`.
+  `latest-mac.yml` (Mac downloads `RuhwellFrontDesk-<arch>.zip` from the GitHub Release `v<version>`, unpacks it and swaps
+  itself in on "Restart to update"; downloads made by the app aren't flagged by macOS). DMGs and zips are attached to the Release.
 
 ## Building the Mac version on Maria's MacBook (only when GitHub's Mac machines are stuck)
 Do this only for a version Almas has already asked to release, so both computers stay on the same version.
 1. Get the code for that version: `git clone --branch source https://github.com/almasbaigg/ruhwell-front-desk-updates.git` into the connected
    `RuhwellBuild` folder (or `git pull` if it's already there). Check `package.json` "version" matches the version asked for.
 2. Needs Node 22 and Apple's Command Line Tools (already installed on her Mac). Then: `npm ci && npm test`.
-3. Build: `npx electron-builder --mac dmg --arm64 --x64 --publish never` → `dist/RuhwellFrontDesk-arm64.dmg`, `-x64.dmg`, `latest-mac.yml`.
-4. Publish: attach both DMGs and `latest-mac.yml` to the GitHub Release `v<version>` (the Windows part should already be
+3. Build: `npx electron-builder --mac dmg zip --arm64 --x64 --publish never` → `dist/RuhwellFrontDesk-arm64.dmg`/`.zip`, `-x64.dmg`/`.zip`, `latest-mac.yml`.
+4. Publish: attach both DMGs, both zips and `latest-mac.yml` to the GitHub Release `v<version>` (the Windows part should already be
    there), and commit `latest-mac.yml` to the main branch of `ruhwell-front-desk-updates` (normal push, never force-push).
 5. Install on her Mac: open the arm64 DMG, drag to Applications (replace), then double-click "First open on Mac" once.
    If macOS asks to allow Keychain access, click "Always Allow". Her sign-ins and data stay.
@@ -37,6 +37,8 @@ Don't change app code from the Mac build chat. Code changes happen in Almas's ch
 - `watcher.js`: schedule alerts (confirmed cancellations, corrections, cancel+rebook = reschedule, delivery tiers, click targets).
 - `rxnt-reader.js`: hidden RxNT windows (schedule, EHR To-Do counts, prescriber dashboard, Billing alerts and unposted payments, portal messages).
 - `rxtasks.js`: prescriptions/To-Do/billing state, Schedule II flag, payment review flags.
+- `timer.js`: the sidebar timer (runs in the background, menu-bar countdown). `updater.js`: Windows and Mac self-updates.
+- `store.js`: encrypted, crash-safe saving; data that can't be unlocked is never overwritten.
 - `comms.js`, `ringrx.js`, `gmail.js`: texts, calls, email. `checklist.js`: checklist (plain-language times, repeats, Top 3) and day-page notes.
 - `renderer/`: one page app. `js/today.js` (home), `js/pad.js` (checklist + notes), `js/rx.js` (RxNT work), `js/texts.js`, `js/calls.js`, `js/settings.js`.
 - Tests: `npm test` (must pass before any release).

@@ -10,7 +10,7 @@ const ALERT = {
   newpatient: { label: 'New patient', icon: '<circle cx="10" cy="8" r="4"/><path d="M3 21c.8-4 3.6-6 7-6s6.2 2 7 6M19 8v6M16 11h6"/>', action: ['open', 'Open patient'] },
   soon: { label: 'Starting soon', icon: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>' },
 };
-const hello = () => { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; };
+const hello = () => { const h = new Date().getHours(), n = (settings.userName || '').trim(); return (h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening') + (n ? `, ${n}` : ''); };
 
 const byAge = (iso, amberH, redH) => { const h = hoursSince(iso); return h >= redH ? 'red' : h >= amberH ? 'amber' : 'green'; };
 function urgency(i) {
@@ -102,7 +102,7 @@ async function loadToday() {
   loadChecklist(); loadNotes();
   if (!$('today-list').children.length) $('today-list').innerHTML = '<div class="loading-line"><span class="spinner"></span>Getting your day ready…</div>';
   const d = await loading(gatherToday);
-  paintTiles(d); paintTodo(d.items); paintVisits(d.range); paintDone(); paintClosing(d);
+  todayItems = d.items; todaySync = await window.api.syncStatus(); paintTiles(d); paintTodo(d.items); paintVisits(d.range); paintDone(); paintClosing(d);
   window.api.watchRead();
 }
 
@@ -134,16 +134,21 @@ function paintTodo(items) {
   $('todo-count').textContent = items.length || '';
   const L = $('today-list'); L.innerHTML = '';
   // Next up: the single most urgent thing, so there's one clear place to start.
-  const top = items[0];
-  if (top && top.urg !== 'green') {
+  const top = items[0], nextShown = !!(top && top.urg !== 'green');
+  if (nextShown) {
     const n = document.createElement('div'); n.className = `next-up u-${top.urg}`;
-    n.innerHTML = `<span class="lbl">Next up</span><b>${esc(top.title)}</b><span class="d">${esc(top.sub)}</span>${top.action ? `<button class="btn primary">${esc(top.action[0])}</button>` : ''}`;
-    if (top.action) n.querySelector('button').onclick = top.action[1];
+    n.innerHTML = `<span class="lbl">Next up</span><b>${esc(top.title)}</b><span class="d">${esc(top.sub)}</span><div class="nu-acts">${top.action ? `<button class="btn primary act">${esc(top.action[0])}</button>` : ''}${top.key ? `<button class="icon-btn later" title="Later">${I.clock || I.bell}</button>` : ''}${top.done ? `<button class="icon-btn done" title="Done">${I.check}</button>` : ''}</div>`;
+    if (top.action) n.querySelector('.act').onclick = top.action[1];
+    if (top.key) n.querySelector('.later').onclick = (e) => laterMenu(e.currentTarget, top);
+    if (top.done) n.querySelector('.done').onclick = async () => { await top.done(); bumpDone(); loadToday(); if (top.key) toast('Marked done', async () => { await window.api.undoDone(top.key); bumpDone(-1); loadToday(); }); };
     L.appendChild(n);
   }
-  if (!items.length) { L.innerHTML = `<div class="all-clear">${I.check}<b>All caught up</b><span>Texts, calls, schedule changes and prescriptions that need you show up here.</span></div>`; return; }
+  // "All caught up" only when every source actually loaded; otherwise say what couldn't be checked.
+  const stale = staleSources(todaySync);
+  if (stale.length) { const w = document.createElement('div'); w.className = 'stale-line'; w.innerHTML = `${I.bell}<span>Couldn't check ${esc(stale.map((x) => x.name + (x.since ? ` (since ${fmtTime(new Date(x.since))})` : '')).join(', '))}. Check ${stale.some((x) => x.rxnt) ? 'RxNT' : 'it'} directly if it's urgent.</span>`; L.prepend(w); }
+  if (!items.length) { L.insertAdjacentHTML('beforeend', stale.length ? `<div class="all-clear partial">${I.check}<b>Nothing waiting from what loaded</b><span>The app keeps retrying the rest.</span></div>` : `<div class="all-clear">${I.check}<b>All caught up</b><span>Texts, calls, schedule changes and prescriptions that need you show up here.</span></div>`); return; }
   for (const [key, label] of SECTIONS) {
-    const list = items.filter((i) => i.sec === key); if (!list.length) continue;
+    const list = items.filter((i) => i.sec === key && !(nextShown && i === top)); if (!list.length) continue;   // Next up isn't repeated below
     const head = document.createElement('div'); head.className = 'todo-sec'; head.innerHTML = `<span>${esc(label)}</span><b>${list.length}</b>`; L.appendChild(head);
     const shown = openSecs.has(key) ? list : list.slice(0, 3);
     for (const it of shown) {
@@ -152,7 +157,7 @@ function paintTodo(items) {
         <div class="acts">${it.action ? `<button class="btn soft act">${esc(it.action[0])}</button>` : ''}${it.key ? `<button class="icon-btn later" title="Later">${I.clock || I.bell}</button>` : ''}${it.done ? `<button class="icon-btn done" title="Mark as done">${I.check}</button>` : ''}</div>`;
       if (it.key) el.querySelector('.later').onclick = (e) => laterMenu(e.currentTarget, it);
       if (it.action) el.querySelector('.act').onclick = it.action[1];
-      if (it.done) el.querySelector('.done').onclick = async () => { el.classList.add('leaving'); await it.done(); bumpDone(); setTimeout(loadToday, 180); };
+      if (it.done) el.querySelector('.done').onclick = async () => { el.classList.add('leaving'); await it.done(); bumpDone(); setTimeout(loadToday, 180); if (it.key) toast('Marked done', async () => { await window.api.undoDone(it.key); bumpDone(-1); loadToday(); }); };
       L.appendChild(el);
     }
     if (list.length > 3) {
@@ -169,13 +174,17 @@ function laterMenu(anchor, it) {
   const P = $('popover'), inHours = (h) => Date.now() + h * 36e5;
   const tomorrow = () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(8, 0, 0, 0); return d.getTime(); };
   // Snoozing hides it for a while; "add to checklist" turns it into a task with a reminder and a link back.
-  P.innerHTML = `<div class="menu"><button data-t="${inHours(1)}"><i></i>In 1 hour</button><button data-t="${inHours(3)}"><i></i>Later today</button><button data-t="${tomorrow()}"><i></i>Tomorrow morning</button><hr><button data-cl="1"><i></i>Add to checklist</button>${it.unk && it.phone ? '<button data-ignore="1"><i></i>Ignore this number</button>' : ''}</div>`;
-  const r = anchor.getBoundingClientRect(); P.style.top = `${r.bottom + 6}px`; P.style.left = `${Math.max(12, r.right - 200)}px`; P.style.width = '200px'; P.classList.remove('hidden');
+  // "In 3 hours", or "Before closing" when closing comes sooner; each choice shows the exact time.
+  const close = (() => { const [h, m] = ((settings.sync || {}).busyEnd || '17:00').split(':').map(Number); const d = new Date(); d.setHours(h, m - 30, 0, 0); return d.getTime(); })();
+  const mid = close > inHours(1) && close < inHours(3) ? ['Before closing', close] : ['In 3 hours', inHours(3)];
+  const at = (t) => `<small>${esc(fmtTime(new Date(t)))}</small>`;
+  P.innerHTML = `<div class="menu when-menu"><button data-t="${inHours(1)}"><i></i>In 1 hour${at(inHours(1))}</button><button data-t="${mid[1]}"><i></i>${mid[0]}${at(mid[1])}</button><button data-t="${tomorrow()}"><i></i>Tomorrow morning<small>8:00 AM</small></button><hr><button data-cl="1"><i></i>Add to checklist</button>${it.unk && it.phone ? '<button data-ignore="1"><i></i>Ignore this number</button>' : ''}</div>`;
+  const r = anchor.getBoundingClientRect(); P.style.top = `${r.bottom + 6}px`; P.style.left = `${Math.max(12, r.right - 230)}px`; P.style.width = '230px'; P.classList.remove('hidden');
   P.querySelectorAll('button').forEach((b) => (b.onclick = async () => {
     hidePopover(); P.style.width = '';
     if (b.dataset.cl) { await addToChecklist(it); await window.api.snooze(it.key, tomorrow()); loadToday(); return; }
     if (b.dataset.ignore) { await window.api.ignoreNumber(it.phone, true); toast('Number ignored. It won\'t show here again.'); }
-    else { await window.api.snooze(it.key, Number(b.dataset.t)); toast('Snoozed'); }
+    else { const until = Number(b.dataset.t); await window.api.snooze(it.key, until); toast(`Snoozed until ${fmtTime(new Date(until))}`, async () => { await window.api.snooze(it.key, 0); loadToday(); }); }
     loadToday();
   }));
 }
@@ -188,8 +197,36 @@ function paintVisits(range) {
     $('today-visits').innerHTML = `<div class="quiet">${I.cal}<span>No visits today${next ? `<br><small>Next: ${esc(fmtDateShort(next[0].start))}, ${esc(fmtTime(next[0].start))}</small>` : ''}</span></div>`;
     return;
   }
-  $('today-visits').innerHTML = timeStrip(td) + td.map((v) => { const st = stateOf(v); return `<button class="visit-line st-${st}" data-d="${esc(ymd())}"><time>${esc(fmtTime(v.start))}</time><span class="nm">${esc(fullName(v))}${v.visitType ? `<small>${esc(v.visitType)}</small>` : ''}</span>${stateTag(st)}</button>`; }).join('');
+  $('today-visits').innerHTML = timeStrip(td) + td.map((v) => { const st = stateOf(v), b = ['booked', 'confirmed'].includes(st) ? visitBrief(v) : '';
+    return `<button class="visit-line st-${st}" data-d="${esc(ymd())}"><time>${esc(fmtTime(v.start))}</time><span class="nm">${esc(fullName(v))}${v.visitType ? `<small>${esc(v.visitType)}</small>` : ''}${b ? `<small class="brief">${esc(b)}</small>` : ''}</span>${stateTag(st)}</button>`; }).join('');
   $('today-visits').querySelectorAll('.visit-line').forEach((b) => (b.onclick = () => { go('visits'); loadDay(ymd()); }));
+}
+
+// One line before each visit: what's still open for this patient, and when they were last seen.
+let todayItems = [], todaySync = null;
+// Sources that failed or haven't worked recently (during office hours, an hour is too long).
+function staleSources(st) {
+  if (!st) return [];
+  const H = st.health || {}, out = [], old = (t, min) => !t || Date.now() - t > min * 60000;
+  const busy = (() => { const n = new Date(), S = settings.sync || {}, hm = `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`; return n.getDay() >= 1 && n.getDay() <= 5 && hm >= (S.busyStart || '08:00') && hm < (S.busyEnd || '17:00'); })();
+  const lim = busy ? 60 : 240;
+  if (st.rxnt && (H.schedule || {}).failing && old((H.schedule || {}).ok, lim / 2)) out.push({ name: 'the RxNT schedule', since: (H.schedule || {}).ok, rxnt: true });
+  if (st.rxnt && (st.rx || {}).error && old((H.rx || {}).ok, lim * 2)) out.push({ name: 'RxNT prescriptions', since: (H.rx || {}).ok, rxnt: true });
+  if (st.rxnt && (st.portal || {}).error && old((H.portal || {}).ok, lim)) out.push({ name: 'RxNT portal messages', since: (H.portal || {}).ok, rxnt: true });
+  if (st.ringrx && (st.messages || {}).error && old((H.comms || {}).ok, lim)) out.push({ name: 'RingRx texts and calls', since: (H.comms || {}).ok });
+  return out;
+}
+function visitBrief(v) {
+  const d = digits(v.phone), name = fullName(v).toLowerCase(), out = [];
+  for (const it of todayItems) {
+    if (it.sec === 'rx' && it.rxItem && String(it.rxItem.patient || '').toLowerCase() === name) out.push(it.rxItem.kind === 'refill' ? 'refill pending' : it.rxItem.kind === 'failed' ? 'Rx failed to send' : 'Rx pending');
+    else if (d && it.phone === d && it.kind === 'text') out.push(`texted ${ago(it.at)}`);
+    else if (d && it.phone === d && it.kind === 'call') out.push(`missed call ${ago(it.at)}`);
+  }
+  const rec = v.rec || recordFor(v), last = rec && rec.lastVisit && new Date(rec.lastVisit) < parseYmd(ymd()) ? new Date(rec.lastVisit) : null;
+  if (last) out.push(`last seen ${last.toLocaleDateString([], { month: 'short', day: 'numeric' })}`);
+  else if (/new/i.test(v.visitType || '')) out.push('first visit');
+  return [...new Set(out)].slice(0, 3).join(' · ');
 }
 
 // The day as a strip: visits as blocks, gaps labeled with how much free time they hold. Makes time visible.
@@ -222,9 +259,12 @@ function paintClosing(d) {
   const el = $('today-closing');
   if (now.getDay() < 1 || now.getDay() > 5 || hm < (S.busyEnd || '17:00')) { el.classList.add('hidden'); return; }
   const red = d.items.filter((i) => i.urg !== 'green');
+  const tk = addDays(ymd(), now.getDay() === 5 ? 3 : 1), tv = ((d.range[tk] || {}).items || []).filter((v) => category(v) !== 'cancelled').sort((a, b) => new Date(a.start) - new Date(b.start));
+  const nw = tv.filter((v) => /new/i.test(v.visitType || '')).length;
+  const tomorrow = tv.length ? `<em>${now.getDay() === 5 ? 'Monday' : 'Tomorrow'}: first visit ${esc(fmtTime(tv[0].start))} · ${tv.length} visit${tv.length > 1 ? 's' : ''}${nw ? ` · ${nw} new` : ''}</em>` : '';
   el.classList.remove('hidden');
   el.className = 'closing ' + (red.length ? 'open' : 'clear');
-  el.innerHTML = red.length ? `<b>Before you go</b><span>${red.slice(0, 4).map((i) => esc(i.title)).join(' · ')}${red.length > 4 ? ` · +${red.length - 4} more` : ''}</span>` : `${I.check}<b>All done for today</b><span>Nothing urgent left. See you tomorrow.</span>`;
+  el.innerHTML = (red.length ? `<b>Before you go</b><span>${red.slice(0, 4).map((i) => esc(i.title)).join(' · ')}${red.length > 4 ? ` · +${red.length - 4} more` : ''}</span>` : `${I.check}<b>All done for today</b><span>Nothing urgent left.</span>`) + tomorrow;
 }
 
 $('tv-open').onclick = () => { go('visits'); loadDay(ymd()); };

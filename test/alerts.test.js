@@ -52,6 +52,46 @@ Date.now = () => clock;
   const after = events.slice(n0).filter((e) => !e.quiet);
   assert(after.length === 1 && after[0].kind === 'rescheduled', 'cancel + rebook = one reschedule: ' + JSON.stringify(after.map((e) => e.kind)));
   void far;
+  // Base for the next cases: today's day as it stands now.
+  let base = reply.items.filter((x) => !(x.patientId === 'p9' && x.statusText === 'Canceled'));
+  reply = { items: base }; clock += 30 * 60000; await watcher.check();
+  const kinds = (from) => events.slice(from).filter((e) => !e.quiet).map((e) => e.kind);
+  // 1. Same visit dragged to a new time (no status change) = "rescheduled".
+  let n = events.length;
+  base = base.map((x) => (x.appointmentId === 2 ? { ...x, start: at(17) } : x));
+  reply = { items: base }; clock += 15 * 60000; await watcher.check();
+  assert.deepStrictEqual(kinds(n), ['rescheduled'], 'time change alone is a reschedule');
+  // 2. Patient with two bookings: the new one pairs with the nearest cancelled one, not the other.
+  base = [...base, { ...appt(20, 9), patientId: 'p20' }, { ...appt(21, 15), patientId: 'p20' }];
+  reply = { items: base }; clock += 15 * 60000; await watcher.check();
+  n = events.length;
+  base = base.map((x) => (x.appointmentId === 21 ? { ...x, statusText: 'Canceled', statusCode: 'CAN' } : x));
+  reply = { items: base }; clock += 1 * 60000; await watcher.check();
+  base = [...base, { ...appt(22, 16), patientId: 'p20' }];
+  reply = { items: base }; clock += 1 * 60000; await watcher.check();
+  const r2 = events.slice(n).filter((e) => !e.quiet);
+  assert(r2.length === 1 && r2[0].kind === 'rescheduled' && /3:00|15:00/.test(r2[0].text), 'paired with the nearest visit: ' + JSON.stringify(r2.map((e) => e.text)));
+  // 3. A visit that vanishes outright needs 3 reads and 10 minutes before it's reported.
+  reply = { items: base }; clock += 30 * 60000; await watcher.check();
+  n = events.length;
+  base = base.filter((x) => x.appointmentId !== 3);
+  reply = { items: base }; clock += 1 * 60000; await watcher.check();
+  clock += 3 * 60000; await watcher.check();
+  assert.deepStrictEqual(kinds(n), [], 'not yet: only 2 reads');
+  clock += 3 * 60000; await watcher.check();
+  assert.deepStrictEqual(kinds(n), [], 'not yet: under 10 minutes');
+  clock += 5 * 60000; await watcher.check();
+  assert.deepStrictEqual(kinds(n), ['cancelled'], 'reported after 3 reads and 10 minutes');
+  // 4. A reported cancellation rebooked into the same slot = "Back on the schedule".
+  n = events.length;
+  base = base.map((x) => (x.appointmentId === 1 ? { ...x, statusText: 'Canceled', statusCode: 'CAN' } : x));
+  reply = { items: base }; clock += 1 * 60000; await watcher.check();
+  clock += 3 * 60000; await watcher.check();
+  assert.deepStrictEqual(kinds(n), ['cancelled'], 'cancellation reported');
+  n = events.length;
+  base = [...base, { ...appt(30, 10), patientId: 'p1' }];
+  reply = { items: base }; clock += 30 * 60000; await watcher.check();
+  assert.deepStrictEqual(kinds(n), ['backon'], 'back on the schedule');
   console.log('alerts OK');
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

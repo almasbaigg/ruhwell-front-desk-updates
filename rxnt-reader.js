@@ -24,7 +24,10 @@ function readSchedule(target) {
     if (nav.n > 4 && Date.now() - nav.t > 1500) {
       let inView = false;
       try { const v = cal.fullCalendar('getView'); inView = v.start.format('YYYY-MM-DD') <= target && target < v.end.format('YYYY-MM-DD'); } catch (e) {}
-      if (!inView) return { state: 'ok', pending: 0, date: target, closed: true, dateLabel: '', items: [], blocks: [] };
+      // Only weekends (which RxNT hides) count as closed. Any other day RxNT won't open is "couldn't read",
+      // never an empty day, or every visit on it would look cancelled.
+      const dow = new Date(target + 'T12:00:00').getDay();
+      if (!inView) return dow === 0 || dow === 6 ? { state: 'ok', pending: 0, date: target, closed: true, dateLabel: '', items: [], blocks: [] } : { state: 'navfail' };
     }
     cal.fullCalendar('gotoDate', target); return { state: 'navigating' };
   }
@@ -106,11 +109,12 @@ async function waitForSchedule(win, target, timeoutMs = 45000) {
     if (r.state === 'elsewhere' && /app2\.rxnt\.com/.test(r.url || '')) { win.loadURL(SCHEDULER).catch(() => {}); await sleep(2000); continue; }
     if (r.state === 'navigating') { last = null; idle = 0; okSince = 0; await sleep(250); continue; }
     if (r.state === 'ok' && r.closed) return r;
+    if (r.state === 'navfail') return r;
     if (r.state === 'ok') {
       if (!okSince) okSince = Date.now();
       idle = r.pending === 0 ? idle + 1 : 0;
       if (idle >= 2 && Date.now() - okSince >= 400) return r;
-      const sig = r.items.map((i) => i.appointmentId + i.statusCode).sort().join('|') + '#' + (r.blocks || []).length;
+      const sig = r.items.map((i) => i.appointmentId + i.statusCode + i.start).sort().join('|') + '#' + (r.blocks || []).length;
       if (sig !== last) { last = sig; stableSince = Date.now(); }
       else if (Date.now() - stableSince > 3000) return r;
     }
@@ -136,6 +140,7 @@ async function fetchDay(pid, date, reuse) {
     let r = await waitForSchedule(win, target, 30000);
     if (r.state === 'timeout') { await win.loadURL(SCHEDULER).catch(() => {}); r = await waitForSchedule(win, target, 45000); }
     if (r.state === 'login') return { needsLogin: true };
+    if (r.state === 'navfail') return { error: `RxNT wouldn't open ${target}.` };
     if (r.state !== 'ok') return { error: "RxNT didn't finish loading. Check your internet and try again." };
     const items = r.items
       .map((i) => ({ ...i, ...pickPhone(i) }))
@@ -336,12 +341,14 @@ const RX_TABS = [['Pending', 'pending'], ['Pharmacy Requests', 'refill'], ['Rece
 const EHR_DASH = 'https://app2.rxnt.com/ehrv9/dashboard';
 // Counts from the EHR dashboard tiles (number above its label).
 const DASH_LABELS = { 'Sent': 'sent', 'Voided': 'voided', 'Failed': 'failed', 'Pending': 'pending', 'Pharmacy Request': 'refill', 'Labs': 'labs', 'Unsigned Encounters': 'unsigned', 'Patient Tasks': 'tasks', 'Documents': 'documents', 'Referrals': 'referrals', 'Awaiting Billing': 'awaiting' };
-function readDashCounts(labels, anchor) {
+function readDashCounts(labels, anchor, required) {
   if (/auth\.rxnt\.com/.test(location.href)) return { state: 'login' };
   const lines = (document.body.innerText || '').split('\n').map((x) => x.trim()).filter(Boolean);
   if (!lines.includes(anchor || 'Pharmacy Request')) return { state: 'wait' };
   const out = {};
   lines.forEach((l, i) => { if (labels[l] && /^\d+$/.test(lines[i - 1] || '')) out[labels[l]] = Number(lines[i - 1]); });
+  // Only accept the counts once every tile we rely on has loaded (a missing tile must not read as zero).
+  if (required && required.some((k) => !(k in out))) return { state: 'wait' };
   return Object.keys(out).length >= Math.min(3, Object.keys(labels).length) ? { state: 'ready', counts: out } : { state: 'wait' };
 }
 
@@ -419,11 +426,11 @@ async function waitRxGrid(win, ms) {
   return 'timeout';
 }
 
-async function dashCounts(win, ms, labels = DASH_LABELS, anchor) {
+async function dashCounts(win, ms, labels = DASH_LABELS, anchor, required) {
   const until = Date.now() + ms;
   while (Date.now() < until && !win.isDestroyed()) {
     await sleep(700);
-    const r = await call(win, readDashCounts, labels, anchor);
+    const r = await call(win, readDashCounts, labels, anchor, required);
     if (r.state === 'login' || r.state === 'ready') return r;
   }
   return { state: 'timeout' };
@@ -433,8 +440,9 @@ async function dashCounts(win, ms, labels = DASH_LABELS, anchor) {
 // 2) Names from the prescriber dashboard tabs that have anything: Pending, Pharmacy Requests, Recent (sent) and Voided.
 async function readPending(win) {
   await win.loadURL(EHR_DASH).catch(() => {});
-  let d = await dashCounts(win, 15000);
-  if (d.state === 'timeout') { const o = await openEhr(win); if (o === 'login') return { needsLogin: true }; if (!o) return { error: 'unavailable' }; await win.loadURL(EHR_DASH).catch(() => {}); d = await dashCounts(win, 20000); }
+  const REQ = ['pending', 'refill', 'failed'];
+  let d = await dashCounts(win, 15000, DASH_LABELS, undefined, REQ);
+  if (d.state === 'timeout') { const o = await openEhr(win); if (o === 'login') return { needsLogin: true }; if (!o) return { error: 'unavailable' }; await win.loadURL(EHR_DASH).catch(() => {}); d = await dashCounts(win, 20000, DASH_LABELS, undefined, REQ); }
   if (d.state === 'login') return { needsLogin: true };
   if (d.state !== 'ready') return { error: 'unavailable' };
   const counts = d.counts, items = [];
@@ -483,7 +491,7 @@ async function readPayments(win) {
   for (let i = 0; i < 20 && !win.isDestroyed(); i++) {
     await sleep(700);
     const rows = await call(win, readPaymentRows);
-    if (rows && rows.length) return rows.map((p) => ({ ...p, at: p.date ? new Date(p.date).toISOString() : null }));
+    if (rows && rows.length) return rows.map((p) => { const t = p.date ? new Date(p.date) : null; return { ...p, at: t && !isNaN(t) ? t.toISOString() : null }; });
   }
   return null;
 }
@@ -541,10 +549,15 @@ async function readMessages(pid) {
     finally { if (!win.isDestroyed()) win.destroy(); }
   }
   if (!me) return { error: 'unavailable' };
-  const list = (await msgGet(pid, 'api/conversations')) || [];
-  const out = [];
-  for (const c of list.filter((x) => !x.is_room).slice(0, 40)) {
+  // A failed list read is "couldn't read", never an empty inbox.
+  const raw = await msgGet(pid, 'api/conversations');
+  const list = Array.isArray(raw) ? raw : raw && Array.isArray(raw.data) ? raw.data : null;
+  if (!list) return { error: 'unavailable' };
+  const out = [], recent = Date.now() - 60 * 864e5;
+  for (const c of list.filter((x) => !x.is_room).slice(0, 300)) {
     const fromPatient = !/^You:/i.test(c.excerpt || '');
+    // Read, older conversations are listed without opening them (saves dozens of requests).
+    if (c.is_read && new Date(c.last_message_at) < recent) { out.push({ id: c.id, title: c.title || 'Patient', unread: false, needsReply: false, at: c.last_message_at, excerpt: String(c.excerpt || '').replace(/^You:\s*/i, '') }); continue; }
     const item = { id: c.id, title: c.title || 'Patient', unread: !c.is_read, needsReply: fromPatient, at: c.last_message_at, excerpt: String(c.excerpt || '').replace(/^You:\s*/i, '') };
     if (fromPatient) {
       const m = await msgGet(pid, `api/conversations/${c.id}/messages`);

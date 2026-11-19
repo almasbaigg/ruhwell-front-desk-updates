@@ -37,8 +37,8 @@ async function loadChecklist(list) {
   }).join('');
   $('cl-list').querySelectorAll('.cl-item').forEach((el) => {
     const it = clItems.find((x) => x.id === el.dataset.id);
-    el.querySelector('input').onchange = async () => { const was = it.done; loadChecklist(await window.api.checklistToggle(it.id)); if (!was) bumpDone(); };
-    el.querySelector('.x').onclick = async () => loadChecklist(await window.api.checklistRemove(it.id));
+    el.querySelector('input').onchange = async () => { const was = it.done; loadChecklist(await window.api.checklistToggle(it.id)); if (!was) { bumpDone(); toast('Done', async () => { loadChecklist(await window.api.checklistToggle(it.id)); bumpDone(-1); }); } };
+    el.querySelector('.x').onclick = async () => { loadChecklist(await window.api.checklistRemove(it.id)); toast('Task deleted', async () => loadChecklist(await window.api.checklistRestore(it))); };
     const st = el.querySelector('.star'); if (st) st.onclick = async () => { const r = await window.api.checklistStar(it.id); if (r && r.error === 'top3') { toast('Top 3 is full. Unstar one first.'); return; } loadChecklist(r); };
     const bl = el.querySelector('.bell'); if (bl) bl.onclick = (e) => whenMenu(e.currentTarget, async (due) => loadChecklist(await window.api.checklistDue(it.id, due)), !!it.due);
     if (it.link) el.querySelector('.txt').onclick = () => openLink(it.link);

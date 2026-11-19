@@ -15,19 +15,19 @@ async function sync(pid) {
   running = true;
   const since = Date.now() - 90 * DAY, keep = (x) => new Date(x.at) >= since;
   const prevTexts = store.ringrxHistory.get(), prevCalls = store.calls.get();
-  let fresh = [];
+  let fresh = [], ok = true;
   try {
     const [msgs, calls, contacts] = await Promise.all([
       ringrx.messages(pid, new Date(since).toISOString()), ringrx.calls(pid, 90), ringrx.contacts(pid).catch(() => null),
     ]);
-    if (msgs === null) store.ringrxHistory.set({ ...prevTexts, error: 'unavailable', at: new Date().toISOString() });
+    if (msgs === null) { ok = false; store.ringrxHistory.set({ ...prevTexts, error: 'unavailable', failedAt: new Date().toISOString() }); }
     else {
       const texts = msgs.filter((m) => m.kind === 'text');
       const known = new Set((prevTexts.items || []).map((m) => m.id));
       fresh = texts.filter((m) => m.inbound && !known.has(m.id));
       store.ringrxHistory.set({ items: texts.filter(keep), at: new Date().toISOString(), error: null, v: 2 });
     }
-    if (calls === null) store.calls.set({ ...prevCalls, error: 'unavailable', at: new Date().toISOString() });
+    if (calls === null) { ok = false; store.calls.set({ ...prevCalls, error: 'unavailable', failedAt: new Date().toISOString() }); }
     else {
       // Voicemails come as messages; attach each to its call (same number within 10 minutes) or add it on its own.
       const list = calls.filter(keep);
@@ -41,9 +41,11 @@ async function sync(pid) {
     }
     if (contacts) store.ringrxContacts.set({ items: contacts.filter((c) => c.type !== 'directory'), at: new Date().toISOString() });
   } catch (e) {
-    store.ringrxHistory.set({ ...store.ringrxHistory.get(), error: 'failed' });
+    ok = false;
+    try { store.ringrxHistory.set({ ...store.ringrxHistory.get(), error: 'failed', failedAt: new Date().toISOString() }); } catch {}
   } finally { running = false; }
-  return { fresh };
+  // A failed pull keeps the old texts/calls but says so (their "at" stays at the last success).
+  return { fresh, ok };
 }
 
 // Who is behind a number: RxNT patient(s) (main phone or a linked extra number), else a RingRx contact.
@@ -57,7 +59,7 @@ function directory() {
   return (phone) => {
     const hits = byPhone[phone] || [];
     if (hits.length === 1) { const p = hits[0]; return { kind: p.pending ? 'pending' : 'patient', name: `${p.first || ''} ${p.last || ''}`.trim() || phone, key: p.key, dnt: !!p.dnt }; }
-    if (hits.length > 1) return { kind: 'shared', name: hits.map((p) => p.first || p.last).filter(Boolean).slice(0, 3).join(', '), keys: hits.map((p) => p.key), count: hits.length, dnt: hits.every((p) => p.dnt) };
+    if (hits.length > 1) return { kind: 'shared', name: hits.map((p) => p.first || p.last).filter(Boolean).slice(0, 3).join(', '), keys: hits.map((p) => p.key), count: hits.length, dnt: hits.some((p) => p.dnt) || optedOut(phone) };
     if (contacts[phone]) return { kind: 'contact', name: contacts[phone].name, org: contacts[phone].org };
     return { kind: 'unknown', name: '' };
   };
@@ -129,26 +131,38 @@ const ignored = () => new Set(store.callbacks.get().ignored || []);
 // Read marks: opening a conversation clears its dot (it can still need a reply).
 function markSeen(phone) { const c = store.callbacks.get(); c.seen = { ...(c.seen || {}), [phone]: Date.now() }; store.callbacks.set(c); }
 // True when an item was marked done after the given time (used for RxNT portal conversations too).
+// Undo a "done" (the last few seconds' click): forget when it was marked.
+function unmarkDone(kind, id) { const k = `${kind}:${id}@`; const c = store.callbacks.get(); c.done = (c.done || []).filter((d) => !String(d).startsWith(k)); store.callbacks.set(c); }
 const doneSince = (key, iso) => (doneMap()[key] || 0) > new Date(iso).getTime();
 function markDone(kind, phone) { const k = `${kind}:${phone}`; const c = store.callbacks.get(); c.done = [...(c.done || []).filter((d) => !String(d).startsWith(k + '@')), `${k}@${Date.now()}`].slice(-3000); store.callbacks.set(c); }
 // Texts badge = conversations with something unread that still needs a reply (drops as soon as you open one).
 const counts = () => ({ texts: textThreads(14).filter((t) => t.needs && t.unread).length, calls: callList(14).filter((c) => c.due).length });
 
-// Replies: STOP moves the number to Do not text (always); recent "C" replies count as confirmations.
+// Numbers that replied STOP. The number itself is blocked, for everyone who uses it (siblings, a parent's phone).
+const optedOut = (phone) => !!((store.inbound.get().optOut || {})[String(phone || '').replace(/\D/g, '').slice(-10)]);
+function clearOptOut(phones) { const st = store.inbound.get(), o = { ...(st.optOut || {}) }; phones.forEach((ph) => delete o[ph]); store.inbound.set({ ...st, optOut: o }); }
+const fullName = (p) => `${p.first || ''} ${p.last || ''}`.trim();
+
+// Replies: STOP blocks the number (always); recent "C" replies confirm the visit that was actually reminded.
+// On a number shared by several patients, nothing is pinned on one of them by guesswork.
 function handleReplies(fresh, addEvents) {
   if (!fresh || !fresh.length) return;
   const st = store.inbound.get(), all = Object.values(store.patients.all()), events = [];
   const recent = (m) => Date.now() - new Date(m.at) < 3 * DAY;
   for (const m of fresh) {
-    const p = all.find((x) => x.phone === m.phone || (x.otherPhones || []).includes(m.phone));
-    const who = p ? `${p.first || ''} ${p.last || ''}`.trim() : m.phone;
+    const hits = all.filter((x) => x.phone === m.phone || (x.otherPhones || []).includes(m.phone)), p = hits.length === 1 ? hits[0] : null;
+    const who = hits.length > 1 ? `${hits.map((x) => x.first || x.last).filter(Boolean).slice(0, 3).join(', ')} (shared number)` : p ? fullName(p) : m.phone;
     if (STOP_RE.test(m.body)) {
-      if (p) store.patients.update(p.key, { dnt: true, dntReason: 'Replied STOP', dntAt: new Date().toISOString() });
-      else store.patients.upsert([{ first: '', last: '', phone: m.phone, phoneSource: 'Typed', dnt: true, dntReason: 'Replied STOP' }]);
+      st.optOut = { ...(st.optOut || {}), [m.phone]: { at: m.at } };
+      for (const x of hits) store.patients.update(x.key, { dnt: true, dntReason: 'Replied STOP', dntAt: new Date().toISOString() });
+      if (!hits.length) store.patients.upsert([{ first: '', last: '', phone: m.phone, phoneSource: 'Typed', dnt: true, dntReason: 'Replied STOP' }]);
       if (recent(m)) events.push({ kind: 'optout', text: `Opted out: ${who} replied STOP`, appt: { first: p?.first, last: p?.last, phone: m.phone } });
     } else if (recent(m) && CONFIRM_RE.test(m.body)) {
-      st.confirmed = { ...(st.confirmed || {}), [m.phone]: m.at };
-      events.push({ kind: 'confirmed', text: `Confirmed: ${who} replied ${m.body.trim()}`, appt: { first: p?.first, last: p?.last, phone: m.phone } });
+      // Credit the confirmation to whoever was last texted on this number (the reminder), not just anyone on it.
+      const sent = store.log.all().filter((h) => h.ok && h.phone === m.phone && new Date(h.at) <= new Date(m.at) && new Date(m.at) - new Date(h.at) < 4 * DAY).sort((a, b) => new Date(b.at) - new Date(a.at))[0];
+      const forName = sent ? sent.name : p ? fullName(p) : '';
+      st.confirmed = { ...(st.confirmed || {}), [m.phone]: { at: m.at, name: forName } };
+      events.push({ kind: 'confirmed', text: `Confirmed: ${forName || who} replied ${m.body.trim()}`, appt: { first: p?.first, last: p?.last, phone: m.phone } });
     } else if (recent(m)) {
       events.push({ kind: 'reply', text: `New text from ${who}`, appt: { first: p?.first, last: p?.last, phone: m.phone } });
     }
@@ -159,4 +173,4 @@ function handleReplies(fresh, addEvents) {
 
 const status = () => { const h = store.ringrxHistory.get(), c = store.calls.get(); return { running, at: h.at, error: h.error || c.error, texts: (h.items || []).length, calls: (c.items || []).length }; };
 
-module.exports = { sync, textThreads, callList, thread, markDone, doneSince, markSeen, snooze, snoozes, ignore, counts, handleReplies, status, events, directory, d10 };
+module.exports = { unmarkDone, optedOut, clearOptOut, sync, textThreads, callList, thread, markDone, doneSince, markSeen, snooze, snoozes, ignore, counts, handleReplies, status, events, directory, d10 };
