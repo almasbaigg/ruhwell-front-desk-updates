@@ -26,7 +26,8 @@ const isSeen = (a) => /^(completed|check-?in completed)$/i.test(String(a.statusT
 // cancelled), the nearest in time, so a patient with several bookings can't get a wrong "rescheduled from".
 function pairMoves(newOnes, goneOnes) {
   const pairs = new Map(), used = new Set();
-  const cand = newOnes.map((n) => goneOnes.filter((g) => g.patientId === n.patientId).map((g) => ({ n, g, d: Math.abs(new Date(n.start) - new Date(g.start)) })))
+  // Only within 2 weeks of each other: a cancellation and a booking further apart are two separate changes.
+  const cand = newOnes.map((n) => goneOnes.filter((g) => g.patientId === n.patientId).map((g) => ({ n, g, d: Math.abs(new Date(n.start) - new Date(g.start)) })).filter((x) => x.d <= 14 * 864e5))
     .flat().sort((x, y) => x.d - y.d);
   for (const { n, g } of cand) { if (pairs.has(n.appointmentId) || used.has(g.appointmentId)) continue; pairs.set(n.appointmentId, g); used.add(g.appointmentId); }
   return pairs;
@@ -49,6 +50,7 @@ function diff(prev, cur, prevRange) {
     if (isCancel(a)) continue;
     const from = moves.get(a.appointmentId);
     if (from && from.start !== a.start) events.push({ kind: 'rescheduled', appt: a, text: `${name(a)} rescheduled from ${when(from.start)} to ${when(a.start)}` });
+    else if (from) events.push({ kind: 'rebooked', appt: a, text: `${name(a)} rebooked for ${when(a.start)}`, quiet: true });   // same slot, new record: an edit
     else if (!from) events.push({ kind: 'new', appt: a, text: `New appointment: ${name(a)}, ${when(a.start)}${a.visitType ? ' · ' + a.visitType : ''}` });
   }
   for (const [id, a] of Object.entries(cur)) {
@@ -171,7 +173,7 @@ function schedule() {
    FYI  – quiet events: shown in the app only. */
 const PREF_KEY = { backon: 'schedule', rx: 'rx', new: 'schedule', cancelled: 'schedule', noshow: 'schedule', rescheduled: 'schedule', correction: 'schedule', optout: 'reply', confirmed: 'reply', reply: 'reply', soon: 'soon', newpatient: 'newpatient', portal: 'reply' };
 const TEXT_LABEL = { backon: 'Back on the schedule', rx: 'Prescription waiting', new: 'New booking', cancelled: 'Cancellation', rescheduled: 'Reschedule', noshow: 'No-show', correction: 'Correction: still scheduled', optout: 'Patient replied STOP', confirmed: 'Patient confirmed', reply: 'New patient text', soon: 'Starting soon', newpatient: 'New patient registered', portal: 'RxNT portal message' };
-const SCHEDULE_KINDS = ['new', 'cancelled', 'noshow', 'rescheduled', 'correction'];
+const SCHEDULE_KINDS = ['new', 'cancelled', 'noshow', 'rescheduled', 'correction', 'backon'];
 function tierOf(e) {
   if (e.quiet) return 'fyi';
   if (e.kind === 'rx') return 'now';

@@ -51,6 +51,11 @@ async function paintHealth() {
     pill.textContent = !ok ? 'Signed out' : warn ? "Can't reach · retrying" : `Connected${when ? ' · checked ' + minsAgo(when) : ''}`;
     if (btn) { $(btn).classList.toggle('hidden', ok && !warn); $(btn).textContent = ok ? 'Reconnect' : 'Sign in'; }
   };
+  window.api.rxntHasLogin().then((has) => {
+    const el = $('s-rxnt-saved'); if (!el) return;
+    el.innerHTML = has ? `Sign-in saved on this computer, so the app signs itself back in. <button class="link-btn" id="s-rxnt-forget">Forget it</button>` : 'Sign in once and the app remembers it (saved encrypted on this computer).';
+    if (has) $('s-rxnt-forget').onclick = async () => { await window.api.rxntForgetLogin(); toast('Saved RxNT sign-in removed'); paintHealth(); };
+  });
   set('rxnt', st.rxnt, !!(st.alerts || {}).lastError, (st.alerts || {}).lastRun || (st.schedule || {}).at, 's-rxnt-connect');
   set('ringrx', st.ringrx, (st.messages || {}).error === 'failed', (st.messages || {}).at);
   set('gmail', !!G.connected, !!G.error, G.at, 's-gmail-connect');

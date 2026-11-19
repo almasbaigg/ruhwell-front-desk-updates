@@ -94,12 +94,28 @@ const pid = () => store.settings.get().currentProfile;
 // A single "sign in" page can be a blip (RxNT bouncing through its login server). Only treat RxNT as
 // signed out after a fresh check agrees, so you aren't asked to sign in again for nothing.
 let confirming = null;
+// If RxNT really did sign us out, sign back in with the saved sign-in first; only ask when that can't work.
 async function rxntSignedOut(id) {
-  if (!confirming) confirming = rxnt.status(id).then((r) => { if (!r.connected && !r.unknown) { setRxntFlag(id, false); send('sync', syncStatus()); } return !r.connected && !r.unknown; }).finally(() => { setTimeout(() => (confirming = null), 60000); });
+  if (!confirming) confirming = (async () => {
+    const r = await rxnt.status(id);
+    if (r.connected || r.unknown) return false;
+    if (rxnt.savedLogin(id) && rxnt.savedLogin(id).p) {
+      const a = await rxnt.autoSignIn(id);
+      if (a === 'ok') { setRxntFlag(id, true); send('sync', syncStatus()); return false; }
+      if (a === 'code') notify('RxNT needs a verification code', 'Click to finish signing in (one time).', () => { showWindow(); send('nav', 'settings'); });
+    }
+    setRxntFlag(id, false); send('sync', syncStatus());
+    return true;
+  })().finally(() => { setTimeout(() => (confirming = null), 60000); });
   return confirming;
 }
 function setRxntFlag(id, v) { const s = store.settings.get(); s.rxntConnected = { ...(s.rxntConnected || {}), [id]: v }; store.settings.set(s); }
 
+// A number that replied STOP stays blocked until someone confirms the person asked for texts again (e.g. replied START).
+ipcMain.handle('optout:status', (_e, phone) => { const d = String(phone || '').replace(/\D/g, '').slice(-10); return (store.inbound.get().optOut || {})[d] || null; });
+ipcMain.handle('optout:clear', (_e, phone) => { comms.clearOptOut([String(phone || '').replace(/\D/g, '').slice(-10)]); return true; });
+ipcMain.handle('rxnt:forgetLogin', () => { rxnt.forgetLogin(pid()); return true; });
+ipcMain.handle('rxnt:hasLogin', () => !!(rxnt.savedLogin(pid()) || {}).p);
 ipcMain.handle('app:info', () => ({ platform: process.platform, version: app.getVersion(), dataDir: store.dataDir() }));
 ipcMain.handle('update:status', () => updater.status());
 ipcMain.handle('update:check', () => updater.checkNow());
@@ -276,8 +292,6 @@ ipcMain.handle('settings:set', (_e, s) => {
 });
 ipcMain.handle('patients:list', () => Object.values(store.patients.all()));
 ipcMain.handle('patients:update', (_e, key, fields) => {
-  // Turning do-not-text off in the app also lifts the STOP block on that person's numbers.
-  if (fields && fields.dnt === false) { const p = store.patients.all()[key]; if (p) comms.clearOptOut([p.phone, ...(p.otherPhones || [])].filter(Boolean)); }
   return store.patients.update(key, fields);
 });
 ipcMain.handle('sync:status', () => syncStatus());
@@ -703,15 +717,16 @@ setInterval(() => { try { backups.autoDaily(); } catch {} }, 60 * 60 * 1000);
 
 ipcMain.handle('send:batch', async (e, items) => {
   const id = pid();
-  // Blocked numbers: anyone marked do-not-text (main or extra numbers) and every number that replied STOP.
-  const dnt = new Set(Object.values(store.patients.all()).filter((p) => p.dnt).flatMap((p) => [p.phone, ...(p.otherPhones || [])]).filter(Boolean));
-  Object.keys(store.inbound.get().optOut || {}).forEach((ph) => dnt.add(ph));
+  // Blocked numbers, read fresh before every single text (a STOP can arrive mid-batch): anyone marked
+  // do-not-text (main or extra numbers) and every number that replied STOP. All compared as 10 digits.
+  const d10 = (x) => String(x || '').replace(/\D/g, '').slice(-10);
+  const blocked = () => { const b = new Set(Object.values(store.patients.all()).filter((p) => p.dnt).flatMap((p) => [p.phone, ...(p.otherPhones || [])]).map(d10).filter((x) => x.length === 10)); Object.keys(store.inbound.get().optOut || {}).forEach((ph) => b.add(d10(ph))); return b; };
   const results = [];
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     let res;
     try {
-      if (dnt.has(String(it.phone).replace(/\D/g, '').slice(-10))) throw Object.assign(new Error('Marked do-not-text'), { code: 'DNT' });
+      if (blocked().has(d10(it.phone))) throw Object.assign(new Error('Marked do-not-text'), { code: 'DNT' });
       try { await ringrx.sendSms(id, it.phone, it.message); }
       catch (err) { if (err.code === 'RETRY') await ringrx.sendSms(id, it.phone, it.message); else throw err; }
       res = { ...it, ok: true };
@@ -798,6 +813,11 @@ app.on('before-quit', () => { quitting = true; });
 
 // Stay signed in to RxNT across restarts and updates, and keep the session alive between syncs.
 function rxntKeepAlive() { const id = pid(); if (id && store.settings.get().rxntConnected?.[id]) { rxnt.keepSignedIn(id); rxnt.ping(id); } }
-setInterval(rxntKeepAlive, 10 * 60000);
+setInterval(rxntKeepAlive, 5 * 60000);
+// Opened while signed out of RxNT but with a saved sign-in: sign back in quietly.
+app.whenReady().then(() => setTimeout(async () => {
+  const id = pid(); if (!id || store.settings.get().rxntConnected?.[id] || !(rxnt.savedLogin(id) || {}).p) return;
+  if ((await rxnt.autoSignIn(id)) === 'ok') { setRxntFlag(id, true); send('sync', syncStatus()); syncDue(0); }
+}, 6000));
 app.on('before-quit', () => { const id = pid(); if (id) rxnt.keepSignedIn(id); });
 app.on('window-all-closed', () => { if (!isMac) app.quit(); });

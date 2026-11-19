@@ -107,7 +107,19 @@
 - Templates: compact list, click to edit in place, tap-to-insert chips, live preview with a sample patient, delete in a ⋯ menu with confirm, duplicate.
 - CLAUDE.md: instructions for any Claude (including Maria's) to build the Mac version and keep both versions identical.
 
-## 1.5.0 (Windows test build)
+## 1.5.2 (Windows test build)
+- RxNT stays signed in: the app remembers your RxNT sign-in (encrypted on this computer) the next time you sign in, and if RxNT ever signs it out, it signs itself back in quietly (also when the app opens). Only a verification-code step needs you. Session kept alive every 5 minutes. Settings → Your accounts shows "Sign-in saved" with Forget it.
+- (Verified from the 1.5.0 review) Reschedule pairing only within 2 weeks; a same-slot replacement is a quiet edit; "Back on the schedule" alerts right away for today/tomorrow.
+- STOP is separate from the Do-not-text switch: a number that replied STOP stays blocked until they text START (automatic) or you confirm they opted back in. The block is re-checked before every single text, with all numbers compared as 10 digits.
+- Saving: written to disk before swapping in; an existing file that can't be read, or is empty, is locked (never treated as "no data").
+- Mac self-update: the download must match the release checksum; the old app is kept until the new one runs (and put back if it doesn't); no shell tricks with file paths.
+
+## 1.5.1 (Windows test build)
+- Fix: RxNT work and dashboard counts failed to load (an empty value broke the reader). Regression test added.
+- Fix: Schedule day view showed "undefined" cards on days with closed or out-of-office blocks.
+- Timer: a clean pie that empties as time runs out.
+
+## 1.5.0 (first Windows test build)
 - Mac updates install themselves (needs the Mac build of 1.5.0 installed once): the app downloads the new version, replaces itself and restarts. Files the app downloads itself aren't flagged by macOS, so no "damaged" warning and no Terminal command after this first install.
 - Timer (for anything she's doing): a timer button under the sidebar clock. Quick picks (5, 10, 15, 25, 45 min, or type a time) and an optional label ("Charting", "Call pharmacy"). While running, the sidebar clock becomes a big shrinking disc with the time left (teal → amber at 5 min → terracotta at 1 min), plus Pause, +5 min and Stop. At the end: a soft chime and a pop-up "Time's up: Charting" with +5 min / Done. The time left also shows in the Mac menu bar so she sees it while working in RxNT. One timer at a time, nothing to set up.
 - (From code review, all verified in the code) Data safety: if saved data can't be decrypted (e.g. Mac Keychain access denied after an update), never treat it as empty and never overwrite it. Show a clear "Can't unlock your data" message instead. Refuse to save patient data unencrypted.

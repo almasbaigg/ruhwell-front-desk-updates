@@ -157,6 +157,11 @@ function handleReplies(fresh, addEvents) {
       for (const x of hits) store.patients.update(x.key, { dnt: true, dntReason: 'Replied STOP', dntAt: new Date().toISOString() });
       if (!hits.length) store.patients.upsert([{ first: '', last: '', phone: m.phone, phoneSource: 'Typed', dnt: true, dntReason: 'Replied STOP' }]);
       if (recent(m)) events.push({ kind: 'optout', text: `Opted out: ${who} replied STOP`, appt: { first: p?.first, last: p?.last, phone: m.phone } });
+    } else if (/^\s*(start|unstop)\s*[.!]?\s*$/i.test(m.body) && (st.optOut || {})[m.phone]) {
+      // They texted START: texts are allowed again on this number (the standard way to opt back in).
+      const o = { ...(st.optOut || {}) }; delete o[m.phone]; st.optOut = o;
+      for (const x of hits) if (x.dntReason === 'Replied STOP') store.patients.update(x.key, { dnt: false, dntReason: '' });
+      if (recent(m)) events.push({ kind: 'reply', text: `${who} replied START (texts allowed again)`, appt: { first: p?.first, last: p?.last, phone: m.phone } });
     } else if (recent(m) && CONFIRM_RE.test(m.body)) {
       // Credit the confirmation to whoever was last texted on this number (the reminder), not just anyone on it.
       const sent = store.log.all().filter((h) => h.ok && h.phone === m.phone && new Date(h.at) <= new Date(m.at) && new Date(m.at) - new Date(h.at) < 4 * DAY).sort((a, b) => new Date(b.at) - new Date(a.at))[0];

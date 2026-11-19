@@ -31,4 +31,8 @@ assert(store.raw.readSecure('p.bin', {}).a === 1, 'original data intact after un
 encOK = false;
 assert.throws(() => store.raw.writeSecure('q.bin', { b: 2 }), /not saved/, 'no plaintext');
 assert(!fs.existsSync(path.join(dir, 'q.bin')), 'nothing written');
+// An existing file that can't be read, or is empty, is locked too (never treated as "no data").
+encOK = true; fs.writeFileSync(path.join(dir, 'z.bin'), '');
+store.raw.readSecure('z.bin', {});
+assert(store.raw.lockedFiles().includes('z.bin') && (() => { try { store.raw.writeSecure('z.bin', {}); return false; } catch { return true; } })(), 'empty file locked');
 console.log('data safety OK');

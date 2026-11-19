@@ -28,19 +28,25 @@ function initMac() {
       const { net } = require('electron');
       const r = await net.fetch(BASE + 'latest-mac.yml?t=' + Date.now());
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      const v = ((await r.text()).match(/^version:\s*(\S+)/m) || [])[1];
+      const yml = await r.text();
+      const v = (yml.match(/^version:\s*(\S+)/m) || [])[1];
+      // The release lists a checksum for each file; the download must match it exactly.
+      const sumFor = (file) => { const i = yml.indexOf(`url: ${file}`); if (i < 0) return null; const m = yml.slice(i).match(/sha512:\s*(\S+)/); return m ? m[1] : null; };
       if (!v || !newer(v, app.getVersion())) return set({ status: 'current' });
       const rel = `https://github.com/almasbaigg/ruhwell-front-desk-updates/releases/download/v${v}/RuhwellFrontDesk-${arch}`;
       const bundle = appBundle();
       let writable = false; try { fs.accessSync(path.dirname(bundle), fs.constants.W_OK); writable = /\.app$/.test(bundle); } catch {}
       if (!writable) return set({ status: 'available', version: v, url: rel + '.dmg' });
       set({ status: 'downloading', version: v });
-      const zr = await net.fetch(rel + '.zip');
-      if (!zr.ok) return set({ status: 'available', version: v, url: rel + '.dmg' });
+      const want = sumFor(`RuhwellFrontDesk-${arch}.zip`);
+      const zr = want ? await net.fetch(rel + '.zip') : null;
+      if (!zr || !zr.ok) return set({ status: 'available', version: v, url: rel + '.dmg' });
+      const bytes = Buffer.from(await zr.arrayBuffer());
+      if (require('crypto').createHash('sha512').update(bytes).digest('base64') !== want) throw new Error("The update didn't match its checksum, so it wasn't installed.");
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rfd-update-')), zip = path.join(dir, 'update.zip');
-      fs.writeFileSync(zip, Buffer.from(await zr.arrayBuffer()));
+      fs.writeFileSync(zip, bytes);
       require('child_process').execFileSync('/usr/bin/ditto', ['-x', '-k', zip, dir]);
-      const found = fs.readdirSync(dir).find((f) => f.endsWith('.app'));
+      const found = fs.readdirSync(dir).find((f) => f === 'Ruhwell Front Desk.app');
       if (!found) throw new Error('The download was incomplete.');
       const plist = fs.readFileSync(path.join(dir, found, 'Contents', 'Info.plist'), 'utf8');
       if (!plist.includes(`<string>${v}</string>`)) throw new Error('The download was the wrong version.');
@@ -52,21 +58,28 @@ function initMac() {
   setTimeout(check, 30000);
   setInterval(check, 4 * 36e5);
 }
-// Swap the new app in after this one quits, then open it. Sign-ins and data live elsewhere and are untouched.
+// Swap the new app in after this one quits, then open it. The old app is kept as "….app.old" until the new one
+// has started and run for a bit (then the new app removes it); if the swap or the launch fails, the old app is
+// put back. Paths are passed as arguments, never pasted into the command. Sign-ins and data live elsewhere.
+const SWAP = `while kill -0 "$1" 2>/dev/null; do sleep 0.3; done
+rm -rf "$2.old"
+mv "$2" "$2.old" || { open "$2"; exit 1; }
+if mv "$3" "$2" && open "$2"; then exit 0; fi
+rm -rf "$2"; mv "$2.old" "$2"; open "$2"`;
 function macSwapAndRestart() {
-  const target = appBundle(), src = macReady.app;
-  const script = `while kill -0 ${process.pid} 2>/dev/null; do sleep 0.3; done
-rm -rf "${target}.old" && mv "${target}" "${target}.old" && mv "${src}" "${target}" && rm -rf "${target}.old" || { [ -d "${target}.old" ] && [ ! -d "${target}" ] && mv "${target}.old" "${target}"; }
-/usr/bin/xattr -cr "${target}" 2>/dev/null
-open "${target}"`;
-  require('child_process').spawn('/bin/sh', ['-c', script], { detached: true, stdio: 'ignore' }).unref();
+  require('child_process').spawn('/bin/sh', ['-c', SWAP, 'rfd-update', String(process.pid), appBundle(), macReady.app], { detached: true, stdio: 'ignore' }).unref();
   app.quit();
+}
+// After an update: once this version has been running a minute, the previous copy isn't needed.
+function cleanOldCopy() {
+  if (process.platform !== 'darwin' || !app.isPackaged) return;
+  setTimeout(() => { try { fs.rmSync(appBundle() + '.old', { recursive: true, force: true }); } catch {} }, 60000);
 }
 
 function init(onChange) {
   notify = onChange;
   if (!app.isPackaged) return;
-  if (process.platform === 'darwin') return initMac();
+  if (process.platform === 'darwin') { cleanOldCopy(); return initMac(); }
   if (process.platform !== 'win32') return;
   const { autoUpdater } = require('electron-updater');
   autoUpdater.autoDownload = true;

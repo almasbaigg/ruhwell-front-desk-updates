@@ -12,8 +12,11 @@ const file = (name) => path.join(dir(), name);
 function atomicWrite(f, data, mode) {
   fs.mkdirSync(path.dirname(f), { recursive: true });
   const tmp = `${f}.tmp-${process.pid}`;
-  fs.writeFileSync(tmp, data, mode ? { mode } : undefined);
-  fs.renameSync(tmp, f);
+  try {
+    const fd = fs.openSync(tmp, 'w', mode || 0o644);
+    try { fs.writeFileSync(fd, data); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }   // on disk before the swap
+    fs.renameSync(tmp, f);
+  } catch (e) { try { fs.unlinkSync(tmp); } catch {} throw e; }
 }
 function readPlain(name, fallback) {
   try { return JSON.parse(fs.readFileSync(file(name), 'utf8')); } catch { return fallback; }
@@ -30,8 +33,9 @@ const devMode = () => !app.isPackaged;   // tests and development only: no OS ke
 function readSecure(name, fallback) {
   const f = file(name);
   let buf;
-  try { buf = fs.readFileSync(f); } catch { return fallback; }   // no file yet
-  if (!buf.length) return fallback;
+  try { buf = fs.readFileSync(f); }
+  catch (e) { if (e.code === 'ENOENT') return fallback; locked.add(name); return fallback; }   // only "no file yet" means empty; other read errors lock it
+  if (!buf.length) { locked.add(name); return fallback; }   // an existing but empty file is damaged, not 'no data'
   try {
     let text;
     const head = buf.subarray(0, 4);

@@ -2,6 +2,7 @@
 // RxNT's scheduler page already holds each appointment (name, phones, age, status)
 // in memory, so we read it straight from the page — no clicking through charts.
 const { BrowserWindow, session } = require('electron');
+const store = require('./store');
 
 const partitionFor = (pid) => `persist:rxnt-${pid}`;
 const SCHEDULER = 'https://app2.rxnt.com/SchedulerV2/#/appointment';
@@ -228,7 +229,10 @@ function readDash(expectChart) {
     cell: pi.CellPhone || '', home: pi.HomePhone || '', preferred: pi.PreferedNumber || '',
   } };
 }
-const call = (win, fn, ...args) => win.webContents.executeJavaScript(`(${fn.toString()})(${args.map((a) => JSON.stringify(a)).join(',')})`, true).catch(() => ({ state: 'loading' }));
+// Runs a function inside the RxNT page. Arguments are written out as code, so an empty (undefined) one must be
+// spelled out, or the call becomes invalid code and every read silently fails.
+const argCode = (args) => args.map((a) => (a === undefined ? 'undefined' : JSON.stringify(a))).join(',');
+const call = (win, fn, ...args) => win.webContents.executeJavaScript(`(${fn.toString()})(${argCode(args)})`, true).catch(() => ({ state: 'loading' }));
 
 async function runSearch(win, L) {
   for (let t = 0; t < 40; t++) {
@@ -280,6 +284,55 @@ async function openPatient(win, L, i, row) {
 
 // Visible window: user signs in to RxNT once; the session cookie is kept in the
 // app's persistent partition so later reads happen silently.
+/* Saved RxNT sign-in (asked for, so nobody has to type it again): when you sign in, the app remembers the
+   username and password, encrypted on this computer with the OS keychain. If RxNT signs the app out, it signs
+   back in by itself in a hidden window. A verification-code step still needs you, so it asks then. */
+const credFile = (pid) => `rxnt-login-${pid}.bin`;
+const savedLogin = (pid) => store.raw.readSecure(credFile(pid), null);
+const forgetLogin = (pid) => { try { store.raw.writeSecure(credFile(pid), {}); } catch {} };
+// Runs in the RxNT login page: remembers what's typed into the username and password boxes.
+const CAPTURE = `(() => { if (window.__rfdCap) return; window.__rfdCap = 1;
+  const grab = () => { const u = document.querySelector('input[autocomplete=username], input[type=email], #tenant-discovery-username, input[name*=user i], input[id*=user i]');
+    const p = document.querySelector('input[type=password]');
+    if (u && u.value) console.log('__RFD_U__' + JSON.stringify(u.value)); if (p && p.value) console.log('__RFD_P__' + JSON.stringify(p.value)); };
+  document.addEventListener('submit', grab, true); document.addEventListener('click', (e) => { if (e.target.closest('button, input[type=submit]')) grab(); }, true);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Enter') grab(); }, true); })()`;
+// Runs in the RxNT login page: fills whatever step is showing (username, then password) and continues.
+function autofillStep(u, pw) {
+  if (/app2\.rxnt\.com/.test(location.host)) return 'in';
+  const vis = (el) => el && el.offsetParent !== null;
+  const set = (el, v) => { const d = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value'); d.set.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); };
+  const text = (document.body.innerText || '').toLowerCase();
+  if (/verification code|one-time|authenticator|enter the code|security code/.test(text) && !document.querySelector('input[type=password]')) return 'code';
+  const pass = [...document.querySelectorAll('input[type=password]')].find(vis);
+  const user = [...document.querySelectorAll('input[autocomplete=username], input[type=email], #tenant-discovery-username, input[name*=user i], input[id*=user i], input[type=text]')].find(vis);
+  let acted = false;
+  if (user && !user.value) { set(user, u); acted = true; }
+  if (pass && !pass.value) { set(pass, pw); acted = true; }
+  if (!acted && !pass && !user) return 'wait';
+  const btn = [...document.querySelectorAll('button, input[type=submit]')].filter(vis).find((b) => /sign in|log ?in|continue|next|submit/i.test(b.innerText || b.value || '') || b.type === 'submit');
+  if (btn) btn.click(); else { const f = (pass || user).form; if (f) f.requestSubmit ? f.requestSubmit() : f.submit(); }
+  return 'submitted';
+}
+// Sign back in without bothering anyone. Returns 'ok', 'code' (needs a verification code), or 'failed'.
+async function autoSignIn(pid) {
+  const c = savedLogin(pid); if (!c || !c.u || !c.p) return 'failed';
+  const win = makeWindow(pid, false);
+  try {
+    await win.loadURL('https://auth.rxnt.com/auth/login').catch(() => {});
+    const end = Date.now() + 60000; let submits = 0;
+    while (Date.now() < end && !win.isDestroyed()) {
+      await sleep(1500);
+      const url = win.webContents.getURL();
+      if (/app2\.rxnt\.com/i.test(url)) { await keepSignedIn(pid); return 'ok'; }
+      const r = await call(win, autofillStep, c.u, c.p);
+      if (r === 'code') return 'code';
+      if (r === 'submitted' && ++submits > 4) return 'failed';   // wrong password or a page we don't know: stop, don't lock the account
+    }
+    return 'failed';
+  } finally { if (!win.isDestroyed()) win.destroy(); }
+}
+
 function signIn(pid, parent) {
   return new Promise((resolve) => {
     const win = makeWindow(pid, true, parent);
@@ -295,6 +348,14 @@ function signIn(pid, parent) {
       if (input.type === 'keyDown' && (input.key === 'F5' || ((input.control || input.meta) && input.key.toLowerCase() === 'r'))) win.webContents.reload();
     });
     win.webContents.setWindowOpenHandler(({ url }) => { win.loadURL(url); return { action: 'deny' }; });
+    // Remember the sign-in (encrypted) so the app can sign itself back in later.
+    const cred = { ...(savedLogin(pid) || {}) };
+    win.webContents.on('did-finish-load', () => { if (/auth\.rxnt\.com|login/i.test(win.webContents.getURL())) win.webContents.executeJavaScript(CAPTURE, true).catch(() => {}); });
+    win.webContents.on('console-message', (...a) => {
+      const msg = String((a[1] && a[1].message) || a[2] || '');
+      const m = msg.match(/^__RFD_(U|P)__(.*)$/); if (!m) return;
+      try { cred[m[1] === 'U' ? 'u' : 'p'] = JSON.parse(m[2]); if (cred.u && cred.p && store.settings.get().rememberRxnt !== false) store.raw.writeSecure(credFile(pid), { u: cred.u, p: cred.p, at: new Date().toISOString() }); } catch {}
+    });
     win.loadURL('https://auth.rxnt.com/auth/login').catch(() => {});
     (async () => {
       const end = Date.now() + 15 * 60 * 1000;
@@ -570,4 +631,4 @@ async function readMessages(pid) {
   return { me: { id: me.id, name: (me.profile && me.profile.name) || '' }, conversations: out };
 }
 
-module.exports = { readMessages, keepSignedIn, ping, fetchDay, openReader, listLetter, openPatient, localDate, signIn, status, logout, readPendingOnce };
+module.exports = { autoSignIn, savedLogin, forgetLogin, argCode, readMessages, keepSignedIn, ping, fetchDay, openReader, listLetter, openPatient, localDate, signIn, status, logout, readPendingOnce };

@@ -774,14 +774,14 @@ input[type=checkbox], input[type=radio] { accent-color: var(--teal); height: aut
 .timer-start:hover { background: rgba(0,87,88,.05); border-style: solid; }
 .timer-start svg { width: 16px; height: 16px; }
 .timer-run { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 14px; background: var(--card); box-shadow: var(--shadow-1); }
-.disc { position: relative; width: 58px; height: 58px; flex: none; --tc: var(--teal); }
+.disc { position: relative; width: 58px; height: 58px; flex: none; --tc: var(--teal); --p: 360deg; border-radius: 50%;
+  background: conic-gradient(var(--tc) var(--p), rgba(0,87,88,.08) 0); box-shadow: inset 0 0 0 1px rgba(0,87,88,.08); transition: background .4s; }
+.disc::after { content: ""; position: absolute; inset: 50%; width: 6px; height: 6px; margin: -3px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0,87,88,.12); }
+.disc.done { background: rgba(163,177,138,.18); box-shadow: none; } .disc.done::after { display: none; }
 .disc.soon { --tc: #d98a52; } .disc.last { --tc: var(--terracotta, #e4926e); }
-.disc.last .fill { animation: tm-pulse 1.6s ease-in-out infinite; }
+.disc.last { animation: tm-pulse 1.6s ease-in-out infinite; }
 .disc.paused { opacity: .55; }
-.disc svg { width: 100%; height: 100%; transform: rotate(-90deg) scaleY(-1); }
-.disc .track { fill: rgba(0,87,88,.06); stroke: none; }
-.disc .fill { fill: none; stroke: var(--tc); stroke-width: 48; transition: stroke-dasharray 1s linear, stroke .4s; }
-.disc b { position: absolute; inset: 0; display: grid; place-items: center; font-size: 13px; font-weight: 800; color: var(--ink); text-shadow: 0 0 6px #fff, 0 0 2px #fff; font-variant-numeric: tabular-nums; }
+.disc b { position: absolute; inset: 0; display: grid; place-items: center; }
 .timer-side { min-width: 0; flex: 1; display: grid; gap: 2px; }
 .timer-left { font-size: 22px; line-height: 1.1; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; }
 .timer-btns { margin-top: 4px; }

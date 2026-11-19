@@ -9,7 +9,7 @@ function paintTimer(st) {
   $('tm-run').classList.toggle('hidden', !st.running);
   if (!st.running) return;
   const frac = Math.max(0, Math.min(1, st.left / st.total)), mins = st.left / 60000;
-  $('tm-arc').style.strokeDasharray = `${frac * 100} 100`;
+  $('tm-disc').style.setProperty('--p', `${(frac * 360).toFixed(2)}deg`);   // the colored slice is the time left
   const cls = mins <= 1 ? 'last' : mins <= 5 ? 'soon' : '';
   $('tm-disc').className = 'disc ' + cls + (st.paused ? ' paused' : '');
   $('tm-left').className = 'timer-left ' + cls;
@@ -39,7 +39,7 @@ window.api.onTimer(paintTimer);
 window.api.timerGet().then(paintTimer);
 // Time's up: a calm card in the app with the two things she'd want next.
 window.api.onTimerEnd((label) => {
-  openModal(`<div class="center-text timeup"><div class="disc done"><svg viewBox="0 0 100 100"><circle class="track" cx="50" cy="50" r="48"/></svg><b>${I.check}</b></div>
+  openModal(`<div class="center-text timeup"><div class="disc done"><b>${I.check}</b></div>
     <h2>Time's up${label ? `: ${esc(label)}` : ''}</h2><p class="muted">Need a little longer?</p>
     <div class="actions center"><button class="btn" id="tu-more">+5 min</button><button class="btn primary" id="tu-done">Done</button></div></div>`);
   $('tu-more').onclick = async () => { closeModal(); paintTimer(await window.api.timerStart(5, label)); };

@@ -55,7 +55,17 @@ function renderCompose() {
     <div id="c-timeline"></div>`;
   paintTimeline(p);
   const save = async (f) => { Object.assign(p, f); await window.api.updatePatient(p.key, f); const i = patients.findIndex((x) => x.key === p.key); if (i >= 0) Object.assign(patients[i], f); };
-  $('c-dnt').onchange = async (e) => { await save({ dnt: e.target.checked, dntReason: e.target.checked ? 'Marked in app' : '' }); renderPatients(); renderCompose(); toast(e.target.checked ? 'Moved to Do not text' : 'Moved to Contacts'); };
+  $('c-dnt').onchange = async (e) => {
+    const on = e.target.checked, stop = !on && await window.api.optOutStatus(p.phone);
+    if (stop) {   // the number itself said STOP: turning texts back on needs a clear yes from them
+      e.target.checked = true;
+      openModal(`<h2>This number replied STOP</h2><p class="muted">${esc(fmtPhone(p.phone))} replied STOP on ${esc(new Date(stop.at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }))}. Only turn texts back on if they asked to get texts again (for example, they replied START).</p><div class="actions"><button class="btn" id="oo-no">Keep blocked</button><button class="btn primary" id="oo-yes">They opted back in</button></div>`);
+      $('oo-no').onclick = closeModal;
+      $('oo-yes').onclick = async () => { closeModal(); await window.api.optOutClear(p.phone); await save({ dnt: false, dntReason: '' }); renderPatients(); renderCompose(); toast('Texts turned back on for this number'); };
+      return;
+    }
+    await save({ dnt: on, dntReason: on ? 'Marked in app' : '' }); renderPatients(); renderCompose(); toast(on ? 'Moved to Do not text' : 'Moved to Contacts');
+  };
   $('c-phone').onchange = async (e) => { const d = digits(e.target.value); if (d && d.length !== 10) return toast('Enter a 10-digit number.'); await save({ phone: d, phoneSource: d ? 'Typed' : '' }); renderPatients(); renderCompose(); };
   if ($('c-revert')) $('c-revert').onclick = async () => { await save({ phone: p.rxPhone, phoneSource: p.rxPhoneSource || 'Cell' }); renderPatients(); renderCompose(); toast('Using the RxNT number'); };
   $('c-to').onchange = async (e) => { await save({ contactType: e.target.value, contactSetInApp: true, contactSource: 'app' }); renderCompose(); };
