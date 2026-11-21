@@ -66,6 +66,15 @@ async function token(pid) {
   throw new RingRxError('Your RingRx sign-in expired. Please sign in again.', 'SIGNED_OUT');
 }
 
+// Keep the RingRx sign-in fresh even when nothing else is happening: refresh well before it expires.
+// Returns 'ok', 'offline' or 'signedout' (with the reason code; never a password).
+async function keepFresh(pid) {
+  const c = cache[pid];
+  if (c && c.exp - Date.now() < 15 * 60000) delete cache[pid];   // expiring soon: refresh now, not mid-send
+  try { await token(pid); return { state: 'ok' }; }
+  catch (e) { return { state: e.code === 'OFFLINE' ? 'offline' : 'signedout', code: e.code || 'ERROR' }; }
+}
+
 function normalize(phone) {
   let d = String(phone || '').replace(/\D/g, '');
   if (d.length === 11 && d.startsWith('1')) d = d.slice(1);
@@ -174,7 +183,9 @@ async function messages(pid, sinceISO) {
       const at = r.created_at ? new Date(r.created_at).toISOString() : null;
       if (!at) continue;
       const kind = r.message_type === 'voicemail' ? 'voicemail' : 'text';
-      out.push({ id: String(r.id), kind, inbound, phone, at, body: String(r.message || '').trim(), transcription: r.transcription ? String(r.transcription) : '', unread: r.status === 'new' });
+      // Any link RingRx gives for the recording (field name isn't documented; keep the first URL-looking one).
+      const media = kind === 'voicemail' ? ['file', 'url', 'recording', 'recording_url', 'audio', 'audio_url', 'media_url', 'attachment', 'file_url', 'download_url'].map((k) => r[k]).find((v) => typeof v === 'string' && /^(https?:)?\/\//.test(v) || (typeof v === 'string' && v.startsWith('/'))) || '' : '';
+      out.push({ id: String(r.id), kind, inbound, phone, at, body: String(r.message || '').trim(), transcription: r.transcription ? String(r.transcription) : '', unread: r.status === 'new', media });
     }
   }
   return out;
@@ -204,6 +215,26 @@ async function calls(pid, days = 90) {
   return out;
 }
 
+// Voicemail audio, fetched on demand and kept only in memory. Returns { mime, data(base64) } or null (the app then offers "Listen in RingRx").
+async function voicemailAudio(pid, id, media) {
+  // RingRx's own web app plays voicemails from /voicemails/<id>/voice_payload (octet-stream means WAV).
+  const tries = [`/voicemails/${encodeURIComponent(id)}/voice_payload`, media].filter(Boolean);
+  for (const t of tries) {
+    try {
+      const url = new URL(t.startsWith('//') ? 'https:' + t : t, BASE);
+      const sameHost = url.host === new URL(BASE).host;
+      const res = await fetch(url, { headers: sameHost ? { Authorization: `Bearer ${await token(pid)}` } : {} });
+      let mime = String(res.headers.get('content-type') || '').split(';')[0];
+      if (mime === 'application/octet-stream' || !mime) mime = 'audio/wav';
+      if (!res.ok || !/^audio\//.test(mime)) continue;
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length < 500) continue;
+      return { mime, data: buf.toString('base64') };
+    } catch {}
+  }
+  return null;
+}
+
 function logout(pid) { delete cache[pid]; store.ringrx.clear(pid); }
 
-module.exports = { login, sendSms, status, logout, normalize, sendingNumber, alertNumber, me, contacts, messages, calls, RingRxError };
+module.exports = { keepFresh, voicemailAudio, login, sendSms, status, logout, normalize, sendingNumber, alertNumber, me, contacts, messages, calls, RingRxError };

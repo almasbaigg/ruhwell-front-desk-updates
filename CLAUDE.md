@@ -6,9 +6,9 @@ RingRx (texts and calls) and Gmail, and puts the day's work in one calm, color-c
 
 ## Rules that never change
 - **Patient data stays on the computer.** Nothing patient-related is sent anywhere except texts the user sends on purpose.
-- **RxNT is read-only.** The app never writes prescriptions, charts, payments or anything else into RxNT. Every item has "Open in RxNT".
+- **RxNT is read-only, with one exception.** The app never writes prescriptions, charts, payments or anything else into RxNT. Every item has "Open in RxNT". The only write allowed (Almas, 2026-11-20): uploading a received fax PDF to a patient's Documents, one at a time, after Maria confirms the patient name and DOB shown from RxNT.
 - **Alert texts never include patient names** (or drug names).
-- **No passwords handled by Claude.** The user signs in to RxNT, RingRx and Gmail themselves.
+- **No passwords handled by Claude.** The user signs in to RxNT, RingRx, Gmail and Doximity themselves (the app may save them encrypted, as asked).
 - **Updates keep the user's sign-ins, settings and data.** They live outside the app (Mac: ~/Library/Application Support/Ruhwell Front Desk; Windows: %APPDATA%\Ruhwell Front Desk).
 - Name is always **Ruhwell Front Desk** (and the practice is **Ruhwell Med**).
 
@@ -39,8 +39,10 @@ Don't change app code from the Mac build chat. Code changes happen in Almas's ch
 - `rxtasks.js`: prescriptions/To-Do/billing state, Schedule II flag, payment review flags.
 - `timer.js`: the sidebar timer (runs in the background, menu-bar countdown). `updater.js`: Windows and Mac self-updates.
 - `store.js`: encrypted, crash-safe saving; data that can't be unlocked is never overwritten.
-- `comms.js`, `ringrx.js`, `gmail.js`: texts, calls, email. `checklist.js`: checklist (plain-language times, repeats, Top 3) and day-page notes.
-- `renderer/`: one page app. `js/today.js` (home), `js/pad.js` (checklist + notes), `js/rx.js` (RxNT work), `js/texts.js`, `js/calls.js`, `js/settings.js`.
+- `faxes.js`: Doximity fax inbox (hidden signed-in window, PDFs encrypted on disk). Filing into a chart: `rxnt-reader.findChart` + `uploadToChart` (the only RxNT write; needs Maria's pick + confirmation, then verifies).
+- `activity.js`: 90-day activity log (no names, no secrets). Settings → Records.
+- `comms.js`, `ringrx.js`, `gmail.js`: texts, calls (spam list, listened/answered marks, voicemail audio via `/voicemails/<id>/voice_payload`), email. `checklist.js`: checklist (plain-language times, repeats, Top 3) and day-page notes.
+- `renderer/`: one page app. `js/today.js` (home), `js/pad.js` (checklist + notes), `js/rx.js` (RxNT), `js/faxes.js` (Faxes), `js/texts.js`, `js/calls.js`, `js/settings.js`.
 - Tests: `npm test` (must pass before any release).
 
 ## Style

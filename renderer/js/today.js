@@ -8,6 +8,7 @@ const ALERT = {
   confirmed: { label: 'Confirmed', icon: '<path d="M5 12l5 5L20 7"/>' },
   reply: { label: 'New text', icon: '<path d="M4 20l1.2-4A8 8 0 1 1 8 19z"/>' },
   newpatient: { label: 'New patient', icon: '<circle cx="10" cy="8" r="4"/><path d="M3 21c.8-4 3.6-6 7-6s6.2 2 7 6M19 8v6M16 11h6"/>', action: ['open', 'Open patient'] },
+  rebooked: { label: 'Rebooked', icon: '<path d="M4 12a8 8 0 0 1 14-5.3L20 9M20 4v5h-5"/>' },
   soon: { label: 'Starting soon', icon: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>' },
 };
 const hello = () => { const h = new Date().getHours(), n = (settings.userName || '').trim(); return (h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening') + (n ? `, ${n}` : ''); };
@@ -54,7 +55,20 @@ async function gatherToday() {
   const TODO = [['labs', 'lab result to review', 'lab results to review', 'red', 'RxNT To-Do'], ['unsigned', 'encounter to sign', 'encounters to sign', 'red', 'RxNT To-Do'],
     ['documents', 'document to review', 'documents to review', 'amber', 'RxNT To-Do'], ['referrals', 'referral', 'referrals', 'amber', 'RxNT To-Do'], ['tasks', 'patient task', 'patient tasks', 'amber', 'RxNT To-Do'],
     ['awaiting', 'visit awaiting billing', 'visits awaiting billing', 'amber', 'Billing'], ['unposted', 'payment to post', 'payments to post', 'amber', 'Billing']];
+  // Unsigned notes, one per note, oldest first, with how long each has waited (red: they can't wait).
+  const unsigned = (st && st.unsigned) || [];
+  if (rc.unsigned > 0 && unsigned.length) {
+    for (const n of unsigned.slice().sort((a, b) => String(a.at).localeCompare(String(b.at)))) {
+      const age = n.at ? Math.floor((Date.now() - new Date(n.at)) / 864e5) : null;
+      items.push({ key: 'note:' + n.id, urg: 'red', sec: 'rx', at: n.at || new Date().toISOString(), kind: 'rx', icon: I.edit, title: `Sign note: ${n.first} ${n.last}`.trim(), tag: 'Unsigned',
+        sub: [n.at && `visit ${fmtDateShort(n.at)}`, age === 0 ? 'from today' : age === 1 ? 'from yesterday' : age > 1 ? `${age} days` : '', n.complaint].filter(Boolean).join(' · '), action: ['Open in RxNT', () => window.api.openRxnt('unsigned')] });
+    }
+  }
+  // New faxes waiting to be filed into a chart.
+  const fx = (st && st.faxes) || {};
+  if (fx.count) items.push({ key: 'faxes', urg: 'amber', sec: 'rx', at: fx.lastNewAt || new Date().toISOString(), kind: 'rx', icon: I.edit, title: `${fx.count} new fax${fx.count > 1 ? 'es' : ''}`, tag: 'Doximity', sub: 'Pick the patient and add it to their chart', action: ['Open faxes', () => go('faxes')] });
   for (const [k, one, many, lvl, tag] of TODO) {
+    if (k === 'unsigned' && unsigned.length) continue;   // listed one by one above
     if (rc[k] > 0) items.push({ key: 'todo:' + k, urg: lvl, sec: 'rx', at: new Date().toISOString(), kind: 'rx', icon: I.check, title: `${rc[k]} ${rc[k] > 1 ? many : one}`, tag,
       sub: { awaiting: 'Finish the encounter so the biller can bill it', unposted: 'Card charged, not applied to a visit yet' }[k] || 'Waiting in RxNT', action: ['Open in RxNT', () => window.api.openRxnt(tag === 'Billing' ? (k === 'awaiting' ? 'todo' : 'billing') : 'todo')] });
   }
@@ -78,7 +92,7 @@ async function gatherToday() {
   if (tm.length) items.push({ sec: 'send', at: new Date().toISOString(), kind: 'batch', icon: I.bell, title: `Send ${tm.length} reminder${tm.length > 1 ? 's' : ''} for tomorrow`, sub: tm.slice(0, 4).map(fullName).join(', ') + (tm.length > 4 ? ` +${tm.length - 4}` : ''), action: ['Review and send', () => { go('visits'); loadDay(tomorrow); }] });
   const td = (range[today] || {}).items || [];
   const rv = td.filter((v) => statusOf(v) === 'seen' && textable(v) && !lastReview(v.phone) && !sentSinceDay(v.phone, today));
-  if (rv.length) items.push({ sec: 'send', at: new Date().toISOString(), kind: 'batch', icon: I.check, title: `Send ${rv.length} review request${rv.length > 1 ? 's' : ''}`, sub: rv.slice(0, 4).map(fullName).join(', ') + (rv.length > 4 ? ` +${rv.length - 4}` : ''), action: ['Review and send', () => { go('visits'); loadDay(today); }] });
+  if (rv.length) items.push({ sec: 'send', at: new Date().toISOString(), kind: 'batch', icon: I.check, title: `Send ${rv.length} Google Review Request${rv.length > 1 ? "s" : ""}`, sub: rv.slice(0, 4).map(fullName).join(', ') + (rv.length > 4 ? ` +${rv.length - 4}` : ''), action: ['Review and send', () => { go('visits'); loadDay(today); }] });
   // Fixes for this week's patients
   const seen = new Set();
   for (const d of Object.keys(range).sort()) for (const v of (range[d].items || [])) {
@@ -103,6 +117,7 @@ async function loadToday() {
   if (!$('today-list').children.length) $('today-list').innerHTML = '<div class="loading-line"><span class="spinner"></span>Getting your day ready…</div>';
   const d = await loading(gatherToday);
   todayItems = d.items; todaySync = await window.api.syncStatus(); paintTiles(d); paintTodo(d.items); paintVisits(d.range); paintDone(); paintClosing(d);
+  paintStale(todaySync); paintChanges(d.alerts);
   window.api.watchRead();
 }
 
@@ -291,3 +306,24 @@ window.api.onWatch((ev) => {
   if (ev.type === 'watch-status') paintSync();
 });
 window.api.onComms(() => { if (view === 'today') loadToday(); else if (view === 'texts') loadTexts(true); else if (view === 'calls') loadCalls(); });
+
+// The schedule hasn't been read for 20+ minutes in office hours: say so plainly, with a way to fix it.
+function paintStale(st) {
+  const el = $('today-stale'), v = st && st.scheduleStale;
+  if (!v) { el.classList.add('hidden'); return; }
+  const rx = ((st.accounts || {}).rxnt || {});
+  el.innerHTML = `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span><b>Schedule not checked ${v === 'never' ? 'yet' : 'since ' + esc(fmtTime(new Date(v)))}</b> · ${esc(rx.level === 'red' ? 'RxNT needs you to sign in' : 'changes may be missing')}</span><button class="btn small" id="stale-fix">${rx.level === 'red' ? 'Sign in' : 'Check now'}</button>`;
+  el.classList.remove('hidden');
+  $('stale-fix').onclick = () => (rx.level === 'red' ? go('settings') : syncEverything(['schedule']));
+}
+// Every schedule change seen today (quiet ones too), so nothing depends on catching a notification.
+function paintChanges(alerts) {
+  const el = $('today-changes'), today = new Date().toDateString();
+  const SCHED = ['new', 'cancelled', 'noshow', 'rescheduled', 'correction', 'backon', 'rebooked', 'checkin', 'status'];
+  const list = (alerts || []).filter((a) => SCHED.includes(a.kind) && new Date(a.at).toDateString() === today).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  if (!list.length) { el.innerHTML = ''; el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  const wasOpen = el.open;
+  el.innerHTML = `<summary>Changes today <em>${list.length}</em></summary><div class="ch-list">${list.map((a) => `<div class="ch-row ${a.quiet ? 'quiet' : ''}"><time>${esc(fmtTime(new Date(a.at)))}</time><span>${esc(a.text)}</span></div>`).join('')}</div>`;
+  el.open = wasOpen;
+}

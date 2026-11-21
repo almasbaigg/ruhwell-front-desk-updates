@@ -1,4 +1,4 @@
-/* RxNT work: everything unfinished in RxNT, grouped the way RxNT groups it (Clinical, Prescriptions, Billing).
+/* RxNT page: everything unfinished in RxNT, grouped the way RxNT groups it (Clinical, Prescriptions, Billing).
    Within each group the most urgent is first (red, then amber). Prescriptions are time-sensitive and show how
    long they've waited. Read-only: every item opens RxNT, where the work is done. */
 let rxData = { items: [] };
@@ -29,7 +29,8 @@ function groups(rx, portal) {
   const c = rx.counts || {};
   const count = (n, one, many, sub, urg, open) => (n > 0 ? [{ urg, icon: I.check, title: `${n} ${n > 1 ? many : one}`, sub, open }] : []);
   const clinical = [
-    ...count(c.unsigned, 'encounter to sign', 'encounters to sign', 'Notes waiting for your signature', 'red', 'todo'),
+    ...((rx.unsigned || []).length && c.unsigned ? rx.unsigned.map((n) => ({ urg: 'red', icon: I.edit, title: `${n.first} ${n.last}`.trim() || 'Patient', tag: 'Note to sign', wait: n.at, sub: [n.at && `Visit ${fmtDateShort(n.at)}`, n.complaint].filter(Boolean).join(' · ') || 'Waiting for your signature', open: 'unsigned' }))
+      : count(c.unsigned, 'encounter to sign', 'encounters to sign', 'Notes waiting for your signature', 'red', 'unsigned')),
     ...count(c.labs, 'lab result to review', 'lab results to review', 'New results waiting', 'red', 'todo'),
     ...count(c.documents, 'document to review', 'documents to review', 'Outside records, forms and faxes waiting in RxNT', 'amber', 'todo'),
     ...count(c.referrals, 'referral', 'referrals', 'Referrals waiting in RxNT', 'amber', 'todo'),
@@ -72,19 +73,18 @@ function renderWork(rx, portal) {
     $('rx-retry').onclick = () => loadRx(true); $('rx-history').classList.add('hidden'); return;
   }
   const gs = groups(rx, portal), all = gs.flatMap((g) => g.rows), done = [];
+  // History (sent and voided) lives inside Prescriptions, folded into one line.
+  const hist = rx.sent || [], sentL = hist.filter((i) => i.kind === 'sent'), voidedL = hist.filter((i) => i.kind === 'voided');
+  const hblock = (label, list, total) => total ? `<p class="hist-label">${label} <span class="muted">${total}</span></p>` + list.map((i, k) => `<div class="hist-row"><b><i class="hist-n">${k + 1}</i>${esc(i.patient || 'Patient')}</b><span>${esc([i.med, i.pharmacy, i.detail].filter(Boolean).join(' · ').slice(0, 120))}</span></div>`).join('') : '';
+  const histHTML = (c.sent || c.voided) ? `<details class="history rx-hist-inline"><summary><span>Sent &amp; voided</span><em>${c.sent || 0} sent · ${c.voided || 0} voided</em></summary><div class="hist-body">${hblock('Sent', sentL, c.sent) + hblock('Voided', voidedL, c.voided)}</div></details>` : '';
   $('rx-sub').textContent = `${all.length ? all.length + ' need you' : 'All caught up'} · updated ${minsAgo(rx.at)}`;
   $('rx-groups').innerHTML = gs.map((g) => {
     const red = g.rows.filter((r) => r.urg === 'red').length;
     const head = `<div class="group-title"><h2>${g.label}</h2>${g.rows.length ? `<span class="gcount ${red ? 'red' : 'amber'}">${g.rows.length}</span>` : `<span class="gclear">${I.check}All clear</span>`}${g.info ? `<em>${esc(g.info)}</em>` : ''}</div>`;
-    return `<section class="rx-group">${head}${g.rows.length ? `<div class="list">${g.rows.map((r) => { if (r.done) done.push(r.done); return rxRowHTML(r, done.length - 1); }).join('')}</div>` : ''}</section>`;
+    return `<section class="rx-group">${head}${g.rows.length ? `<div class="list">${g.rows.map((r) => { if (r.done) done.push(r.done); return rxRowHTML(r, done.length - 1); }).join('')}</div>` : ''}${g.key === 'rx' ? histHTML : ''}</section>`;
   }).join('');
   $('rx-groups').querySelectorAll('[data-open]').forEach((b) => (b.onclick = () => window.api.openRxnt(b.dataset.open)));
   $('rx-groups').querySelectorAll('[data-done]').forEach((b) => (b.onclick = async () => { await done[+b.dataset.done](); loadRx(); }));
-  // History: sent and voided prescriptions, for reference
-  const hist = rx.sent || [], sent = hist.filter((i) => i.kind === 'sent'), voided = hist.filter((i) => i.kind === 'voided');
-  $('rx-history').classList.toggle('hidden', !(c.sent || c.voided));
-  $('rx-hist-sum').textContent = `${c.sent || 0} sent · ${c.voided || 0} voided`;
-  const block = (label, list, total) => total ? `<p class="hist-label">${label} <span class="muted">${total}</span></p>` + list.map((i, k) => `<div class="hist-row"><b><i class="hist-n">${k + 1}</i>${esc(i.patient || 'Patient')}</b><span>${esc([i.pharmacy, i.detail].filter(Boolean).join(' · ').slice(0, 140))}</span><time>${esc(i.at ? fmtDateShort(i.at) : '')}</time></div>`).join('') + (total > list.length ? `<p class="muted small hist-more">${list.length ? `Showing ${list.length} of ${total}. ` : ''}Open RxNT for the full list.</p>` : '') : '';
-  $('rx-hist').innerHTML = block('Sent', sent, c.sent) + block('Voided', voided, c.voided);
+  $('rx-history').classList.add('hidden');   // now inside the Prescriptions group
 }
 $('rx-open').onclick = () => window.api.openRxnt();

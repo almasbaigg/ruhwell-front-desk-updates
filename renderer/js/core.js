@@ -182,7 +182,7 @@ function statusOf(v) {
   if (/cancel|delet/.test(t) || (!t && /^(CAN|CNL|CXL|DEL|LC)/.test(c))) return 'cancelled';
   if (/resched/.test(t)) return 'moved';
   if (/^(completed|check-?in completed)$/.test(t) || (!t && /^(CKC|COM|CMP)/.test(c))) return 'seen';
-  if (/confirm/.test(t)) return 'confirmed';
+  if (/confirm/.test(t) || (!t && c === 'PNF')) return 'confirmed';   // PNF = patient confirmed (often through the RxNT portal)
   return 'booked';   // Pending, Booked, Waitlist, Called, Intake Completed
 }
 function category(v) { const s = statusOf(v); return s === 'seen' ? 'seen' : (s === 'noshow' || s === 'cancelled' || s === 'moved') ? 'cancelled' : 'pending'; }

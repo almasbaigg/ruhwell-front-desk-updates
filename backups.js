@@ -13,7 +13,7 @@ function snapshot() {
   return {
     v: 3, createdAt: new Date().toISOString(), settings: s, patients: store.patients.all(), history: store.log.all(),
     inbound: store.inbound.get(), ringrxHistory: store.ringrxHistory.get(), calls: store.calls.get(),
-    ringrxContacts: store.ringrxContacts.get(), personal: checklist.exportAll((s.profiles || []).map((x) => x.id)),
+    ringrxContacts: store.ringrxContacts.get(), callbacks: store.callbacks.get(), personal: checklist.exportAll((s.profiles || []).map((x) => x.id)),
   };
 }
 
@@ -36,6 +36,10 @@ function restore(b) {
     const now = store.calls.get(), map = {};
     [...(b.calls.items || []), ...(now.items || [])].forEach((m) => { map[m.id] = m; });
     store.calls.set({ ...now, items: Object.values(map) });
+  }
+  if (b.callbacks) {   // spam list, listened marks, done marks: merge, newest wins
+    const now = store.callbacks.get(), o = b.callbacks;
+    store.callbacks.set({ ...o, ...now, spam: { ...(o.spam || {}), ...(now.spam || {}) }, heard: { ...(o.heard || {}), ...(now.heard || {}) }, seen: { ...(o.seen || {}), ...(now.seen || {}) }, done: [...new Set([...(o.done || []), ...(now.done || [])])].slice(-3000), ignored: [...new Set([...(o.ignored || []), ...(now.ignored || [])])] });
   }
   if (b.ringrxContacts && (b.ringrxContacts.items || []).length) {
     const now = store.ringrxContacts.get(), map = {};

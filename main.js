@@ -34,6 +34,8 @@ const rxnt = require('./rxnt-reader');
 const ringrx = require('./ringrx');
 const watcher = require('./watcher');
 const comms = require('./comms');
+const activity = require('./activity');
+const faxes = require('./faxes');
 const gmail = require('./gmail');
 const checklist = require('./checklist');
 const rxtasks = require('./rxtasks');
@@ -51,13 +53,19 @@ if (!app.requestSingleInstanceLock()) app.quit();
 app.on('second-instance', () => showWindow());
 
 function createWindow() {
+  // Roomy by default (about 90% of the screen, centered); after that, the size and place you left it.
+  const { screen } = require('electron');
+  const wa = screen.getPrimaryDisplay().workArea, saved = store.settings.get().windowBounds;
+  const onScreen = saved && screen.getAllDisplays().some((d) => saved.x >= d.workArea.x - 40 && saved.y >= d.workArea.y - 40 && saved.x + 200 < d.workArea.x + d.workArea.width && saved.y + 100 < d.workArea.y + d.workArea.height);
+  const w0 = Math.max(1040, Math.min(1680, Math.round(wa.width * 0.9))), h0 = Math.max(660, Math.min(1080, Math.round(wa.height * 0.9)));
+  const bounds = onScreen ? saved : { width: w0, height: h0, x: wa.x + Math.round((wa.width - w0) / 2), y: wa.y + Math.round((wa.height - h0) / 2) };
   win = new BrowserWindow({
-    width: 1300, height: 840, minWidth: 1040, minHeight: 660, show: !startHidden,
+    ...bounds, minWidth: 1040, minHeight: 660, show: !startHidden,
     backgroundColor: '#f6f1eb', title: 'Ruhwell Front Desk', icon: icon(),
     titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
-    titleBarOverlay: isMac ? undefined : { color: '#f6f1eb', symbolColor: '#005758', height: 44 },
+    titleBarOverlay: isMac ? undefined : { color: '#f6f1eb', symbolColor: '#005758', height: 40 },
     trafficLightPosition: { x: 18, y: 16 },
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true },
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, plugins: true },   // plugins: the built-in PDF viewer for fax previews
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   if (startHidden) win.once('ready-to-show', () => win.hide());
@@ -67,6 +75,10 @@ function createWindow() {
   win.on('close', (e) => { if (!quitting && store.settings.get().closeToTray) { e.preventDefault(); win.hide(); } });
   win.on('minimize', (e) => { if (store.settings.get().minimizeToTray) { e.preventDefault(); win.hide(); } });
   win.on('focus', () => syncSoon());   // coming back to the app catches up anything stale
+  let saveT = null;
+  const remember = () => { clearTimeout(saveT); saveT = setTimeout(() => { if (!win || win.isDestroyed() || win.isMinimized() || win.isFullScreen()) return; const b = win.isMaximized() ? win.getNormalBounds() : win.getBounds(); store.settings.set({ ...store.settings.get(), windowBounds: b, windowMax: win.isMaximized() }); }, 600); };
+  win.on('resize', remember); win.on('move', remember); win.on('maximize', remember); win.on('unmaximize', remember);
+  if (store.settings.get().windowMax) win.maximize();
 }
 function showWindow() { if (!win || win.isDestroyed()) createWindow(); win.show(); win.focus(); }
 
@@ -124,6 +136,31 @@ ipcMain.handle('update:check', () => updater.checkNow());
 ipcMain.handle('update:restart', () => { const st = updater.status(); if (st.status === 'ready') quitting = true; return updater.restart(); });
 ipcMain.handle('app:openData', () => shell.openPath(store.dataDir()));
 
+// At start-up: really check every account, sign back in quietly where a saved sign-in exists, and only
+// then tell the window what still needs the user. Never trusts an old "connected" flag.
+let verifying = null;
+ipcMain.handle('accounts:verify', () => {
+  if (!verifying) verifying = (async () => {
+    const id = pid(); if (!id) return { rxnt: false, ringrx: false };
+    const rxCheck = (async () => {
+      let r = await rxnt.status(id).catch(() => ({ connected: false, unknown: true }));
+      if (r.connected) { setRxntFlag(id, true); return true; }
+      if (r.unknown) return !!store.settings.get().rxntConnected?.[id];   // couldn't tell (offline): don't ask yet
+      const c = rxnt.savedLogin(id);
+      if (c && !c.bad && (await rxnt.autoSignIn(id).catch(() => '')) === 'ok') { setRxntFlag(id, true); activity.add('RxNT', 'auto-sign-in', {}, true); return true; }
+      setRxntFlag(id, false); return false;
+    })();
+    const rrCheck = (async () => {
+      if (!ringrx.status(id).connected) return false;
+      try { await ringrx.me(id); return true; } catch (e) { return e.code !== 'SIGNED_OUT'; }   // offline isn't signed out
+    })();
+    const [rxOk, rrOk] = await Promise.all([rxCheck, rrCheck]);
+    send('sync', syncStatus());
+    if (rxOk || rrOk) setTimeout(() => syncDue(0), 1500);
+    return { rxnt: rxOk, ringrx: rrOk };
+  })().finally(() => setTimeout(() => (verifying = null), 30000));
+  return verifying;
+});
 ipcMain.handle('accounts:status', async () => {
   const id = pid();
   const g = gmail.status().at ? gmail.status() : await gmail.check();
@@ -149,7 +186,7 @@ ipcMain.handle('checklist:toggle', (_e, id) => checklist.toggle(pid(), id));
 ipcMain.handle('checklist:remove', (_e, id) => checklist.remove(pid(), id));
 ipcMain.handle('rx:list', () => rxtasks.list());
 ipcMain.handle('rx:refresh', async () => { await refreshRx(); return rxtasks.list(); });
-ipcMain.handle('rx:open', (_e, where) => shell.openExternal({ todo: 'https://app2.rxnt.com/ehrv9/dashboard', billing: 'https://app2.rxnt.com/BillingV2/#/', messages: 'https://app2.rxnt.com/dashboard/' }[where] || 'https://app2.rxnt.com/ehrv9/legacy/prescriberDashboard#/dashboard/rx/pending'));
+ipcMain.handle('rx:open', (_e, where) => shell.openExternal({ todo: 'https://app2.rxnt.com/ehrv9/dashboard', billing: 'https://app2.rxnt.com/BillingV2/#/', messages: 'https://app2.rxnt.com/dashboard/', unsigned: 'https://app2.rxnt.com/ehrv9/legacy/prescriberDashboard#/dashboard/encounters/unsigned' }[where] || 'https://app2.rxnt.com/ehrv9/legacy/prescriberDashboard#/dashboard/rx/pending'));
 async function refreshRx() {
   if (!store.settings.get().rxntConnected?.[pid()]) return;
   // Its own hidden window, so prescriptions never hold up or reset the schedule reader.
@@ -189,6 +226,7 @@ setInterval(() => {
 
 ipcMain.handle('rxnt:signin', async () => {
   const ok = await rxnt.signIn(pid(), win);
+  activity.add('RxNT', 'sign-in', {}, !!ok);
   if (ok) { setRxntFlag(pid(), true); rxnt.keepSignedIn(pid()); if (rx.win && !rx.win.isDestroyed()) rx.win.destroy(); rx.win = null; watcher.reschedule(); setTimeout(() => preload(), 1500); setTimeout(syncPatientsNow, 8000); }
   return ok;
 });
@@ -242,6 +280,7 @@ async function loadDayNow(date, priority) {
   const id = pid();
   const r = await rxQueue((w) => rxnt.fetchDay(id, date, w), priority);
   if (r.needsLogin) { rxntSignedOut(id); return r; }
+  if (r.items && date === ymd(new Date())) mergeEhrToday(r);
   if (r.items) {
     setRxntFlag(id, true);
     dayCache[date] = { ...r, at: Date.now() };
@@ -253,6 +292,21 @@ async function loadDayNow(date, priority) {
     send('day', { date, ...dayCache[date] }); send('sync', syncStatus());
   }
   return r;
+}
+// Third source for today: the EHR's "Today's Appointments" (read with prescriptions). A visit any source lists
+// is real; one only the EHR has is added, so a portal-confirmed visit never looks cancelled.
+function mergeEhrToday(r) {
+  const t = rxtasks.extras().today;
+  if (!t || t.date !== ymd(new Date()) || Date.now() - new Date(t.at) > 30 * 60000) return;
+  const have = new Map(r.items.map((i) => [String(i.appointmentId), i]));
+  for (const e of t.items) {
+    const x = have.get(String(e.appointmentId));
+    if (x) { x.seenIn = [...new Set([...(x.seenIn || []), 'ehr'])]; if (!x.statusText && e.statusText) x.statusText = e.statusText; if (e.encounter) x.encounter = e.encounter; continue; }
+    const rec = Object.values(store.patients.all()).find((p) => String(p.patientId) === String(e.patientId));
+    const phone = String(e.preferred || (rec && (rec.cell || rec.preferred || rec.home)) || '').replace(/\D/g, '').slice(-10);
+    r.items.push({ ...e, chart: (rec && rec.chart) || '', cell: (rec && rec.cell) || '', home: (rec && rec.home) || '', phone, phoneSource: phone ? 'Preferred' : '' });
+  }
+  r.items.sort((a, b) => String(a.start).localeCompare(String(b.start)));
 }
 async function preload(center) {
   const c = center || ymd(new Date());
@@ -279,8 +333,8 @@ ipcMain.handle('rxnt:range', async (_e, from, days) => {
 });
 
 ipcMain.handle('ringrx:login', async (_e, { username, password, otp }) => {
-  try { return { ok: true, ...(await ringrx.login(pid(), username, password, otp)) }; }
-  catch (e) { return { ok: false, error: e.message, code: e.code }; }
+  try { const r = { ok: true, ...(await ringrx.login(pid(), username, password, otp)) }; activity.add('RingRx', 'sign-in', {}, true); setTimeout(() => syncComms(true), 500); return r; }
+  catch (e) { activity.add('RingRx', 'sign-in', { reason: e.code || 'failed' }, false); return { ok: false, error: e.message, code: e.code }; }
 });
 ipcMain.handle('ringrx:logout', () => { ringrx.logout(pid()); return true; });
 
@@ -351,7 +405,72 @@ ipcMain.handle('comms:snooze', (_e, key, until) => { comms.snooze(String(key), N
 ipcMain.handle('comms:snoozes', () => comms.snoozes());
 ipcMain.handle('comms:ignore', (_e, phone, on) => { comms.ignore(String(phone || '').replace(/\D/g, '').slice(-10), on !== false); send('sync', syncStatus()); return true; });
 ipcMain.handle('comms:done', (_e, kind, phone) => { comms.markDone(kind, phone); send('sync', syncStatus()); return true; });
-ipcMain.handle('ringrx:openPortal', (_e, page) => shell.openExternal('https://portal.ringrx.com/' + ({ contacts: 'contacts', calls: 'calls', messages: 'messages' }[page] || 'dashboard')));
+const ph10 = (p) => String(p || '').replace(/\D/g, '').slice(-10);
+ipcMain.handle('comms:spam', (_e, phone, on, force) => { const p = ph10(phone); comms.markSpam(p, on !== false, !!force); activity.add('RingRx', on !== false ? 'marked-spam' : 'not-spam', { number: p }); send('sync', syncStatus()); send('comms-updated', true); return true; });
+ipcMain.handle('comms:spamList', () => comms.spamList());
+/* ---------- Faxes (Doximity) ---------- */
+async function syncFaxes() {
+  const r = await faxes.sync();
+  if (r && r.added) {
+    for (const f of r.fresh || []) activity.add('Doximity', 'fax-received', { fax: f.id.slice(0, 12), from_number: f.number, pages: f.pages });
+    watcher.addEvents([{ kind: 'fax', text: r.added === 1 ? 'New fax' : `${r.added} new faxes` }]);   // no names, ever
+    send('faxes-updated', true);
+  }
+  if (r && r.needsLogin && faxes.status().error === 'code') notify('Doximity needs a code', 'Click to finish signing in (one time).', () => { showWindow(); send('nav', 'settings'); });
+  send('sync', syncStatus());
+  return r;
+}
+ipcMain.handle('fax:list', () => faxes.list());
+ipcMain.handle('fax:pdf', (_e, id) => faxes.pdf(String(id)));
+ipcMain.handle('fax:mark', (_e, id, st) => { if (!['new', 'notpatient', 'spam'].includes(st)) return false; const f = faxes.update(String(id), { status: st, doneAt: new Date().toISOString() }); activity.add('Doximity', 'fax-marked', { fax: String(id).slice(0, 12), as: st }); send('sync', syncStatus()); return !!f; });
+ipcMain.handle('fax:signin', async () => {
+  const ok = await faxes.signIn(win);
+  activity.add('Doximity', 'sign-in', {}, !!ok);
+  if (ok) { const f = store.settings.get().faxes || {}; store.settings.set({ ...store.settings.get(), faxes: { ...f, signedIn: true } }); }
+  send('sync', syncStatus()); return ok;
+});
+ipcMain.handle('fax:signout', async () => { await faxes.signOut(); const f = store.settings.get().faxes || {}; store.settings.set({ ...store.settings.get(), faxes: { ...f, signedIn: false } }); send('sync', syncStatus()); return true; });
+ipcMain.handle('fax:loginState', () => faxes.loginState());
+ipcMain.handle('fax:forgetLogin', () => faxes.forgetLogin());
+ipcMain.handle('fax:open', (_e, id) => shell.openExternal('https://www.doximity.com/inbox/faxes/' + encodeURIComponent('Fax::InboundFax/' + String(id))));
+// Step 1 of filing: find the chart for the patient Maria picked and read it fresh from RxNT (for her to confirm).
+ipcMain.handle('fax:findChart', async (_e, key) => {
+  const p = store.patients.all()[key]; if (!p) return { error: 'nopatient' };
+  if (!store.settings.get().rxntConnected?.[pid()]) return { error: 'signin' };
+  const r = await rxnt.findChart(pid(), { patientId: p.patientId, first: p.first, last: p.last, dob: p.dob });
+  if (r.needsLogin) { rxntSignedOut(pid()); return { error: 'signin' }; }
+  return r;
+});
+// Step 2: upload, only with Maria's confirmation of that exact chart (internal id + chart # she saw).
+ipcMain.handle('fax:file', async (_e, { id, internalId, chart, category, confirmed }) => {
+  if (confirmed !== true || !internalId) return { error: 'confirm' };
+  const f = faxes.list().find((x) => x.id === String(id)); const file = faxes.pdf(String(id));
+  if (!f || !file) return { error: 'nofile' };
+  if (f.status === 'filed') return { error: 'already' };
+  const d = new Date(f.at || Date.now());
+  const docDate = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
+  const ext = file.mime === 'image/tiff' ? 'tif' : 'pdf';
+  const title = `Fax – ${String(f.from || f.number || 'Doximity').replace(/\s+/g, ' ').slice(0, 40)} – ${docDate}`;
+  const r = await rxnt.uploadToChart(pid(), internalId, file.data, { fileName: `Fax ${docDate.replace(/\//g, '-')}.${ext}`, title, category: category || 'Other', docDate });
+  activity.add('RxNT', 'fax-filed', { fax: String(id).slice(0, 12), chart, document: title, confirmed_by: 'Maria (in app)', verified: r.ok ? 'yes' : 'no', reason: r.error || '' }, !!r.ok);
+  if (r.needsLogin) { rxntSignedOut(pid()); return { error: 'signin' }; }
+  if (!r.ok) return { error: r.error || 'failed' };
+  faxes.update(String(id), { status: 'filed', doneAt: new Date().toISOString(), filed: { chart, title, at: new Date().toISOString() } });
+  send('sync', syncStatus());
+  return { ok: true, title };
+});
+ipcMain.handle('comms:vmAudio', async (_e, vmId, media) => { try { return await ringrx.voicemailAudio(pid(), String(vmId), String(media || '')); } catch { return null; } });
+ipcMain.handle('comms:spamReview', () => { const c = store.callbacks.get(), r = c.spamReview || []; if (r.length) { c.spamReview = []; store.callbacks.set(c); } return r; });
+ipcMain.handle('comms:heard', (_e, id, on) => { on === false ? comms.unmarkHeard(String(id)) : comms.markHeard(String(id)); send('sync', syncStatus()); return true; });
+ipcMain.handle('comms:unseen', (_e, phone) => { comms.unmarkSeen(ph10(phone)); send('sync', syncStatus()); return true; });
+ipcMain.handle('activity:list', (_e, f) => activity.list(f || {}));
+ipcMain.handle('activity:export', async (_e, f) => {
+  const rows = activity.list(f || {});
+  const r = await dialog.showSaveDialog(win, { title: 'Export activity log', defaultPath: `Ruhwell activity ${new Date().toISOString().slice(0, 10)}.csv`, filters: [{ name: 'CSV', extensions: ['csv'] }] });
+  if (r.canceled || !r.filePath) return { canceled: true };
+  require('fs').writeFileSync(r.filePath, activity.csv(rows)); return { ok: true, n: rows.length };
+});
+ipcMain.handle('ringrx:openPortal', (_e, page) => shell.openExternal('https://portal.ringrx.com/' + ({ contacts: 'contacts', calls: 'calls', messages: 'messages', block: 'my-phone' }[page] || 'dashboard')));
 ipcMain.handle('alerts:test', async () => {
   const to = await ringrx.alertNumber(pid());
   if (!to) return { error: 'Add a number first.' };
@@ -383,9 +502,13 @@ function syncStatus() {
     needs: (() => { try { return comms.counts(); } catch { return { texts: 0, calls: 0 }; } })(),
     messages: comms.status(),
     portal: { at: portal.at, error: portal.error, waiting: portal.conversations.filter((c) => c.needsReply && !comms.doneSince('p:' + c.id, c.at)).length },
-    rxntUser: portal.me ? portal.me.name : '',
+    rxntUser: (() => { const a = rxtasks.extras().account; return a && a.name ? [a.practice, `${a.name}${a.cred ? ', ' + a.cred : ''}`].filter(Boolean).join(' · ') : ''; })(),
+    unsigned: rxtasks.extras().unsigned,
     locked: store.raw.lockedFiles().length > 0,
     health: Object.fromEntries(Object.keys(PLAN).filter((k) => k !== 'patients').map((k) => [k, { ok: lastOk[k] || null, failing: (fails[k] || 0) > 0 }])),
+    accounts: accountHealth(),
+    scheduleStale: scheduleStale(),
+    faxes: faxes.status(),
     backup: backups.status(),
   };
 }
@@ -429,15 +552,17 @@ async function syncPatientsNow() {
    What matters most is fast: new / cancelled appointments and texts / calls. The rest is slower.
    Office hours (Settings → Sync, weekdays) use the busy rate; evenings and weekends the quiet rate.
    Opening or focusing the app catches up anything older than 15 minutes. */
+// Every run is also the real connection check for its account (a pill only turns green on a successful read).
 const PLAN = {           // minutes: [busy, quiet]
-  schedule: [15, 60],    // RxNT appointments: new, cancelled, rescheduled
-  comms: [15, 60],       // RingRx texts and calls
-  portal: [15, 60],      // RxNT portal messages
-  gmail: [30, 120],
-  rx: [60, 240],         // prescriptions and RxNT To-Do
+  schedule: [5, 10],     // RxNT appointments: new, cancelled, rescheduled
+  comms: [5, 10],        // RingRx texts and calls
+  portal: [10, 20],      // RxNT portal messages
+  gmail: [10, 30],
+  rx: [10, 30],          // prescriptions and RxNT To-Do
+  faxes: [5, 10],        // Doximity fax inbox
   patients: [240, 720],  // patient list (portal sign-ups)
 };
-const lastSync = { schedule: 0, comms: 0, portal: 0, gmail: 0, rx: 0, patients: Date.now() };
+const lastSync = { schedule: 0, comms: 0, portal: 0, gmail: 0, rx: 0, faxes: 0, patients: Date.now() };
 function busyNow(d = new Date()) {
   const s = store.settings.get().sync || {}, hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   return d.getDay() >= 1 && d.getDay() <= 5 && hm >= (s.busyStart || '08:00') && hm < (s.busyEnd || '17:00');
@@ -449,7 +574,10 @@ const RUN = {
   gmail: () => gmail.check().then(() => send('sync', syncStatus())),
   rx: () => refreshRx(),
   patients: () => syncPatientsNow(),
+  faxes: () => syncFaxes(),
 };
+// The user can switch a source off in Settings → Connections (Faxes only for now).
+const sourceOn = (k) => { if (k !== 'faxes') return true; const f = store.settings.get().faxes || {}; return f.enabled !== false && (!!f.signedIn || !!faxes.savedLogin()); };
 // Did a run work? A failure is retried within minutes (3, then 6, 12…) instead of waiting the full interval.
 const lastOk = {}, fails = {}, syncRunning = {};
 const worked = (k, r) => {
@@ -461,13 +589,14 @@ const worked = (k, r) => {
 function syncDue(maxAgeMin) {
   const busy = busyNow(), now = Date.now();
   for (const [k, [b, q]] of Object.entries(PLAN)) {
-    if (syncRunning[k]) continue;   // never two runs of the same source at once
+    if (syncRunning[k] || !sourceOn(k)) continue;   // never two runs of the same source at once
     const every = maxAgeMin != null && (k === 'schedule' || k === 'comms' || k === 'portal') ? Math.min(maxAgeMin, b) : busy ? b : q;
     if (now - lastSync[k] < every * 60000) continue;
     lastSync[k] = now; syncRunning[k] = true;
     Promise.resolve().then(RUN[k]).then((r) => worked(k, r), () => false).then((ok) => {
       syncRunning[k] = false;
-      if (ok) { lastOk[k] = Date.now(); fails[k] = 0; return; }
+      activity.add(SOURCE_OF[k], 'sync', { part: k }, ok);
+      if (ok) { lastOk[k] = Date.now(); fails[k] = 0; send('sync', syncStatus()); return; }
       fails[k] = (fails[k] || 0) + 1;
       const retry = Math.min(3 * 2 ** (fails[k] - 1), every) * 60000;
       lastSync[k] = Date.now() - every * 60000 + retry;   // due again after `retry`
@@ -476,6 +605,55 @@ function syncDue(maxAgeMin) {
   }
 }
 setInterval(() => syncDue(), 60000);
+const SOURCE_OF = { schedule: 'RxNT', rx: 'RxNT', portal: 'RxNT', patients: 'RxNT', comms: 'RingRx', gmail: 'Gmail', faxes: 'Doximity' };
+// Why a part didn't work, in plain words.
+function partReason(k) {
+  const id = pid();
+  if (SOURCE_OF[k] === 'RxNT' && !store.settings.get().rxntConnected?.[id]) return 'sign-in needed';
+  if (k === 'comms' && !(id && ringrx.status(id).connected)) return 'sign-in needed';
+  if (k === 'gmail' && gmail.status().error === 'signin') return 'sign-in needed';
+  if (k === 'faxes' && faxes.status().error === 'signin') return 'sign-in needed';
+  if (k === 'faxes' && faxes.status().error === 'code') return 'needs a code';
+  if (!net.isOnline()) return 'no internet';
+  return "couldn't load";
+}
+// Manual "Sync" / "Check everything": runs one part now and reports how it went (the sync card shows each).
+ipcMain.handle('sync:part', async (_e, k) => {
+  if (!RUN[k] || k === 'patients') return { ok: false, reason: 'unknown' };
+  if (!sourceOn(k)) return { ok: true, off: true };
+  if (partReason(k) === 'sign-in needed') { fails[k] = (fails[k] || 0) + 1; return { ok: false, reason: 'sign-in needed' }; }
+  if (syncRunning[k]) { const t0 = Date.now(); while (syncRunning[k] && Date.now() - t0 < 120000) await new Promise((r) => setTimeout(r, 500)); return { ok: !fails[k], reason: fails[k] ? partReason(k) : '' }; }
+  syncRunning[k] = true; lastSync[k] = Date.now();
+  let ok = false;
+  try { ok = worked(k, await RUN[k]()); } catch { ok = false; }
+  syncRunning[k] = false;
+  activity.add(SOURCE_OF[k], 'sync', { part: k, manual: true }, ok);
+  if (ok) { lastOk[k] = Date.now(); fails[k] = 0; } else fails[k] = (fails[k] || 0) + 1;
+  send('sync', syncStatus());
+  return { ok, reason: ok ? '' : partReason(k) };
+});
+// Health for each account: green only when the last real read is fresh; amber when stale; red when sign-in is needed.
+function accountHealth() {
+  const w = watcher.status() || {}; if (w.lastRun && !w.lastError) lastOk.schedule = Math.max(lastOk.schedule || 0, Date.parse(w.lastRun) || 0);
+  const busy = busyNow(), staleMs = (busy ? 1 : 4) * 3600e3, id = pid(), now = Date.now();
+  const lvl = (keys, signedIn) => {
+    if (!signedIn) return { level: 'red', why: 'sign-in needed' };
+    const oks = keys.map((k) => lastOk[k] || 0), last = Math.max(...oks), failing = keys.some((k) => (fails[k] || 0) > 0);
+    if (!last) return { level: failing ? 'amber' : 'grey', why: failing ? "couldn't load" : 'checking…', at: null };
+    const fresh = now - last < staleMs;
+    return { level: fresh && !failing ? 'green' : 'amber', why: failing ? "couldn't load" : fresh ? '' : 'not checked lately', at: new Date(last).toISOString() };
+  };
+  const g = gmail.status(), fx = faxes.status();
+  return {
+    rxnt: lvl(['schedule', 'rx'], !!store.settings.get().rxntConnected?.[id]),
+    ringrx: lvl(['comms'], !!(id && ringrx.status(id).connected)),
+    gmail: lvl(['gmail'], g.error !== 'signin' && (g.connected || !!lastOk.gmail)),
+    doximity: !(store.settings.get().faxes || {}).signedIn && !faxes.savedLogin() ? { level: 'off', why: 'not set up' } : sourceOn('faxes') ? lvl(['faxes'], fx.error !== 'signin' && fx.error !== 'code') : { level: 'off', why: 'off' },
+  };
+}
+// The schedule hasn't been read for 20+ minutes in office hours: Today shows a banner.
+function scheduleStale() { const w = watcher.status() || {}; const last = Math.max(lastOk.schedule || 0, !w.lastError && w.lastRun ? Date.parse(w.lastRun) || 0 : 0); return busyNow() && pid() && store.settings.get().rxntConnected !== undefined && Date.now() - last > 20 * 60000 && Date.now() - appStarted > 20 * 60000 ? (last ? new Date(last).toISOString() : 'never') : null; }
+const appStarted = Date.now();
 
 // Waking from sleep or getting the internet back: catch up right away (schedule, texts and portal first).
 let wasOnline = true;
@@ -715,7 +893,7 @@ ipcMain.handle('backup:contacts', async () => {
 ipcMain.handle('backup:list', () => backups.list());
 ipcMain.handle('backup:restoreAuto', (_e, file) => { try { return { ok: true, ...backups.restoreAuto(file) }; } catch (e) { return { error: e.message }; } });
 ipcMain.handle('backup:now', () => { try { const f = `auto-${ymd(new Date())}.bin`; const p2 = store.raw.file(path.join('Backups', f)); if (fs.existsSync(p2)) fs.unlinkSync(p2); backups.autoDaily(); return { ok: true }; } catch (e) { return { error: e.message }; } });
-setInterval(() => { try { backups.autoDaily(); } catch {} }, 60 * 60 * 1000);
+setInterval(() => { try { backups.autoDaily(); activity.prune(); } catch {} }, 60 * 60 * 1000);
 
 ipcMain.handle('send:batch', async (e, items) => {
   const id = pid();
@@ -780,6 +958,7 @@ app.whenReady().then(() => {
   applyLoginItem();
   store.log.migrate();
   store.log.prune(store.settings.get().historyKeep);
+  activity.prune();
   migrations.run();
   if (process.platform === 'win32') {
     // Windows names notifications after a Start-menu shortcut with the same app ID; without one it shows
@@ -820,6 +999,13 @@ app.on('before-quit', () => { quitting = true; });
 // Stay signed in to RxNT across restarts and updates, and keep the session alive between syncs.
 function rxntKeepAlive() { const id = pid(); if (id && store.settings.get().rxntConnected?.[id]) { rxnt.keepSignedIn(id); rxnt.ping(id); } }
 setInterval(rxntKeepAlive, 5 * 60000);
+// RingRx: refresh the sign-in before it expires, every 10 minutes, even when idle. A real sign-out is logged
+// (reason only) and shows as "Sign-in needed" right away.
+setInterval(async () => {
+  const id = pid(); if (!id || !ringrx.status(id).connected) return;
+  const r = await ringrx.keepFresh(id);
+  if (r.state === 'signedout') { activity.add('RingRx', 'signed-out', { reason: r.code }, false); send('sync', syncStatus()); }
+}, 10 * 60000);
 // Opened while signed out of RxNT but with a saved sign-in: sign back in quietly.
 app.whenReady().then(() => setTimeout(async () => {
   const id = pid(); const c = id && rxnt.savedLogin(id); if (!c || c.bad || store.settings.get().rxntConnected?.[id]) return;

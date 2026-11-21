@@ -34,8 +34,8 @@ async function sync(pid) {
       for (const vm of (msgs || []).filter((m) => m.kind === 'voicemail')) {
         const t = new Date(vm.at).getTime();
         const call = list.find((c) => c.inbound && c.phone === vm.phone && Math.abs(new Date(c.at) - t) < 10 * 60000);
-        if (call) Object.assign(call, { voicemail: true, missed: true, transcription: vm.transcription });
-        else list.push({ id: 'vm-' + vm.id, inbound: true, phone: vm.phone, at: vm.at, secs: 0, answered: false, voicemail: true, missed: true, transcription: vm.transcription });
+        if (call) Object.assign(call, { voicemail: true, missed: true, transcription: vm.transcription, vmId: vm.id, media: vm.media });
+        else list.push({ id: 'vm-' + vm.id, inbound: true, phone: vm.phone, at: vm.at, secs: 0, answered: false, voicemail: true, missed: true, transcription: vm.transcription, vmId: vm.id, media: vm.media });
       }
       store.calls.set({ items: list, at: new Date().toISOString(), error: null, v: 2 });
     }
@@ -45,6 +45,7 @@ async function sync(pid) {
     try { store.ringrxHistory.set({ ...store.ringrxHistory.get(), error: 'failed', failedAt: new Date().toISOString() }); } catch {}
   } finally { running = false; }
   // A failed pull keeps the old texts/calls but says so (their "at" stays at the last success).
+  try { spamCleanup(); } catch {}
   return { fresh, ok };
 }
 
@@ -95,10 +96,11 @@ function textThreads(days = 30) {
     if (new Date(last.at) < since) continue;
     const lastOut = [...list].reverse().find((e) => !e.inbound), lastIn = [...list].reverse().find((e) => e.inbound);
     const open = list.filter((e) => e.inbound && (!lastOut || new Date(e.at) > new Date(lastOut.at)) && !STOP_RE.test(e.body) && !CONFIRM_RE.test(e.body) && recentOpen(e, done['t:' + phone]));
-    const w = who(phone);
-    out.push({ phone, who: w, last: { inbound: last.inbound, at: last.at, body: last.body },
+    const w = who(phone), spam = isSpam(phone, w);
+    const answer = lastIn && last.inbound ? answerOf(lastIn, list, done['t:' + phone]) : lastIn ? answerOf(lastIn, list, done['t:' + phone]) : null;
+    out.push({ phone, who: w, spam, answer, last: { inbound: last.inbound, at: last.at, body: last.body },
       lastIn: lastIn ? { at: lastIn.at, body: lastIn.body } : null,
-      lastSent: lastOut ? { at: lastOut.at, body: lastOut.body } : null, needs: open.length && !w.dnt && !skip.has(phone) ? 'reply' : null, ignored: skip.has(phone), needsAt: open.length ? open[open.length - 1].at : null, unread: open.filter((e) => new Date(e.at) > (seen[phone] || 0)).length, count: list.length });
+      lastSent: lastOut ? { at: lastOut.at, body: lastOut.body } : null, needs: open.length && !w.dnt && !skip.has(phone) && !spam ? 'reply' : null, ignored: skip.has(phone), needsAt: open.length ? open[open.length - 1].at : null, unread: spam ? 0 : list.filter((e) => e.inbound && new Date(e.at) > (seen[phone] || 0)).length, readAt: seen[phone] || null, count: list.length });
   }
   return out.sort((a, b) => new Date(b.last.at) - new Date(a.last.at));
 }
@@ -106,18 +108,19 @@ function textThreads(days = 30) {
 // Calls tab: every call (and voicemail) with who it was, plus which still need a callback:
 // a missed call or voicemail with no later call out or text to that number, not marked done.
 function callList(days = 30) {
-  const who = directory(), done = doneMap(), skip = ignored(), since = Date.now() - days * DAY;
+  const who = directory(), done = doneMap(), skip = ignored(), since = Date.now() - days * DAY, heard = store.callbacks.get().heard || {};
   const all = events();
   const calls = all.filter((e) => e.type !== 'text').sort((a, b) => new Date(b.at) - new Date(a.at));
   const dueSeen = new Set();
   return calls.filter((c) => new Date(c.at) >= since).map((c) => {
-    let due = false;
-    if (c.missed && !skip.has(c.phone) && !dueSeen.has(c.phone) && recentOpen(c, done['c:' + c.phone])) {
+    let due = false; const w = who(c.phone), spam = isSpam(c.phone, w);
+    if (c.missed && !spam && !skip.has(c.phone) && !dueSeen.has(c.phone) && recentOpen(c, done['c:' + c.phone])) {
       const t = new Date(c.at);
       const answered = all.some((x) => x.phone === c.phone && new Date(x.at) > t && (!x.inbound || (x.type === 'call' && x.answered)));
       if (!answered) { due = true; dueSeen.add(c.phone); }
     }
-    return { ...c, who: who(c.phone), due };
+    const answer = c.inbound && (c.missed || c.voicemail) ? answerOf(c, all, done['c:' + c.phone]) : null;
+    return { ...c, who: w, due, spam, answer, heardAt: c.voicemail ? heard[c.id] || null : null };
   });
 }
 
@@ -128,6 +131,31 @@ function snooze(key, until) { const c = store.callbacks.get(); c.snooze = Object
 const snoozes = () => Object.fromEntries(Object.entries(store.callbacks.get().snooze || {}).filter(([, t]) => t > Date.now()));
 function ignore(phone, on = true) { const c = store.callbacks.get(), set = new Set(c.ignored || []); on ? set.add(phone) : set.delete(phone); c.ignored = [...set]; store.callbacks.set(c); }
 const ignored = () => new Set(store.callbacks.get().ignored || []);
+// Spam: remembered for good (callbacks store is encrypted and backed up). A patient's number is never treated
+// as spam: if a saved spam number turns out to be a patient's, it's taken off the list and flagged once.
+const spamMap = () => store.callbacks.get().spam || {};
+function markSpam(phone, on = true, force = false) { const c = store.callbacks.get(), m = { ...(c.spam || {}) }; if (on) m[phone] = force ? -Date.now() : Date.now(); else delete m[phone]; c.spam = m; store.callbacks.set(c); }   // negative time = she confirmed it even though it's a patient's number
+function spamList() { const who = directory(); return Object.entries(spamMap()).map(([phone, at]) => ({ phone, at: Math.abs(at), forced: at < 0, who: who(phone) })).sort((a, b) => b.at - a.at); }
+// Spam numbers that now belong to a patient: un-spam them and report them once.
+function spamCleanup(who = directory()) {
+  const m = spamMap(), hit = Object.keys(m).filter((ph) => m[ph] > 0 && ['patient', 'pending', 'shared'].includes(who(ph).kind));
+  if (!hit.length) return [];
+  const c = store.callbacks.get(); c.spam = Object.fromEntries(Object.entries(m).filter(([ph]) => !hit.includes(ph))); c.spamReview = [...new Set([...(c.spamReview || []), ...hit])]; store.callbacks.set(c);
+  return hit;
+}
+const isSpam = (phone, w) => { const v = spamMap()[phone]; return !!v && (v < 0 || !['patient', 'pending', 'shared'].includes((w || {}).kind)); };
+// Listened marks for voicemails: id -> time first played (or transcript opened).
+function markHeard(id) { const c = store.callbacks.get(); if ((c.heard || {})[id]) return; c.heard = { ...(c.heard || {}), [id]: Date.now() }; const keys = Object.keys(c.heard); if (keys.length > 3000) for (const k of keys.slice(0, keys.length - 3000)) delete c.heard[k]; store.callbacks.set(c); }
+function unmarkHeard(id) { const c = store.callbacks.get(); if (c.heard) delete c.heard[id]; store.callbacks.set(c); }
+function unmarkSeen(phone) { const c = store.callbacks.get(); if (c.seen) delete c.seen[phone]; store.callbacks.set(c); }
+// How an incoming call/voicemail/text got answered: the first later call out, text out, or answered call back in.
+function answerOf(e, all, handledAt) {
+  const t = new Date(e.at);
+  const nx = all.filter((x) => x.phone === e.phone && new Date(x.at) > t && (!x.inbound || (x.type === 'call' && x.answered && e.type !== 'text'))).sort((a, b) => new Date(a.at) - new Date(b.at))[0];
+  if (nx) return { how: nx.type === 'text' ? 'texted back' : nx.inbound ? 'talked' : 'called back', at: nx.at };
+  if (handledAt && handledAt > t.getTime()) return { how: 'handled', at: new Date(handledAt).toISOString() };
+  return null;
+}
 // Read marks: opening a conversation clears its dot (it can still need a reply).
 function markSeen(phone) { const c = store.callbacks.get(); c.seen = { ...(c.seen || {}), [phone]: Date.now() }; store.callbacks.set(c); }
 // True when an item was marked done after the given time (used for RxNT portal conversations too).
@@ -136,7 +164,7 @@ function unmarkDone(kind, id) { const k = `${kind}:${id}@`; const c = store.call
 const doneSince = (key, iso) => (doneMap()[key] || 0) > new Date(iso).getTime();
 function markDone(kind, phone) { const k = `${kind}:${phone}`; const c = store.callbacks.get(); c.done = [...(c.done || []).filter((d) => !String(d).startsWith(k + '@')), `${k}@${Date.now()}`].slice(-3000); store.callbacks.set(c); }
 // Texts badge = conversations with something unread that still needs a reply (drops as soon as you open one).
-const counts = () => ({ texts: textThreads(14).filter((t) => t.needs && t.unread).length, calls: callList(14).filter((c) => c.due).length });
+const counts = () => ({ texts: textThreads(14).filter((t) => t.needs && t.unread).length, calls: callList(14).filter((c) => c.due || (c.voicemail && !c.heardAt && !c.spam && Date.now() - new Date(c.at) < 3 * DAY)).length });
 
 // Numbers that replied STOP. The number itself is blocked, for everyone who uses it (siblings, a parent's phone).
 const optedOut = (phone) => !!((store.inbound.get().optOut || {})[String(phone || '').replace(/\D/g, '').slice(-10)]);
@@ -180,4 +208,4 @@ function handleReplies(fresh, addEvents) {
 
 const status = () => { const h = store.ringrxHistory.get(), c = store.calls.get(); return { running, at: h.at, error: h.error || c.error, texts: (h.items || []).length, calls: (c.items || []).length }; };
 
-module.exports = { unmarkDone, optedOut, clearOptOut, sync, textThreads, callList, thread, markDone, doneSince, markSeen, snooze, snoozes, ignore, counts, handleReplies, status, events, directory, d10 };
+module.exports = { markSpam, spamList, spamCleanup, spamMap, markHeard, unmarkHeard, unmarkSeen, answerOf, unmarkDone, optedOut, clearOptOut, sync, textThreads, callList, thread, markDone, doneSince, markSeen, snooze, snoozes, ignore, counts, handleReplies, status, events, directory, d10 };

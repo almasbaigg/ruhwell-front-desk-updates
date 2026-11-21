@@ -22,7 +22,10 @@ async function refresh(readPending) {
     const unnamedFailed = (c.failed || 0) - failed.length;
     if (unnamedFailed > 0) items.unshift({ kind: 'failed', patient: `${unnamedFailed} prescription${unnamedFailed > 1 ? 's' : ''} failed to send`, detail: 'Check and resend in RxNT' });
     const payments = r.payments || (c.unposted ? last.payments : []) || [];
-    last = { available: true, at: new Date().toISOString(), error: null, items, sent, counts: c, payments, flags: flagPayments(payments) };
+    last = { available: true, at: new Date().toISOString(), error: null, items, sent, counts: c, payments, flags: flagPayments(payments),
+      account: r.account || last.account || null,                       // signed-in RxNT account, as RxNT's menu shows it
+      today: r.today ? { ...r.today, at: new Date().toISOString() } : last.today || null,   // EHR "Today's Appointments"
+      unsigned: c.unsigned ? (r.unsigned || (last.unsigned || []).slice(0, c.unsigned)) : [] };
   } catch { last = { ...last, error: 'failed', at: new Date().toISOString() }; }
   return last;
 }
@@ -50,4 +53,5 @@ const list = () => ({ ...last, total: total(), items: (last.items || []).map((i)
 const C2 = /amphetamine|adderall|mydayis|evekeo|dyanavel|adzenys|zenzedi|dexedrine|procentra|xelstrym|vyvanse|lisdexamfetamine|methylphenidate|ritalin|concerta|metadate|methylin|quillivant|quillichew|cotempla|jornay|relexxii|aptensio|daytrana|focalin|dexmethylphenidate|azstarys|oxycodone|hydrocodone|morphine|fentanyl|hydromorphone|methadone|tapentadol|oxymorphone/i;
 const needsPhysician = (i) => C2.test(`${i.med || ''} ${i.detail || ''}`);
 
-module.exports = { refresh, status, list, needsPhysician };
+const extras = () => ({ account: last.account || null, today: last.today || null, unsigned: last.unsigned || [] });
+module.exports = { refresh, status, list, needsPhysician, extras };

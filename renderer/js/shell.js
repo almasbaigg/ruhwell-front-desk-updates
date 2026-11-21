@@ -1,6 +1,6 @@
 /* Sign-in, navigation, status panel and the date picker. */
 /* ---------- Boot and sign-in ---------- */
-function screen(id) { ['onboarding', 'shell'].forEach((s) => $(s).classList.toggle('hidden', s !== id)); }
+function screen(id) { ['booting', 'onboarding', 'shell'].forEach((s) => $(s).classList.toggle('hidden', s !== id)); }
 async function boot() {
   settings = await window.api.getSettings(); info = await window.api.info();
   $('s-login-label').textContent = info.platform === 'darwin' ? 'Open at login' : 'Start with Windows';
@@ -8,14 +8,33 @@ async function boot() {
   $('up-ver').textContent = `Version ${info.version}`;
   $('p-kbd').textContent = isMac ? '⌘F' : 'Ctrl F';
   accounts = await window.api.accounts();
-  if (accounts.rxnt.connected && accounts.ringrx.connected) return showShell();
+  // Check for real and sign back in quietly first; only show the sign-in screen for what still needs you.
+  // If both look signed in, open straight away and check in the background.
+  const verify = window.api.verifyAccounts().catch(() => null);
+  if (accounts.rxnt.connected && accounts.ringrx.connected) {
+    showShell();
+    const v = await verify;
+    if (v && (!v.rxnt || !v.ringrx)) { accounts.rxnt.connected = v.rxnt; accounts.ringrx.connected = v.ringrx; showOnboarding(); }
+    return;
+  }
+  screen('booting');
+  const v = await verify;
+  if (v) { accounts.rxnt.connected = v.rxnt; accounts.ringrx.connected = v.ringrx; }
+  if (allSet()) return showShell();
   showOnboarding();
 }
 function showOnboarding() {
   screen('onboarding');
   $('rr-user').value = ''; $('rr-pass').value = ''; $('rr-otp').classList.add('hidden'); $('rr-err').textContent = '';
   markStep('step-rxnt', accounts.rxnt.connected); markStep('step-ringrx', accounts.ringrx.connected); markStep('step-gmail', accounts.gmail && accounts.gmail.connected);
+  // Returning user: hide what's already working and say plainly what still needs them.
+  const returning = !!settings.currentProfile && (accounts.rxnt.connected || accounts.ringrx.connected);
+  $('step-rxnt').classList.toggle('hidden', returning && accounts.rxnt.connected);
+  $('step-ringrx').classList.toggle('hidden', returning && accounts.ringrx.connected);
+  $('step-gmail').classList.toggle('hidden', returning);
+  $('ob-title').textContent = returning ? `Sign back in to ${[!accounts.rxnt.connected && 'RxNT', !accounts.ringrx.connected && 'RingRx'].filter(Boolean).join(' and ')}` : 'Welcome';
 }
+const allSet = () => accounts.rxnt.connected && accounts.ringrx.connected;
 function markStep(id, done) {
   $(id).classList.toggle('done', !!done); $(id).querySelector('.done-badge').classList.toggle('hidden', !done);
   $('ob-continue').disabled = !($('step-rxnt').classList.contains('done') && $('step-ringrx').classList.contains('done'));
@@ -24,13 +43,13 @@ $('ob-rxnt').onclick = async () => {
   $('ob-rxnt').textContent = 'Waiting for RxNT…'; $('ob-rxnt').disabled = true;
   const ok = await window.api.rxntSignIn();
   $('ob-rxnt').textContent = 'Sign in to RxNT'; $('ob-rxnt').disabled = false;
-  if (ok) { accounts.rxnt.connected = true; markStep('step-rxnt', true); } else toast('RxNT sign-in was closed.');
+  if (ok) { accounts.rxnt.connected = true; markStep('step-rxnt', true); if (allSet()) showShell(); } else toast('RxNT sign-in was closed.');
 };
 $('ob-ringrx-form').onsubmit = async (e) => {
   e.preventDefault(); $('rr-err').textContent = ''; $('rr-submit').disabled = true; $('rr-submit').textContent = 'Signing in…';
   const r = await window.api.ringrxLogin({ username: $('rr-user').value.trim(), password: $('rr-pass').value, otp: $('rr-otp').value.trim() });
   $('rr-submit').disabled = false; $('rr-submit').textContent = 'Sign in to RingRx';
-  if (r.ok) { $('rr-pass').value = ''; accounts.ringrx = { connected: true, username: r.username }; markStep('step-ringrx', true); return; }
+  if (r.ok) { $('rr-pass').value = ''; accounts.ringrx = { connected: true, username: r.username }; markStep('step-ringrx', true); if (allSet()) showShell(); return; }
   if (r.code === 'OTP_REQUIRED') { $('rr-otp').classList.remove('hidden'); $('rr-otp').focus(); }
   $('rr-err').textContent = r.error;
 };
@@ -46,6 +65,7 @@ $('ob-continue').onclick = showShell;
 let view = 'today', schedMode = 'visits';
 function showShell() {
   screen('shell'); paintConnections(); go('today');
+  window.api.spamReview().then((l) => { if (l && l.length) toast(`${l.length === 1 ? 'A number' : l.length + ' numbers'} on your spam list now belong to a patient, so ${l.length === 1 ? 'it was' : 'they were'} taken off: ${l.map(fmtPhone).join(', ')}`); }).catch(() => {});
   window.api.ringrxFrom().then((n) => { sendFrom = n || ''; }).catch(() => {});
 }
 document.querySelectorAll('.nav').forEach((b) => (b.onclick = () => go(b.dataset.view === 'schedule' ? schedMode : b.dataset.view)));
@@ -60,7 +80,7 @@ function go(v) {
   document.querySelectorAll('.view').forEach((x) => x.classList.toggle('hidden', x.id !== 'view-' + v));
   $('actionbar').style.display = v === 'visits' ? '' : 'none';
   $('content').scrollTop = 0;
-  ({ today: loadToday, visits: () => loadDay(currentDate), calendar: () => loadWeek(weekStart || mondayOf(currentDate)), patients: () => loadPatients(), texts: loadTexts, calls: loadCalls, rx: loadRx, settings: loadSettings }[v] || (() => {}))();
+  ({ today: loadToday, visits: () => loadDay(currentDate), calendar: () => loadWeek(weekStart || mondayOf(currentDate)), patients: () => loadPatients(), texts: loadTexts, calls: loadCalls, rx: loadRx, faxes: loadFaxes, settings: loadSettings }[v] || (() => {}))();
 }
 window.api.onNav((v) => go(v));
 window.api.onNavDate((d) => { go('visits'); loadDay(d); });
@@ -79,7 +99,8 @@ function navBadge(id, n) { $(id).textContent = n || ''; $(id).classList.toggle('
 function paintSync(st) {
   if (st) lastSync = st; st = lastSync; if (!st) return;
   const N = st.needs || {};
-  navBadge('nb-texts', N.texts); navBadge('nb-calls', N.calls); navBadge('nb-rx', ((st.rx || {}).count || 0) + ((st.rx || {}).work || 0));
+  navBadge('nb-texts', N.texts); navBadge('nb-calls', N.calls); navBadge('nb-rx', ((st.rx || {}).count || 0) + ((st.rx || {}).work || 0)); navBadge('nb-faxes', (st.faxes || {}).count || 0);
+  window.__lastSync = st;
   const G = st.gmail || {}, P = st.patients || {};
   // The one line: green when all is well, otherwise the first thing that needs you.
   const backupFailed = st.backup && st.backup.ok === false && st.backup.failedAt && Date.now() - new Date(st.backup.failedAt) < 2 * 864e5;
@@ -92,11 +113,40 @@ async function paintConnections() { const st = await window.api.syncStatus(); ac
 window.api.onSync((st) => { paintSync(st); if (!st.patients.running && view === 'patients') loadPatients(true); if (view === 'settings') paintSyncTimes(); });
 setInterval(() => paintSync(), 30000);
 // The status line only shows status; details and resync live in Settings → Sync.
-async function syncEverything() {
-  toast('Checking RxNT, RingRx and Gmail…');
+// Sync / Check everything: a small card with the Ruhwell mark filling with teal as each part finishes,
+// and a checklist beside it. Progress is real (parts done), not a guessed percentage. Never blocks the app.
+const MARK = '<rect y="43.34" width="43.16" height="43.16" rx="2.88"/><rect x="47.48" y="87.31" width="43.16" height="43.16" rx="2.88"/><path d="m131.62,43.56h-34.99s-2.43,0-2.43,0c-.04,0-.08,0-.13.01h-3.15v-3.17s.01-.07.01-.11v-.99s0-36.43,0-36.43C90.93,1.28,89.65,0,88.06,0h-37.42c-.92,0-1.73.43-2.24,1.1v.02c-.35.41-.61.93-.61,1.51,0,25.41,2.98,43.69,21.68,62.39s37.39,21.67,62.44,21.67c.56,0,1.06-.26,1.45-.6h.02c.67-.51,1.1-1.32,1.1-2.24v-37.41c.01-1.59-1.28-2.88-2.87-2.88Z"/>';
+const SYNC_PARTS = [['schedule', 'RxNT schedule'], ['rx', 'Prescriptions & To-Do'], ['portal', 'Portal messages'], ['comms', 'Texts & calls'], ['gmail', 'Email'], ['faxes', 'Faxes']];
+let syncCardBusy = null;
+async function syncEverything(only) {
+  if (syncCardBusy) return syncCardBusy;
+  const parts = SYNC_PARTS.filter(([k]) => !only || only.includes(k));
+  const card = $('sync-card');
+  card.innerHTML = `<div class="sc-mark"><svg viewBox="-4 -4 142.5 138.5" aria-hidden="true"><defs><clipPath id="sc-clip">${MARK}</clipPath></defs>
+      <g class="sc-base">${MARK}</g><g clip-path="url(#sc-clip)"><g class="sc-fill" style="transform:translateY(131px)"><path class="sc-wave" d="M-140 0 q17.5 -7 35 0 t35 0 t35 0 t35 0 t35 0 t35 0 t35 0 t35 0 V140 H-140Z"/></g></g></svg></div>
+    <div class="sc-body"><b class="sc-title">Syncing…</b><ul>${parts.map(([k, l]) => `<li data-k="${k}"><i></i><span>${l}</span><em></em></li>`).join('')}</ul></div>`;
+  card.className = 'sync-card show';
+  const fill = card.querySelector('.sc-fill');
+  let done = 0; const total = parts.length, bad = [];
+  const level = () => { fill.style.transform = `translateY(${131 - (131 + 8) * (done / total)}px)`; };
+  requestAnimationFrame(() => card.querySelectorAll('li').forEach((li, i) => setTimeout(() => li.classList.add('in', 'run'), i * 70)));
   window.api.syncPatients();
-  await Promise.all([window.api.watchCheck(), window.api.commsSync(), window.api.rxRefresh(), window.api.gmailCheck()]);
-  paintConnections(); if (view === 'today') loadToday();
+  syncCardBusy = Promise.all(parts.map(async ([k, label]) => {
+    let r; try { r = await window.api.syncPart(k); } catch { r = { ok: false, reason: "couldn't load" }; }
+    const li = card.querySelector(`li[data-k="${k}"]`);
+    li.classList.remove('run'); li.classList.add(r.off ? 'off' : r.ok ? 'ok' : 'bad');
+    if (r.off) li.querySelector('em').textContent = 'not set up';
+    if (!r.ok) { li.querySelector('em').textContent = r.reason || "couldn't load"; bad.push(label); }
+    done++; level();
+  })).then(() => {
+    const t = card.querySelector('.sc-title');
+    t.textContent = bad.length ? `${bad.length} need${bad.length === 1 ? 's' : ''} attention` : 'All up to date';
+    card.classList.add(bad.length ? 'warn' : 'done');
+    paintConnections(); if (view === 'today') loadToday();
+    setTimeout(() => card.classList.remove('show'), bad.length ? 9000 : 3200);
+    card.onclick = () => { card.classList.remove('show'); if (bad.length) go('settings'); };
+  }).finally(() => { syncCardBusy = null; });
+  return syncCardBusy;
 }
 
 /* ---------- Date popover ---------- */

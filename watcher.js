@@ -27,7 +27,10 @@ const isSeen = (a) => /^(completed|check-?in completed)$/i.test(String(a.statusT
 function pairMoves(newOnes, goneOnes) {
   const pairs = new Map(), used = new Set();
   // Only within 2 weeks of each other: a cancellation and a booking further apart are two separate changes.
-  const cand = newOnes.map((n) => goneOnes.filter((g) => g.patientId === n.patientId).map((g) => ({ n, g, d: Math.abs(new Date(n.start) - new Date(g.start)) })).filter((x) => x.d <= 14 * 864e5))
+  // Same patient = same chart id, or (a second chart under the same name) the same name and date of birth.
+  const key = (a) => `${String(a.last || '').toLowerCase().replace(/[^a-z]/g, '')}|${String(a.first || '').toLowerCase().replace(/[^a-z]/g, '')}|${String(a.dob || '').slice(0, 10)}`;
+  const same = (n, g) => g.patientId === n.patientId || (!!n.dob && !!g.dob && key(n) === key(g));
+  const cand = newOnes.map((n) => goneOnes.filter((g) => same(n, g)).map((g) => ({ n, g, d: Math.abs(new Date(n.start) - new Date(g.start)) })).filter((x) => x.d <= 14 * 864e5))
     .flat().sort((x, y) => x.d - y.d);
   for (const { n, g } of cand) { if (pairs.has(n.appointmentId) || used.has(g.appointmentId)) continue; pairs.set(n.appointmentId, g); used.add(g.appointmentId); }
   return pairs;
@@ -46,11 +49,12 @@ function diff(prev, cur, prevRange) {
   for (const a of added) {
     // RxNT often "moves" a visit by cancelling it and booking a new one. Same patient + same time = just an edit.
     const twin = Object.values(cur).find((x) => x !== a && x.patientId === a.patientId && x.start === a.start && isCancel(x));
-    if (twin && !isCancel(a)) { events.push({ kind: 'rebooked', appt: a, text: `${name(a)} rebooked for ${when(a.start)}`, quiet: true }); continue; }
+    // Cancelled and booked again into the same slot: worth seeing (it often follows a patient's call or portal change).
+    if (twin && !isCancel(a)) { events.push({ kind: 'rebooked', appt: a, text: `Rebooked: ${name(a)}, ${when(a.start)}`, quiet: !(prev[twin.appointmentId] && !isCancel(prev[twin.appointmentId])) }); continue; }
     if (isCancel(a)) continue;
     const from = moves.get(a.appointmentId);
     if (from && from.start !== a.start) events.push({ kind: 'rescheduled', appt: a, text: `${name(a)} rescheduled from ${when(from.start)} to ${when(a.start)}` });
-    else if (from) events.push({ kind: 'rebooked', appt: a, text: `${name(a)} rebooked for ${when(a.start)}`, quiet: true });   // same slot, new record: an edit
+    else if (from) events.push({ kind: 'rebooked', appt: a, text: `Rebooked: ${name(a)}, ${when(a.start)}`, quiet: !isCancel(from) });   // same slot, new record: visible if the old one was cancelled
     else if (!from) events.push({ kind: 'new', appt: a, text: `New appointment: ${name(a)}, ${when(a.start)}${a.visitType ? ' · ' + a.visitType : ''}` });
   }
   for (const [id, a] of Object.entries(cur)) {
@@ -135,6 +139,9 @@ async function check({ silent = false } = {}) {
       if (earlier) earlier.handled = true;
       out.push({ kind: 'rescheduled', appt: nw.appt, text: `${name(nw.appt)} rescheduled from ${when(from.appt.start)} to ${when(nw.appt.start)}` });
     }
+    // Back after a gap (signed out, offline, asleep): changes found now are labeled so nobody thinks they just happened.
+    const gap = state.lastOkAt ? Date.now() - new Date(state.lastOkAt) : 0;
+    if (gap > 30 * 60000) out = out.map((e) => (e.kind === 'correction' ? e : { ...e, late: true, text: `While disconnected: ${e.text}` }));
     const stamped = out.map((e) => ({ ...e, at: new Date().toISOString(), id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}` }));
     // A visit cancelled earlier and now rebooked at the same time: if that cancellation was already reported,
     // say it's back on the schedule; either way the old "cancelled" alert no longer needs you.
@@ -143,7 +150,7 @@ async function check({ silent = false } = {}) {
         old.handled = true; e.quiet = false; e.kind = 'backon'; e.text = `Back on the schedule: ${name(e.appt)}, ${when(e.appt.start)}`;
       }
     });
-    store.watchState.set({ snapshot: cur, range, pending, suspect: Object.fromEntries(Object.entries(strikes).filter(([d]) => suspect.has(d))), alerts: [...stamped, ...(state.alerts || [])].slice(0, 500), unread: (state.unread || 0) + stamped.filter((e) => !e.quiet).length });
+    store.watchState.set({ lastOkAt: new Date().toISOString(), snapshot: cur, range, pending, suspect: Object.fromEntries(Object.entries(strikes).filter(([d]) => suspect.has(d))), alerts: [...stamped, ...(state.alerts || [])].slice(0, 500), unread: (state.unread || 0) + stamped.filter((e) => !e.quiet).length });
     lastRun = new Date().toISOString(); lastError = null;
     if (stamped.length) { onEvent({ type: 'alerts', events: stamped }); if (!silent) deliver(stamped); }
     if (pending.length || suspect.size) { clearTimeout(recheck); recheck = setTimeout(() => check(), 3 * 60000); }   // confirm soon
@@ -171,9 +178,9 @@ function schedule() {
           texts (if chosen) only during office hours.
    Soon – everything else worth knowing: bundled into one notification every 30 minutes, never texted.
    FYI  – quiet events: shown in the app only. */
-const PREF_KEY = { backon: 'schedule', rx: 'rx', new: 'schedule', cancelled: 'schedule', noshow: 'schedule', rescheduled: 'schedule', correction: 'schedule', optout: 'reply', confirmed: 'reply', reply: 'reply', soon: 'soon', newpatient: 'newpatient', portal: 'reply' };
-const TEXT_LABEL = { backon: 'Back on the schedule', rx: 'Prescription waiting', new: 'New booking', cancelled: 'Cancellation', rescheduled: 'Reschedule', noshow: 'No-show', correction: 'Correction: still scheduled', optout: 'Patient replied STOP', confirmed: 'Patient confirmed', reply: 'New patient text', soon: 'Starting soon', newpatient: 'New patient registered', portal: 'RxNT portal message' };
-const SCHEDULE_KINDS = ['new', 'cancelled', 'noshow', 'rescheduled', 'correction', 'backon'];
+const PREF_KEY = { rebooked: 'schedule', backon: 'schedule', rx: 'rx', new: 'schedule', cancelled: 'schedule', noshow: 'schedule', rescheduled: 'schedule', correction: 'schedule', optout: 'reply', confirmed: 'reply', reply: 'reply', soon: 'soon', newpatient: 'newpatient', portal: 'reply', fax: 'fax' };
+const TEXT_LABEL = { rebooked: 'Rebooked', backon: 'Back on the schedule', rx: 'Prescription waiting', new: 'New booking', cancelled: 'Cancellation', rescheduled: 'Reschedule', noshow: 'No-show', correction: 'Correction: still scheduled', optout: 'Patient replied STOP', confirmed: 'Patient confirmed', reply: 'New patient text', soon: 'Starting soon', newpatient: 'New patient registered', portal: 'RxNT portal message', fax: 'New fax' };
+const SCHEDULE_KINDS = ['new', 'cancelled', 'noshow', 'rescheduled', 'correction', 'backon', 'rebooked'];
 function tierOf(e) {
   if (e.quiet) return 'fyi';
   if (e.kind === 'rx') return 'now';
@@ -200,6 +207,7 @@ function targetOf(e) {
   if (e.kind === 'reply' || e.kind === 'optout' || e.kind === 'confirmed') return { view: 'texts', phone: e.phone || (e.appt && e.appt.phone) };
   if (e.kind === 'portal' || e.kind === 'rx') return { view: 'rx' };
   if (e.kind === 'newpatient') return { view: 'patients' };
+  if (e.kind === 'fax') return { view: 'faxes' };
   if (e.appt && e.appt.start) return { view: 'visits', date: new Date(e.appt.start).toISOString().slice(0, 10) };
   return { view: 'today' };
 }

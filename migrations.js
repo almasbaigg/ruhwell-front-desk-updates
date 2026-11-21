@@ -52,6 +52,13 @@ const STEPS = [
       return { ...s, alertPrefs: { ...rest, schedule } };
     },
   },
+  {
+    v: 8, // 1.6.0: "Review request" is now "Google Review Request" (id stays 'review' so history still counts).
+    run(s) {
+      const templates = (s.templates || []).map((t) => t.id === 'review' && /^review( request)?$/i.test(String(t.name || '').trim()) ? { ...t, name: 'Google Review Request' } : t);
+      return { ...s, templates };
+    },
+  },
 ];
 
 function run() {

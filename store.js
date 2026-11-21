@@ -78,7 +78,7 @@ const WELCOME = `Hi {first}, welcome to Ruhwell Med! Your appointment is set for
 const RESCHEDULE = `Hi {first}, we're sorry we missed you. We'd be happy to find a new time. We have openings {slots}. Reply with what works best, or let us know another day.`;
 // audience: after = checked-in visits · upcoming = booked, not yet seen · cancelled = cancelled/no-show · any = everywhere
 const DEFAULT_TEMPLATES = [
-  { id: 'review', name: 'Review request', text: REVIEW, audience: 'after' },
+  { id: 'review', name: 'Google Review Request', text: REVIEW, audience: 'after' },
   { id: 'reminder', name: 'Appointment reminder', text: REMINDER, audience: 'upcoming' },
   { id: 'welcome', name: 'Welcome', text: WELCOME, audience: 'upcoming' },
   { id: 'reschedule', name: 'Reschedule offer', text: RESCHEDULE, audience: 'cancelled' },
@@ -100,6 +100,7 @@ const DEFAULT_SETTINGS = {
     reply: { desk: true, text: false },      // patient texts and RxNT portal messages
     newpatient: { desk: true, text: false },
     rx: { desk: true, text: false },         // prescriptions waiting over an hour
+    fax: { desk: true, text: false },        // new faxes (Doximity); texts say only "New fax"
     nudge: { desk: true },                   // wrap-up and chart-this-visit pop-ups
     task: { desk: true, text: false }, soon: { desk: true, text: false, minutes: 15 },
   },

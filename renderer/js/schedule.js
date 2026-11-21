@@ -14,7 +14,10 @@ function buildVisit(it, prev) {
   const t = tid && tplById(tid);
   v.templateId = t ? t.id : null; v.text = t ? fill(t.text, v) : '';
   const already = v.already.some((h) => h.templateId === v.templateId);
-  v.selected = !!t && canText && !already && (cat === 'seen' ? mode !== 'future' && !(v.review && audienceOf(t) === 'after') : cat === 'pending' && mode === 'future');
+  // Nothing is ticked on its own; "Select all who need a text" ticks these in one tap.
+  v.eligible = !!t && canText && !already && (cat === 'seen' ? mode !== 'future' && !(v.review && audienceOf(t) === 'after') : cat === 'pending' && mode === 'future' && !v.confirmed);
+  v.why = !v.eligible ? '' : cat === 'seen' ? 'Seen today · no Google review asked yet' : `${currentDate === ymd(new Date(Date.now() + 864e5)) ? 'Tomorrow' : 'Upcoming'} · not confirmed`;
+  v.selected = false;
   return v;
 }
 function applyDay(d) {
@@ -94,10 +97,12 @@ function emptyReason(blocks, H) {
 function renderVisits() {
   const L = $('visit-list'), mode = dayMode(), H = inferHours();
   const n = (fn) => visits.filter(fn).length;
-  $('summary').innerHTML = visits.length ? [
+  const elig = visits.filter((v) => v.eligible && !v.selected).length;
+  $('summary').innerHTML = (visits.length ? [
     [visits.length === 1 ? 'visit' : 'visits', visits.length, ''], ['checked in', n((v) => v.cat === 'seen'), 'seen'], ['booked', n((v) => stateOf(v) === 'booked' || stateOf(v) === 'confirmed'), 'pending'],
     ['not checked in', n((v) => stateOf(v) === 'notin'), 'notin'], ['cancelled', n((v) => v.cat === 'cancelled'), 'cancelled'], ['messaged', n((v) => v.already.length), 'sent'],
-  ].filter(([, c], i) => i < 2 || c).map(([l, c, k]) => `<span class="sum ${k}">${k ? '<i></i>' : ''}<b>${c}</b>${l}</span>`).join('') : '';
+  ].filter(([, c], i) => i < 2 || c).map(([l, c, k]) => `<span class="sum ${k}">${k ? '<i></i>' : ''}<b>${c}</b>${l}</span>`).join('') : '') + (elig ? `<button class="btn small" id="sel-elig">${I.check}Select all who need a text (${elig})</button>` : '');
+  if ($('sel-elig')) $('sel-elig').onclick = () => { visits.forEach((v) => { if (v.eligible) v.selected = true; }); renderVisits(); };
   const blocks = mergedBlocks(visits.blocks);
   // One timeline: blocks and visits in time order.
   const rows = [...blocks.map((b) => ({ t: 'block', start: b.start, b })), ...visits.map((v) => ({ t: 'visit', start: v.start, v }))]
@@ -123,7 +128,7 @@ function renderVisits() {
         <div class="main">
           <p class="name">${esc(fullName(v))} ${typeTag(v.visitType)}</p>
           <p class="sub-line">${hasPhone ? `<span class="phone">${esc(fmtPhone(v.phone))}</span>` : `<span class="phone"><input placeholder="Add a phone number" value="${esc(v.phone)}"></span>`}${stateTag(v.confirmed && st === 'booked' ? 'confirmed' : st)}</p>
-          <div class="meta">${phoneBadge(v, v.rec)}${minorBadge(v, v.rec)}${dnt ? '<span class="pill red">Do not text</span>' : ''}${(() => { const c = lastCall(v.phone); return c && new Date(c.at) >= parseYmd(currentDate) ? `<span class="pill">${I.phone}${c.missed ? 'Missed call' : c.inbound ? 'Called in' : 'Called'} ${esc(fmtTime(c.at))}</span>` : ''; })()}${v.review ? `<span class="pill teal">Review asked ${esc(v.review.toLocaleDateString([], { month: 'short', day: 'numeric' }))}</span>` : ''}</div>
+          ${v.why ? `<div class="why-line">${esc(v.why)}</div>` : ''}<div class="meta">${v.encounter && !v.encounter.started && /check-?in completed/i.test(v.statusText || '') ? '<span class="pill red">Chart not started</span>' : ''}${phoneBadge(v, v.rec)}${minorBadge(v, v.rec)}${dnt ? '<span class="pill red">Do not text</span>' : ''}${(() => { const c = lastCall(v.phone); return c && new Date(c.at) >= parseYmd(currentDate) ? `<span class="pill">${I.phone}${c.missed ? 'Missed call' : c.inbound ? 'Called in' : 'Called'} ${esc(fmtTime(c.at))}</span>` : ''; })()}${v.review ? `<span class="pill teal">Google review asked ${esc(v.review.toLocaleDateString([], { month: 'short', day: 'numeric' }))}</span>` : ''}</div>
           ${v.editing ? composerHTML(v) : v.open ? `<div class="preview">${esc(finalMessage(v)) || '<span class="muted">No message</span>'}</div>` : ''}
           ${v.editing ? '<div class="row-actions"><button class="link-btn act-done">Done</button></div>' : ''}
         </div>
@@ -245,7 +250,7 @@ function renderWeek() {
     const v = (weekData[x.dataset.d].items || []).find((i) => String(i.appointmentId) === x.dataset.id); if (!v) return;
     const rec = recordFor(v), cat = category(v);
     openModal(`<div class="compose-top"><div class="avatar">${esc(initials(v))}</div><div><h2>${esc(fullName(v))}</h2><p class="muted small">${esc(parseYmd(x.dataset.d).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' }))} · ${esc(fmtTime(v.start))}–${esc(fmtTime(v.end))}</p></div></div>
-      <div class="meta">${stateTag(stateOf(v))}${stateOf(v) === 'notin' ? '<span class="pill">Still Pending in RxNT</span>' : ''}${v.visitType ? `<span class="pill">${esc(v.visitType)}</span>` : ''}${phoneBadge(v, rec)}${minorBadge(v, rec, false)}${rec && rec.dnt ? '<span class="pill red">Do not text</span>' : ''}${isConfirmed(v.phone, `${v.first || ''} ${v.last || ''}`.trim()) ? `<span class="pill green">${I.check}Confirmed</span>` : ''}</div>
+      <div class="meta">${stateTag(stateOf(v))}${v.encounter && !v.encounter.started && /check-?in completed/i.test(v.statusText || '') ? '<span class="pill red">Chart not started</span>' : ''}${stateOf(v) === 'notin' ? '<span class="pill">Still Pending in RxNT</span>' : ''}${v.visitType ? `<span class="pill">${esc(v.visitType)}</span>` : ''}${phoneBadge(v, rec)}${minorBadge(v, rec, false)}${rec && rec.dnt ? '<span class="pill red">Do not text</span>' : ''}${isConfirmed(v.phone, `${v.first || ''} ${v.last || ''}`.trim()) ? `<span class="pill green">${I.check}Confirmed</span>` : ''}</div>
       <p>${esc(fmtPhone(v.phone) || 'No phone in RxNT')}</p>
       <div class="actions"><button class="btn" id="ev-day">Open day</button>${rec && rec.dnt ? '' : `<button class="btn primary" id="ev-msg">${I.msg}Message</button>`}</div>`);
     $('ev-day').onclick = () => { closeModal(); go('visits'); loadDay(x.dataset.d); };

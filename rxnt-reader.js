@@ -8,11 +8,13 @@ const fs = require('fs');
 const partitionFor = (pid) => `persist:rxnt-${pid}`;
 const SCHEDULER = 'https://app2.rxnt.com/SchedulerV2/#/appointment';
 
-// Runs inside the RxNT scheduler page. `target` is YYYY-MM-DD.
-function readSchedule(target) {
+// Runs inside the RxNT scheduler page. `target` is YYYY-MM-DD. `view` is 'appointment' (default) or
+// 'availabilitycalendar': visits a patient confirmed through the portal (PNF) only show on Availability.
+function readSchedule(target, view) {
+  view = view || 'appointment';
   if (location.host.includes('auth.rxnt.com') || /\/login/i.test(location.pathname)) return { state: 'login' };
   if (!location.href.includes('SchedulerV2')) return { state: 'elsewhere', url: location.href };
-  if (!/#\/appointment/.test(location.hash)) { location.hash = '#/appointment'; return { state: 'navigating' }; }
+  if (location.hash.indexOf('#/' + view) !== 0) { location.hash = '#/' + view; window.__rmNav = null; return { state: 'navigating' }; }
   const calEl = document.querySelector('.fc');
   if (!calEl || !window.angular) return { state: 'loading' };
   let cal = null;
@@ -48,6 +50,7 @@ function readSchedule(target) {
     for (const e of Object.values(src || {})) {
       if (!e || typeof e !== 'object') continue;
       if (!e.Appointment) {
+        if (view !== 'appointment') continue;   // Availability shows open slots here, not "Not available" blocks
         // Provider blocks such as "Maria Baig, PA-C - Not Available - Out of Office"
         const title = String(e.title || e.Title || '');
         const bs = local(e.StartDateTime || e.Start || (e.start && e.start.format && e.start.format()));
@@ -81,7 +84,7 @@ function readSchedule(target) {
   let pending = 0; try { pending = angular.element(document.body).injector().get('$http').pendingRequests.length; } catch (e) {}
   return { state: 'ok', pending, date: shown, dateLabel: h ? h.innerText.trim() : '', items: Object.values(out), blocks: Object.values(blocks) };
 }
-const scriptFor = (target) => `(${readSchedule.toString()})(${JSON.stringify(target || '')})`;
+const scriptFor = (target, view) => `(${readSchedule.toString()})(${JSON.stringify(target || '')}, ${JSON.stringify(view || 'appointment')})`;
 const localDate = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -94,19 +97,19 @@ function makeWindow(pid, show, parent) {
   });
 }
 
-async function evaluate(win, target) {
-  try { return await win.webContents.executeJavaScript(scriptFor(target), true); }
+async function evaluate(win, target, view) {
+  try { return await win.webContents.executeJavaScript(scriptFor(target, view), true); }
   catch { return { state: 'loading' }; }
 }
 
 // Poll until RxNT has loaded the target day: no HTTP requests in flight for two
 // checks in a row (usually under a second). Falls back to "unchanged for 3s".
-async function waitForSchedule(win, target, timeoutMs = 45000) {
+async function waitForSchedule(win, target, timeoutMs = 45000, view) {
   const end = Date.now() + timeoutMs;
   let last = null, stableSince = 0, idle = 0, okSince = 0;
   while (Date.now() < end) {
     if (win.isDestroyed()) return { state: 'closed' };
-    const r = await evaluate(win, target);
+    const r = await evaluate(win, target, view);
     if (r.state === 'login') return r;
     if (r.state === 'elsewhere' && /app2\.rxnt\.com/.test(r.url || '')) { win.loadURL(SCHEDULER).catch(() => {}); await sleep(2000); continue; }
     if (r.state === 'navigating') { last = null; idle = 0; okSince = 0; await sleep(250); continue; }
@@ -144,10 +147,24 @@ async function fetchDay(pid, date, reuse) {
     if (r.state === 'login') return { needsLogin: true };
     if (r.state === 'navfail') return { error: `RxNT wouldn't open ${target}.` };
     if (r.state !== 'ok') return { error: "RxNT didn't finish loading. Check your internet and try again." };
-    const items = r.items
+    // Second source: the Availability calendar. Visits a patient confirmed through the RxNT portal disappear
+    // from the Appointments view but stay here. Cancelled visits only show on Appointments, so that view wins.
+    let avail = null, sources = ['appointments'];
+    if (!r.closed) {
+      const r2 = await waitForSchedule(win, target, 30000, 'availabilitycalendar');
+      if (r2.state === 'ok') { avail = r2; sources.push('availability'); }
+      win.webContents.executeJavaScript("location.hash = '#/appointment'", true).catch(() => {});
+    }
+    const byId = {};
+    for (const i of r.items) byId[i.appointmentId] = { ...i, seenIn: ['appointments'] };
+    for (const i of (avail ? avail.items : [])) {
+      if (byId[i.appointmentId]) byId[i.appointmentId].seenIn.push('availability');
+      else byId[i.appointmentId] = { ...i, seenIn: ['availability'] };
+    }
+    const items = Object.values(byId)
       .map((i) => ({ ...i, ...pickPhone(i) }))
       .sort((a, b) => String(a.start).localeCompare(String(b.start)));
-    return { date: r.date, closed: !!r.closed, dateLabel: r.dateLabel, items, blocks: (r.blocks || []).sort((a, b) => a.start.localeCompare(b.start)) };
+    return { date: r.date, closed: !!r.closed, dateLabel: r.dateLabel, items, sources, blocks: (r.blocks || []).sort((a, b) => a.start.localeCompare(b.start)) };
   } finally {
     if (!reuse && !win.isDestroyed()) win.destroy();
   }
@@ -551,7 +568,9 @@ async function readPending(win) {
       if (counts.unposted > 0) payments = await readPayments(win);
     }
   } catch {}
-  return { items, counts, payments };
+  let extras = {};
+  try { extras = await readEhrExtras(win, counts); } catch {}
+  return { items, counts, payments, ...extras };
 }
 
 // Unposted patient payments (card charged, not yet applied to a visit). Read from RxNT Billing's grid.
@@ -573,6 +592,220 @@ async function readPayments(win) {
   return null;
 }
 
+/* ---------- EHR extras (read-only): who is signed in, today's appointments, unsigned notes ---------- */
+// The signed-in account as RxNT shows it in its own account menu (name, credentials, practice).
+function readAccountMenu(step) {
+  const name = document.querySelector('h6[class*="-name"]');
+  if (name) {
+    const caps = [...name.parentElement.querySelectorAll('span[class*="caption"]')].map((x) => x.textContent.trim()).filter(Boolean);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    const bd = document.querySelector('.MuiBackdrop-root'); if (bd) bd.click();
+    return { state: 'ok', name: name.textContent.trim(), cred: caps[0] || '', practice: caps[caps.length - 1] || '' };
+  }
+  if (step) return { state: 'wait' };
+  const b = [...document.querySelectorAll('header button')].filter((x) => x.querySelector('img, .MuiAvatar-root')).pop();
+  if (!b) return { state: 'wait' };
+  b.click(); return { state: 'clicked' };
+}
+// Grid rows (ag-grid) in the prescriber dashboard iframe, as RxNT's own data objects.
+function readGridData(hashPart) {
+  if (/auth\.rxnt\.com/.test(location.href)) return { state: 'login' };
+  const f = [...document.querySelectorAll('iframe')].find((x) => /PrescriberDashboardV2/.test(x.src));
+  const d = f && f.contentDocument; if (!d || !d.body || !String(f.src).includes(hashPart)) return { state: 'wait' };
+  const anyRow = d.querySelector('.ag-row'); const empty = /No Rows To Show/i.test(d.body.innerText || '');
+  if (!anyRow && !empty) return { state: 'wait' };
+  const out = [], seen = new Set();
+  for (const r of d.querySelectorAll('.ag-center-cols-container .ag-row')) {
+    const k = Object.getOwnPropertyNames(r).find((x) => x.startsWith('__AG_'));
+    const node = k && r[k].renderedRow && r[k].renderedRow.rowNode; if (!node || !node.data || seen.has(node.id)) continue;
+    seen.add(node.id); out.push(node.data);
+  }
+  return { state: 'ok', rows: out };
+}
+async function gridRows(win, url, hashPart, ms = 15000) {
+  await win.loadURL(url).catch(() => {});
+  const until = Date.now() + ms; let last = null;
+  while (Date.now() < until && !win.isDestroyed()) {
+    await sleep(700);
+    const r = await call(win, readGridData, hashPart);
+    if (r.state === 'login') return { needsLogin: true };
+    if (r.state === 'ok') { if (last && last === r.rows.length) return { rows: r.rows }; last = r.rows.length; }
+  }
+  return { error: 'timeout' };
+}
+const localISO = (v) => String(v || '').replace(/Z$/, '');
+// Today's appointments from the EHR (third schedule source: it lists portal-confirmed visits correctly).
+function ehrAppt(x) {
+  const A = x.AppointmentDetails || {}, st = A.AppointmentStatusType || {};
+  const [last, first] = String(x.PatientName || '').split(',').map((v) => (v || '').trim());
+  return {
+    appointmentId: x.AppointmentId || A.AppointmentId, patientId: x.PatientId, first, last,
+    dob: localISO(x.PatientDOB).slice(0, 10), start: localISO(x.StartDateTime), end: localISO(x.EndDateTime),
+    statusCode: st.Code || '', statusText: st.Description || '', visitType: (A.CompanyAppointmentTemplate || {}).Name || '',
+    preferred: x.PatientPreferredPhoneNumber || '', ehrPatientId: (x.PatientVisitInfo || {}).PatientId || null, seenIn: ['ehr'],
+    // RxNT shows a "+" for a checked-in visit with no encounter yet (EncounterId 0).
+    encounter: (x.PatientVisitInfo || {}).PatientVisit ? { started: !!x.PatientVisitInfo.PatientVisit.EncounterId, signed: !!x.PatientVisitInfo.PatientVisit.IsSigned } : null,
+  };
+}
+function unsignedNote(x) {
+  const [last, first] = String(x.PatientName || '').split(',').map((v) => (v || '').trim());
+  return { id: x.EncounterId, at: localISO(x.EncounterDate), first, last, chart: String(x.ChartNumber || ''), status: x.EncounterStatus || '', complaint: String(x.ChiefComplaint || '').slice(0, 80) };
+}
+async function readEhrExtras(win, counts) {
+  const out = {};
+  try {   // account name: open RxNT's account menu, read it, close it
+    await win.loadURL(EHR_DASH).catch(() => {});
+    for (let i = 0; i < 20 && !win.isDestroyed(); i++) {
+      await sleep(600);
+      const r = await call(win, readAccountMenu, i > 0 && out.clicked);
+      if (r.state === 'clicked') out.clicked = true;
+      if (r.state === 'ok') { out.account = { name: r.name, cred: r.cred, practice: r.practice }; break; }
+    }
+    delete out.clicked;
+  } catch {}
+  try {
+    const a = await gridRows(win, 'https://app2.rxnt.com/ehrv9/legacy/prescriberDashboard#/dashboard/appt', 'dashboard/appt');
+    if (a.rows) out.today = { date: localDate(), items: a.rows.map(ehrAppt).filter((x) => x.appointmentId) };
+  } catch {}
+  if (counts && counts.unsigned > 0) {
+    try {
+      const u = await gridRows(win, 'https://app2.rxnt.com/ehrv9/legacy/prescriberDashboard#/dashboard/encounters/unsigned', 'encounters/unsigned');
+      if (u.rows) out.unsigned = u.rows.map(unsignedNote);
+    } catch {}
+  }
+  return out;
+}
+
+/* ---------- Faxes into a chart: the ONE thing the app writes to RxNT ----------
+   Approved by Almas (2026-11-20): one fax at a time, only after Maria picked the patient and confirmed the
+   name, DOB and chart number read fresh from RxNT. Then the app checks the chart to see the file arrived. */
+const patientDashUrl = (internalId, hash = '') => `https://app2.rxnt.com/ehrv9/legacy/patientDashboard?PatientId=${Buffer.from(String(internalId)).toString('base64')}#/${hash}`;
+function readChartHeader() {
+  if (/auth\.rxnt\.com/.test(location.href)) return { state: 'login' };
+  const f = [...document.querySelectorAll('iframe')].find((x) => /PatientDashboard/.test(x.src));
+  const d = f && f.contentDocument, w = f && f.contentWindow; if (!d || !w || !w.angular) return { state: 'wait' };
+  let us = null;
+  d.querySelectorAll('.ng-scope').forEach((el) => { try { const s = w.angular.element(el).scope(); if (s && s.UserSession && s.UserSession.Patient && s.UserSession.Patient.Person) us = s.UserSession; } catch (e) {} });
+  if (!us) return { state: 'wait' };
+  const P = us.Patient, per = P.Person;
+  return { state: 'ok', patient: { internalId: P.PatientId, chart: String(P.ChartNumber || ''), first: String(per.FirstName || '').trim(), last: String(per.LastName || '').trim(), dob: String(per.DOB || '').replace(/Z$/, '').slice(0, 10), dobText: per.DOBString || '' } };
+}
+async function chartHeader(win, ms = 20000) {
+  const until = Date.now() + ms;
+  while (Date.now() < until && !win.isDestroyed()) {
+    await sleep(700);
+    const r = await call(win, readChartHeader);
+    if (r.state === 'login') return { needsLogin: true };
+    if (r.state === 'ok') return { patient: r.patient };
+  }
+  return { error: 'timeout' };
+}
+// EHR patient search: rows are RxNT's patient objects. Pick the one whose chart number is the app's
+// patient id (the scheduler's PatientId is the EHR "Chart #"), else the one with the same name and DOB.
+function readSearchRows() {
+  if (/auth\.rxnt\.com/.test(location.href)) return { state: 'login' };
+  if (/patientDashboard/i.test(location.href)) return { state: 'dashboard' };
+  const f = [...document.querySelectorAll('iframe')].find((x) => /PrescriberDashboardV2/.test(x.src) && /search/.test(x.src));
+  const d = f && f.contentDocument; if (!d || !d.body) return { state: 'wait' };
+  const rows = [];
+  for (const r of d.querySelectorAll('.ag-center-cols-container .ag-row')) {
+    const k = Object.getOwnPropertyNames(r).find((x) => x.startsWith('__AG_')); const x = k && r[k].renderedRow && r[k].renderedRow.rowNode && r[k].renderedRow.rowNode.data;
+    if (x) rows.push({ internalId: x.PatientId, chart: String(x.ChartNumber || ''), first: String((x.Person || {}).FirstName || '').trim(), last: String((x.Person || {}).LastName || '').trim(), dob: String((x.Person || {}).DOB || '').replace(/Z$/, '').slice(0, 10) });
+  }
+  if (!rows.length && !/No Rows To Show/i.test(d.body.innerText || '')) return { state: 'wait' };
+  return { state: 'ok', rows };
+}
+const norm = (v) => String(v || '').toLowerCase().replace(/[^a-z]/g, '');
+// Finds the chart for a patient the user picked and reads its header fresh from RxNT (for the confirm screen).
+async function findChart(pid, who) {
+  const win = openReader(pid);
+  try {
+    const o = await openEhr(win); if (o === 'login') return { needsLogin: true };
+    const q = `lname=${encodeURIComponent(String(who.last || '').slice(0, 30))}${who.first ? '&fname=' + encodeURIComponent(String(who.first).slice(0, 1)) : ''}`;
+    await win.loadURL('https://app2.rxnt.com/ehrv9/legacy/prescriberDashboard#/dashboard/search?' + q).catch(() => {});
+    let hit = null;
+    for (let i = 0; i < 30 && !win.isDestroyed() && !hit; i++) {
+      await sleep(700);
+      const r = await call(win, readSearchRows);
+      if (r.state === 'login') return { needsLogin: true };
+      if (r.state === 'dashboard') { const h = await chartHeader(win); if (h.patient) hit = h.patient; break; }
+      if (r.state !== 'ok') continue;
+      const byChart = r.rows.filter((x) => who.patientId && x.chart && x.chart === String(who.patientId));
+      const byName = r.rows.filter((x) => norm(x.last) === norm(who.last) && norm(x.first) === norm(who.first) && (!who.dob || x.dob === String(who.dob).slice(0, 10)));
+      const pick = byChart.length === 1 ? byChart[0] : byName.length === 1 ? byName[0] : null;
+      if (!pick) return { error: byName.length > 1 ? 'several' : 'notfound' };
+      await win.loadURL(patientDashUrl(pick.internalId, 'PatientDocuments')).catch(() => {});
+      const h = await chartHeader(win); if (h.needsLogin) return h;
+      hit = h.patient || null;
+    }
+    if (!hit) return { error: 'notfound' };
+    return { patient: hit };
+  } finally { if (!win.isDestroyed()) win.destroy(); }
+}
+// Runs in the patient chart (PatientDashboard iframe). Steps: open the Add form, fill it, save.
+function uploadStep(step, b64, fileName, title, category, docDate, expectId) {
+  const f = [...document.querySelectorAll('iframe')].find((x) => /PatientDashboard/.test(x.src));
+  const d = f && f.contentDocument, w = f && f.contentWindow; if (!d || !w) return { state: 'wait' };
+  let us = null; d.querySelectorAll('.ng-scope').forEach((el) => { try { const s = w.angular.element(el).scope(); if (s && s.UserSession && s.UserSession.Patient) us = s.UserSession; } catch (e) {} });
+  if (!us || String(us.Patient.PatientId) !== String(expectId)) return { state: 'wrongpatient' };   // never upload into any other chart
+  const fi = d.getElementById('fileupload');
+  if (step === 'open') {
+    if (fi && fi.offsetParent) return { state: 'open' };
+    if (!/PatientDocuments/.test(w.location.hash)) { w.location.hash = '#/PatientDocuments'; return { state: 'wait' }; }
+    const plus = d.querySelector('[ng-click^="vm.patientDocumentsConfigAdd"], [title="Add Patient Documents"]');
+    if (plus) { plus.click(); return { state: 'wait' }; }
+    return { state: 'wait' };
+  }
+  if (step === 'fill') {
+    if (!fi) return { state: 'wait' };
+    const form = fi.closest('form');
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const file = new File([bytes], fileName, { type: 'application/pdf' });
+    const dt = new DataTransfer(); dt.items.add(file); fi.files = dt.files;
+    fi.dispatchEvent(new Event('change', { bubbles: true }));
+    const setv = (el, v) => { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); };
+    const t = form.querySelector('[ng-model="vm.PatientDocumentsInfo.Title"]'); if (t) setv(t, title);
+    const ds = form.querySelector('[ng-model="vm.PatientDocumentsInfo.Description"]'); if (ds) setv(ds, 'Fax received by Doximity, filed by Ruhwell Front Desk');
+    const dd = form.querySelector('[ng-model="vm.PatientDocumentsInfo.DocumentDate"]'); if (dd) setv(dd, docDate);
+    const sel = form.querySelector('select[name="CategoryId"]');
+    if (sel) { const o = [...sel.options].find((x) => x.text.trim().toLowerCase() === String(category).toLowerCase()) || [...sel.options].find((x) => x.text.trim() === 'Other'); if (o) { sel.value = o.value; sel.dispatchEvent(new Event('change', { bubbles: true })); } }
+    return { state: 'filled', valid: !/ng-invalid/.test(form.className) };
+  }
+  if (step === 'save') {
+    const save = fi && [...fi.closest('form').querySelectorAll('input[type=button], button')].find((b) => /^save$/i.test((b.value || b.innerText || '').trim()));
+    if (!save) return { state: 'wait' };
+    save.click(); return { state: 'saved' };
+  }
+  if (step === 'check') {   // the form closed and a row with our title is in the chart's documents
+    if (fi && fi.offsetParent) return { state: 'wait' };
+    const rf = d.querySelector('[ng-click="vm.noteChange()"]'); if (rf && !window.__rmRefreshed) { window.__rmRefreshed = 1; rf.click(); return { state: 'wait' }; }
+    const found = [...d.querySelectorAll('table tbody tr')].some((r) => (r.innerText || '').includes(title));
+    return { state: found ? 'ok' : 'wait' };
+  }
+  return { state: 'wait' };
+}
+async function uploadToChart(pid, internalId, pdfBase64, { fileName, title, category, docDate }) {
+  const win = openReader(pid);
+  try {
+    const o = await openEhr(win); if (o === 'login') return { needsLogin: true };
+    await win.loadURL(patientDashUrl(internalId, 'PatientDocuments')).catch(() => {});
+    const h = await chartHeader(win); if (h.needsLogin) return h; if (!h.patient || String(h.patient.internalId) !== String(internalId)) return { error: 'chart' };
+    const run = async (step, n = 25) => { for (let i = 0; i < n && !win.isDestroyed(); i++) { const r = await call(win, uploadStep, step, step === 'fill' ? pdfBase64 : '', fileName, title, category, docDate, internalId); if (r.state === 'wrongpatient') return r; if (!['wait', 'loading'].includes(r.state)) return r; await sleep(700); } return { state: 'timeout' }; };
+    let r = await run('open'); if (r.state !== 'open') return { error: r.state === 'wrongpatient' ? 'chart' : 'form' };
+    await sleep(500);
+    r = await run('fill'); if (r.state !== 'filled') return { error: r.state === 'wrongpatient' ? 'chart' : 'form' };
+    await sleep(1200);
+    r = await run('save'); if (r.state !== 'saved') return { error: 'form' };
+    // Verify: reload the chart's documents and look for the new title.
+    await sleep(2500);
+    for (let i = 0; i < 3; i++) {
+      r = await run('check', 12); if (r.state === 'ok') return { ok: true };
+      await win.loadURL(patientDashUrl(internalId, 'PatientDocuments')).catch(() => {}); await chartHeader(win);
+    }
+    return { error: 'verify' };
+  } finally { if (!win.isDestroyed()) win.destroy(); }
+}
+
 // One read in a throwaway hidden window, capped at 150 seconds.
 let rxBusy = false;
 async function readPendingOnce(pid) {
@@ -581,7 +814,7 @@ async function readPendingOnce(pid) {
   const win = openReader(pid);
   let timer;
   try {
-    return await Promise.race([readPending(win), new Promise((r) => { timer = setTimeout(() => r({ error: 'timeout' }), 150000); })]);
+    return await Promise.race([readPending(win), new Promise((r) => { timer = setTimeout(() => r({ error: 'timeout' }), 210000); })]);
   } finally { clearTimeout(timer); rxBusy = false; if (!win.isDestroyed()) win.destroy(); }
 }
 
@@ -647,4 +880,4 @@ async function readMessages(pid) {
   return { me: { id: me.id, name: (me.profile && me.profile.name) || '' }, conversations: out };
 }
 
-module.exports = { autoSignIn, savedLogin, forgetLogin, argCode, readMessages, keepSignedIn, ping, fetchDay, openReader, listLetter, openPatient, localDate, signIn, status, logout, readPendingOnce };
+module.exports = { findChart, uploadToChart, autoSignIn, savedLogin, forgetLogin, argCode, readMessages, keepSignedIn, ping, fetchDay, openReader, listLetter, openPatient, localDate, signIn, status, logout, readPendingOnce };

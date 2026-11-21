@@ -42,26 +42,50 @@ async function loadSettings() {
   renderTemplates();
   paintHealth();
 }
-/* Accounts: a clear health pill per account. Reconnect only shows when something is wrong. */
+/* Connections: one pill per account from the real checks. Green only when the last read worked and is fresh;
+   amber when stale or failing; red when a sign-in is needed. Reconnect only shows when something is wrong. */
+const HEALTH_TEXT = { green: 'Working', amber: 'Needs a look', red: 'Sign-in needed', grey: 'Checking…', off: 'Off' };
 async function paintHealth() {
-  const st = await window.api.syncStatus(), G = st.gmail || {};
-  const set = (k, ok, warn, when, btn) => {
-    const pill = $(`s-${k}-health`); if (!pill) return;
-    pill.className = 'health ' + (!ok ? 'bad' : warn ? 'warn' : 'good');
-    pill.textContent = !ok ? 'Signed out' : warn ? "Can't reach · retrying" : `Connected${when ? ' · checked ' + minsAgo(when) : ''}`;
-    if (btn) { $(btn).classList.toggle('hidden', ok && !warn); $(btn).textContent = ok ? 'Reconnect' : 'Sign in'; }
+  const st = await window.api.syncStatus(), A = st.accounts || {};
+  const set = (k, h, btn) => {
+    const pill = $(`s-${k}-health`); if (!pill || !h) return;
+    pill.className = 'health ' + ({ green: 'good', amber: 'warn', red: 'bad', grey: 'idle', off: 'idle' }[h.level] || 'idle');
+    pill.textContent = HEALTH_TEXT[h.level] || '';
+    pill.title = h.why || '';
+    if (btn && $(btn)) { $(btn).classList.toggle('hidden', h.level === 'green' || h.level === 'grey' || h.level === 'off'); $(btn).textContent = h.level === 'red' ? 'Sign in' : 'Reconnect'; }
   };
   window.api.rxntHasLogin().then((has) => {
     const el = $('s-rxnt-saved'); if (!el) return;
-    el.innerHTML = has === 'ok' ? `Sign-in saved on this computer, so the app signs itself back in. <button class="link-btn" id="s-rxnt-forget">Forget it</button>`
+    el.innerHTML = has === 'ok' ? `Sign-in saved, so the app signs itself back in. <button class="link-btn" id="s-rxnt-forget">Forget it</button>`
       : has === 'bad' ? `<span class="warn-text">The saved sign-in stopped working (password changed?). Reconnect to save the new one.</span> <button class="link-btn" id="s-rxnt-forget">Forget it</button>`
-      : 'Sign in once and the app remembers it (saved encrypted on this computer).';
+      : 'Sign in once and the app remembers it.';
     if (has) $('s-rxnt-forget').onclick = async () => { const ok = await window.api.rxntForgetLogin(); toast(ok ? 'Saved RxNT sign-in removed' : "Couldn't remove the saved sign-in. Try again."); paintHealth(); };
   });
-  set('rxnt', st.rxnt, !!(st.alerts || {}).lastError, (st.alerts || {}).lastRun || (st.schedule || {}).at, 's-rxnt-connect');
-  set('ringrx', st.ringrx, (st.messages || {}).error === 'failed', (st.messages || {}).at);
-  set('gmail', !!G.connected, !!G.error, G.at, 's-gmail-connect');
+  window.api.faxLoginState().then((has) => {
+    const el = $('s-dox-saved'); if (!el) return;
+    el.innerHTML = has === 'ok' ? `Sign-in saved, so the app signs itself back in. <button class="link-btn" id="s-dox-forget">Forget it</button>`
+      : has === 'bad' ? `<span class="warn-text">The saved sign-in stopped working. Sign in again to save the new one.</span> <button class="link-btn" id="s-dox-forget">Forget it</button>`
+      : 'Sign in once and the app remembers it.';
+    if (has) $('s-dox-forget').onclick = async () => { const ok = await window.api.faxForgetLogin(); toast(ok ? 'Saved Doximity sign-in removed' : "Couldn't remove it. Try again."); paintHealth(); };
+  });
+  set('rxnt', A.rxnt, 's-rxnt-connect');
+  set('ringrx', A.ringrx);
+  set('gmail', A.gmail, 's-gmail-connect');
+  set('doximity', A.doximity, 's-dox-connect');
+  const doxSetUp = !(A.doximity && A.doximity.why === 'not set up');
+  if (!doxSetUp) { $('s-dox-connect').classList.remove('hidden'); $('s-dox-connect').textContent = 'Sign in'; $('s-doximity-health').textContent = 'Not set up'; }
+  $('s-dox-out').classList.toggle('hidden', !doxSetUp);
+  $('s-dox-on').closest('.switch').classList.toggle('hidden', !doxSetUp);
+  document.querySelector('[data-check="faxes"]').classList.toggle('hidden', !doxSetUp);
+  const pat = st.patients || {}, pp = $('s-pat-health');
+  if (pp) { pp.className = 'health ' + (pat.error ? 'warn' : pat.at ? 'good' : 'idle'); pp.textContent = pat.running ? 'Syncing…' : pat.error ? 'Needs a look' : pat.at ? 'Working' : 'Not yet'; }
+  $('s-dox-on').checked = (settings.faxes || {}).enabled !== false;
+  const fx = st.faxes || {}; $('s-dox-state').textContent = fx.account ? `Signed in as ${fx.account}` : '';
 }
+document.querySelectorAll('#view-settings [data-check]').forEach((b) => (b.onclick = async () => { b.disabled = true; await syncEverything(b.dataset.check.split(',')); b.disabled = false; paintHealth(); paintSyncTimes(); }));
+$('s-dox-on').onchange = async (e) => { await window.api.setSettings({ faxes: { ...(settings.faxes || {}), enabled: e.target.checked } }); settings = await window.api.getSettings(); paintHealth(); toast(e.target.checked ? 'Fax checks on' : 'Fax checks off'); };
+$('s-dox-connect').onclick = async () => { if (await window.api.faxSignIn()) { toast('Doximity connected'); syncEverything(['faxes']); } paintHealth(); };
+$('s-dox-out').onclick = async () => { await window.api.faxSignOut(); paintHealth(); };
 // Templates: a compact list. Click a row to edit it in place; tap a chip to insert a placeholder;
 // the preview shows exactly what a sample patient would get. Delete sits in a menu with a confirm.
 let tplOpen = null;
@@ -131,7 +155,7 @@ $('s-save').onclick = async () => {
   });
   settings = await window.api.getSettings(); $('s-saved').textContent = 'Saved'; toast('Settings saved');
 };
-$('s-rxnt-connect').onclick = async () => { if (await window.api.rxntSignIn()) { paintConnections(); loadSettings(); toast('RxNT connected'); } };
+$('s-rxnt-connect').onclick = async () => { if (await window.api.rxntSignIn()) { paintConnections(); loadSettings(); toast('RxNT connected'); syncEverything(['schedule', 'rx', 'portal']); } };
 $('s-rxnt-out').onclick = async () => { await window.api.rxntLogout(); paintConnections(); loadSettings(); };
 $('s-ringrx-out').onclick = async () => { if (accounts.ringrx.connected) await window.api.ringrxLogout(); accounts = await window.api.accounts(); showOnboarding(); };
 $('open-data').onclick = () => window.api.openDataFolder();
@@ -175,7 +199,7 @@ $('b-auto-restore').onclick = async () => {
   }));
 };
 
-$('s-gmail-connect').onclick = async () => { if (await window.api.gmailSignIn()) { toast('Gmail connected'); loadSettings(); paintConnections(); } else toast('Gmail sign-in was closed.'); };
+$('s-gmail-connect').onclick = async () => { if (await window.api.gmailSignIn()) { toast('Gmail connected'); loadSettings(); paintConnections(); syncEverything(['gmail']); } else toast('Gmail sign-in was closed.'); };
 $('s-gmail-out').onclick = async () => { await window.api.gmailSignOut(); loadSettings(); paintConnections(); };
 $('s-cell-test').onclick = async () => {
   const d = digits($('s-cell').value);
@@ -185,15 +209,42 @@ $('s-cell-test').onclick = async () => {
   const r = await window.api.testAlertText(); toast(r.ok ? 'Test text sent' : (r.error || 'Couldn\'t send'));
 };
 
-/* Sync: last update per source, from the same status the sidebar uses. */
+/* Last real read per account, shown on each Connections row. */
 async function paintSyncTimes() {
-  const st = await window.api.syncStatus(), ago = (iso) => (iso ? `Updated ${minsAgo(iso)}` : 'Not yet');
-  $('sx-rxnt').textContent = ago((st.alerts || {}).lastRun || (st.schedule || {}).at);
-  $('sx-comms').textContent = ago((st.messages || {}).at);
-  $('sx-rx').textContent = (st.rx || {}).error && !(st.rx || {}).available ? 'Couldn\'t read · retrying' : ago((st.rx || {}).at);
-  $('sx-gmail').textContent = ago((st.gmail || {}).at);
-  $('sx-pat').textContent = (st.patients || {}).running ? 'Syncing…' : `${((st.patients || {}).total || 0).toLocaleString()} patients · ${ago((st.patients || {}).at).toLowerCase()}`;
+  const st = await window.api.syncStatus(), A = st.accounts || {};
+  const line = (h, extra) => !h ? '' : h.level === 'off' ? 'Off' : `${h.at ? 'Last read ' + minsAgo(h.at) : 'Not read yet'}${h.why && h.level !== 'green' ? ' · ' + h.why : ''}${extra || ''}`;
+  const fx = st.faxes || {};
+  $('sx-rxnt').textContent = line(A.rxnt);
+  $('sx-comms').textContent = line(A.ringrx);
+  $('sx-gmail').textContent = line(A.gmail);
+  $('sx-dox').textContent = line(A.doximity, fx.lastNewAt ? ` · last new fax ${minsAgo(fx.lastNewAt)}` : '');
+  $('sx-pat').textContent = (st.patients || {}).running ? 'Syncing…' : `${((st.patients || {}).total || 0).toLocaleString()} patients · ${(st.patients || {}).at ? 'updated ' + minsAgo(st.patients.at) : 'not yet'}`;
 }
-$('sy-now').onclick = async () => { $('sy-now').disabled = true; await syncEverything(); $('sy-now').disabled = false; paintSyncTimes(); };
+$('sy-now').onclick = async () => { $('sy-now').disabled = true; await syncEverything(); $('sy-now').disabled = false; paintSyncTimes(); paintHealth(); };
 $('b-contacts').onclick = async () => { const r = await window.api.backupContacts(); if (r.ok) toast(`Saved ${r.count} contacts`); else if (!r.canceled) toast('Couldn\'t save. Try a different folder.'); };
 
+
+/* Records: activity log (90 days) and the spam list. */
+$('s-activity').onclick = async () => {
+  const draw = async () => {
+    const src = $('al-src').value, rows = await window.api.activityList({ source: src || undefined });
+    const LBL = { sync: 'Checked', 'sign-in': 'Signed in', 'auto-sign-in': 'Signed back in', 'fax-received': 'Fax received', 'fax-filed': 'Fax filed to chart', 'fax-marked': 'Fax marked', 'marked-spam': 'Marked spam', 'not-spam': 'Not spam' };
+    const det = (r) => Object.entries(r).filter(([k]) => !['at', 'source', 'type', 'ok'].includes(k)).map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`).join(' · ');
+    $('al-list').innerHTML = rows.slice(0, 400).map((r) => `<div class="al-row ${r.ok ? '' : 'bad'}"><time>${esc(new Date(r.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</time><b>${esc(r.source)}</b><span>${esc(LBL[r.type] || r.type)}${r.ok ? '' : ' · failed'}</span><em>${esc(det(r))}</em></div>`).join('') || '<p class="muted small">Nothing yet.</p>';
+  };
+  openModal(`<h2>Activity log</h2><p class="muted small">Last 90 days, newest first.</p>
+    <div class="row-gap"><select id="al-src"><option value="">Everything</option><option>RxNT</option><option>Doximity</option><option>RingRx</option><option>Gmail</option></select><span style="flex:1"></span><button class="btn" id="al-csv">Export CSV</button></div>
+    <div class="al-list" id="al-list"></div><div class="actions"><button class="btn" id="al-close">Close</button></div>`);
+  $('al-src').onchange = draw; $('al-close').onclick = closeModal;
+  $('al-csv').onclick = async () => { const r = await window.api.activityExport({ source: $('al-src').value || undefined }); if (r.ok) toast(`Saved ${r.n} lines`); };
+  draw();
+};
+$('s-spam').onclick = async () => {
+  const draw = async () => {
+    const list = await window.api.spamList();
+    $('sp-list').innerHTML = list.map((x) => `<div class="line"><div><strong>${esc(fmtPhone(x.phone))}</strong><div class="muted small">${x.who && x.who.name ? esc(x.who.name) + ' · ' : ''}marked ${esc(new Date(x.at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }))}</div></div><button class="btn" data-p="${esc(x.phone)}">Not spam</button></div>`).join('') || '<p class="muted small">No spam numbers.</p>';
+    $('sp-list').querySelectorAll('button[data-p]').forEach((b) => (b.onclick = async () => { await window.api.markSpam(b.dataset.p, false); toast('Removed from spam'); draw(); }));
+  };
+  openModal(`<h2>Spam numbers</h2><p class="muted small">Calls, voicemails and texts from these go straight to Spam, with no alerts.</p><div class="lines" id="sp-list" style="max-height:340px;overflow:auto"></div><div class="actions"><button class="btn" id="sp-close">Close</button></div>`);
+  $('sp-close').onclick = closeModal; draw();
+};

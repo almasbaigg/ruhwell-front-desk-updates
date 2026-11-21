@@ -40,9 +40,9 @@ assert(store.patients.all()[k8].phone === '5125551111' && store.patients.all()[k
 store.settings.set({ currentProfile: 'almas', watch: { enabled: true, minutes: 5, daysAhead: 3, smsTo: '9795550100' }, templates: [{ id: 'review', name: 'Review', text: 'x', seenOnly: true }, { id: 'voicemail', name: 'VM', text: 'y' }] });
 require(APP + '/migrations').run();
 let s = store.settings.get();
-assert(s.schemaVersion === 7 && s.watch.minutes === undefined && s.sync.busyStart === '08:00', 'migrated');
+assert(s.schemaVersion === 8 && s.watch.minutes === undefined && s.sync.busyStart === '08:00', 'migrated');
 assert(s.alertCells && s.alertCells.almas === '9795550100', 'alert cell moved to user');
-assert(s.templates.find((t) => t.id === 'review').audience === 'after' && !s.templates.find((t) => t.id === 'voicemail') && s.templates.find((t) => t.id === 'reminder'), 'templates migrated');
+assert(s.templates.find((t) => t.id === 'review').name === 'Google Review Request' && s.templates.find((t) => t.id === 'review').audience === 'after' && !s.templates.find((t) => t.id === 'voicemail') && s.templates.find((t) => t.id === 'reminder'), 'templates migrated');
 assert(s.alertPrefs.schedule.text === true && !s.alertPrefs.new && s.alertPrefs.soon.minutes === 15, 'alert prefs migrated');
 require(APP + '/migrations').run(); assert(store.settings.get().templates.length === s.templates.length, 'migrations idempotent');
 // 6b) no user picker: a desk that last used Maria's logins keeps them
