@@ -175,6 +175,9 @@
 ### Deferred
 - Splitting main.js into smaller files (no behavior change): saved for a quiet release, so it can't mix with these fixes.
 
+## 1.6.1 (Windows + Mac)
+- Fix: 1.6.0 crashed on start ("Cannot find module './activity'"): two new files were left out of the installer. Added them, plus a test that fails the build if any file the app needs isn't packaged.
+
 ## 1.6.0 (Windows + Mac)
 What's new, in short (details of each item are logged below):
 - **Faxes from Doximity**, right in the app. Maria picks the patient, checks the name, DOB and chart # read fresh from RxNT, confirms, and the app files it into that chart and checks it arrived. This is the only thing the app ever writes to RxNT.
