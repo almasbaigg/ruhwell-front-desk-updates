@@ -1,8 +1,8 @@
-version: 1.5.3
+version: 1.6.0
 files:
   - url: RuhwellFrontDesk-Setup.exe
-    sha512: Aa9LI1tCqdtWW8C8IesNozAD9drGey0/kjhttLcoVgVwun0emkhxgBxgGcL9zkngcSLv80mboQA2flI3Ka2jJw==
-    size: 74689102
+    sha512: g38DUtVe7D23whin4/EMQDDxB+DGen9R+HnCzv7rvpZzWM7iqTiY1SwAu00xzwfQaMtPl0agNr2bc6YVo2ZfSQ==
+    size: 74708010
 path: RuhwellFrontDesk-Setup.exe
-sha512: Aa9LI1tCqdtWW8C8IesNozAD9drGey0/kjhttLcoVgVwun0emkhxgBxgGcL9zkngcSLv80mboQA2flI3Ka2jJw==
-releaseDate: '2026-11-19T02:15:09.965Z'
+sha512: g38DUtVe7D23whin4/EMQDDxB+DGen9R+HnCzv7rvpZzWM7iqTiY1SwAu00xzwfQaMtPl0agNr2bc6YVo2ZfSQ==
+releaseDate: '2026-11-21T04:55:38.985Z'
