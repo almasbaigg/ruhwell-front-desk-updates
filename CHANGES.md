@@ -175,6 +175,10 @@
 ### Deferred
 - Splitting main.js into smaller files (no behavior change): saved for a quiet release, so it can't mix with these fixes.
 
+## 1.6.4 (Windows + Mac, Nov 23)
+- Fix: the app crashed with "Only absolute URLs are supported" when it started reading faxes. Inside Electron the reading library treated its language file as a web address. The file is now placed where the library always looks first, so it never goes online. Tested in a packaged build.
+- Safety net: a background error is now written to the activity log instead of showing an error box.
+
 ## 1.6.3 (Windows + Mac, Nov 23)
 Everything below (the 1.6.2 work plus the fixes from both reviews). 1.6.2 was a Windows-only test build.
 

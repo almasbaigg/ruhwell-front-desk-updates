@@ -1,7 +1,7 @@
 {
   "name": "ruhwell-front-desk",
   "productName": "Ruhwell Front Desk",
-  "version": "1.6.3",
+  "version": "1.6.4",
   "description": "Ruhwell Med front desk: visits, alerts and patient messaging",
   "main": "main.js",
   "author": "Ruhwell Medical PLLC",

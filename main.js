@@ -35,6 +35,9 @@ const ringrx = require('./ringrx');
 const watcher = require('./watcher');
 const comms = require('./comms');
 const activity = require('./activity');
+// Safety net: a background failure (OCR, a site reader) should never put an error box in front of Maria.
+process.on('uncaughtException', (e) => { try { console.error(e); activity.add('app', 'error', { msg: String(e && e.message || e).slice(0, 200) }, false); } catch {} });
+process.on('unhandledRejection', (e) => { try { console.error(e); } catch {} });
 const faxes = require('./faxes');
 const inapp = require('./inapp');
 const ocr = require('./ocr');

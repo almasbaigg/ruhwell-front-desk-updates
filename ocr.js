@@ -1,6 +1,8 @@
 // Fax sorting help: reads the fax pages on this computer (OCR, nothing leaves it), then suggests a category
 // and possible patients. Suggestions only: Maria still picks and confirms the patient before anything is filed.
 const path = require('path');
+const fs = require('fs');
+const zlib = require('zlib');
 const { app } = require('electron');
 
 let worker = null, idle = null, queue = Promise.resolve();
@@ -10,7 +12,20 @@ async function getWorker() {
   clearTimeout(idle); idle = setTimeout(() => { if (worker) { worker.terminate().catch(() => {}); worker = null; } }, 120000);
   if (worker) return worker;
   const T = require('tesseract.js');
-  worker = await T.createWorker('eng', 1, { langPath: langDir(), gzip: true, cachePath: path.join(app.getPath('userData'), 'ocr-cache') });
+  // Inside Electron, tesseract treats any langPath as a web address. It always checks its cache folder
+  // first with a plain file read, so put the bundled language data there and it never goes looking online.
+  const cacheDir = path.join(app.getPath('userData'), 'ocr-cache'), cached = path.join(cacheDir, 'eng.traineddata');
+  if (!fs.existsSync(cached)) {
+    fs.mkdirSync(cacheDir, { recursive: true });
+    const tmp = cached + '.tmp';
+    fs.writeFileSync(tmp, zlib.gunzipSync(fs.readFileSync(path.join(langDir(), 'eng.traineddata.gz'))));
+    fs.renameSync(tmp, cached);
+  }
+  // errorHandler stops an OCR failure from becoming a crash; the job just rejects and the fax stays unsorted.
+  try {
+    worker = await T.createWorker('eng', 1, { cachePath: cacheDir, langPath: 'https://invalid.local/none', errorHandler: () => {},
+      ...(process.env.OCR_DEBUG ? { logger: (m) => console.log('LOG', JSON.stringify(m)) } : {}) });
+  } catch (e) { worker = null; throw e; }
   return worker;
 }
 // pages: PNG images as base64 (the window draws them from the PDF). Returns plain text.
