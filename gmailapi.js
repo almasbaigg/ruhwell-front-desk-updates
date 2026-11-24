@@ -49,10 +49,17 @@ function signIn() {
           body: new URLSearchParams({ code: u.searchParams.get('code'), client_id: k.clientId, client_secret: k.secret, code_verifier: verifier, grant_type: 'authorization_code', redirect_uri: redirect }) });
         const t = await r.json();
         if (!t.refresh_token) { page('Sign-in failed'); return finish({ error: t.error_description || t.error || 'notoken' }); }
+        // Prove it before keeping it: the new sign-in must read the practice's own mailbox. Until then the old
+        // sign-in stays, and nothing says "connected".
+        let prof = null;
+        try { const pr = await fetch(API + '/profile', { headers: { Authorization: `Bearer ${t.access_token}` }, signal: AbortSignal.timeout(20000) }); prof = pr.ok ? await pr.json() : null; } catch {}
+        if (!prof || !prof.emailAddress) { page('Sign-in failed: Gmail could not be read. Try again.'); return finish({ error: 'unverified' }); }
+        if (!/@ruhwellmed\.com$/i.test(prof.emailAddress)) { page(`That was ${prof.emailAddress}. Please sign in with the practice account (@ruhwellmed.com).`); return finish({ error: 'wrong account' }); }
         store.raw.writeSecure(TOKEN, { refresh: t.refresh_token, at: new Date().toISOString() });
         access = t.access_token; accessExp = Date.now() + (Number(t.expires_in) || 3000) * 1000;
+        const st = await check();
+        if (st.error) { page('Signed in, but the inbox did not load yet. The app will keep trying.'); return finish({ ok: true, account: prof.emailAddress, pending: true }); }
         page('Gmail is connected');
-        await check();
         finish({ ok: true, account: last.account });
       } catch (e) { page('Sign-in failed'); finish({ error: String(e.message || e) }); }
     });
@@ -129,8 +136,12 @@ async function list({ folder = 'inbox', q = '', pageToken = '' } = {}) {
   if (q) p.set('q', [p.get('q'), q].filter(Boolean).join(' '));
   if (pageToken) p.set('pageToken', pageToken);
   const r = await api(`/threads?${p}`);
-  const threads = await pool(r.threads || [], 8, (t) => api(`/threads/${t.id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date`));
-  return { next: r.nextPageToken || '', items: threads.filter(Boolean).map((t) => {
+  const meta = (t) => api(`/threads/${t.id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date`).catch(() => null);
+  const ids = r.threads || [], threads = await pool(ids, 8, meta);
+  // Any that didn't load get one more try; if some still fail, say how many (never a silently shorter list).
+  for (let k = 0; k < ids.length; k++) if (!threads[k]) threads[k] = await meta(ids[k]);
+  const missing = threads.filter((t) => !t).length;
+  return { next: r.nextPageToken || '', missing, items: threads.filter(Boolean).map((t) => {
     const msgs = t.messages || [], lastM = msgs[msgs.length - 1] || {}, first = msgs[0] || {};
     const from = addr(hdr(lastM, 'From')), to = addr(hdr(lastM, 'To'));
     return { id: t.id, subject: hdr(first, 'Subject') || '(no subject)', from, to, count: msgs.length, snippet: lastM.snippet || '',
@@ -189,6 +200,8 @@ async function send(msg) {
   // Never fall back to admin@: patients only ever get mail from hello@ruhwellmed.com.
   const st = await check();
   if (!st.connected) throw new GmailError('Gmail is not connected.', 'SIGNED_OUT');
+  // Sending needs a check that worked just now (not an older one kept after a failed check).
+  if (st.error) throw new GmailError("Couldn't confirm Gmail's sending address just now, so nothing was sent. Try again in a moment.", 'FAILED');
   if (!st.sendAs || !st.sendAs.ok) throw new GmailError(`${SENDER} isn't set up as a "Send mail as" address in Gmail, so nothing was sent.`, 'NOSENDER');
   const raw = mime({ ...msg, to: recips.join(', '), fromName: msg.fromName || store.settings.get().emailFromName || st.sendAs.name || 'Ruhwell Med' });
   const bound = 'rfdup' + crypto.randomBytes(8).toString('hex');

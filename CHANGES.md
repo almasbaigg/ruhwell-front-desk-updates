@@ -175,6 +175,50 @@
 ### Deferred
 - Splitting main.js into smaller files (no behavior change): saved for a quiet release, so it can't mix with these fixes.
 
+## 2.4.0 (Windows + Mac): connections stages 1 and 2, from the Codex reliability review
+Stage 2: data is checked before it replaces what's on screen; sign-in is one careful attempt; one status per account.
+- **Schedule:** a day is checked before it's shown. The wrong date is refused. An empty screen still loading is not an empty day. If the Availability view didn't load, visits only it had shown are kept. A day that suddenly loses most of its visits is read once more before it's believed.
+- **Patient list:**
+  - A chart's details are only used when its chart number matches (never mixes two people). A blank chart number isn't proof.
+  - A search that timed out is not "no patients".
+  - Charts that didn't open are retried next run.
+  - The list picks up where it stopped and retries letters that didn't load; a full pass is complete only when every letter loaded.
+  - An email removed in RxNT is removed here (typed-in addresses are kept).
+- **RxNT sign-in:**
+  - Only one quiet sign-in at a time (start-up, a sign-out noticed by a read, and the start-up timer share it), so the saved password is sent once.
+  - "Signed in" only after the schedule really loads.
+  - A page that needs a click (security check, notice) gets one notice: "RxNT needs you to finish signing in" (click opens it).
+  - After a code is asked for, no more quiet attempts until it's entered.
+- **Doximity:** after a code is asked for, one notice and no more quiet sign-ins with the saved password until it's done.
+- **Signing out on purpose** (RxNT, Doximity) stays signed out: no quiet sign-in until you sign in again.
+- **Gmail sign-in:** proved before it's kept. It must read the practice mailbox (@ruhwellmed.com); the wrong account is refused and the old sign-in stays.
+- **RingRx:** "needs a verification code" shows as its own state instead of a plain "not connected".
+- **One status per account,** worked out in one place and shown the same way in Settings, the sidebar, Today and the sync card:
+  - Working · checked 9:42
+  - Retrying
+  - Needs you (with the exact step: sign in, enter code, finish signing in, password changed)
+  - Can't confirm · last checked (after two failed reads, or no confirmed read for about three missed checks)
+  - Offline · showing saved information
+- RxNT's status now includes portal messages, not just schedule and prescriptions.
+- Today never says "All caught up" while any account needs you, can't confirm, or is offline.
+- The hidden RxNT window is rebuilt automatically if it crashes or stops responding.
+
+### Stage 1 (connections)
+A sync now only counts when real data actually came in. Before, "nothing crashed" counted as success.
+- Every part reports what that attempt proved: worked, failed (with the reason) or skipped (busy / not signed in). Only "worked" updates "last checked". Skipped never counts as success or failure.
+- One run per part at a time. The timer, Sync now, waking up and the sync card all share it and get its real result (the sync card no longer reports an older result).
+- Every part has a time limit (2 to 8 minutes; patient list 35). A stuck read counts as failed and is retried, so nothing holds "Syncing…" forever. RingRx sign-in, refresh and reads, the RxNT portal read and Doximity file downloads all have their own time limits too.
+- Prescriptions: when RxNT has signed out (or the page fails), the old list stays with its real time and is no longer marked as just checked.
+- RingRx: a reply in an unexpected format is a failed read; saved texts and calls are kept instead of being replaced with nothing. Signing in or out of RingRx forgets the previous account's number.
+- Gmail: sign-out works (it was calling itself forever). Sending needs a check that worked just now. Emails that didn't load are retried once, and if some still fail the list says so with "Try again" (never a quietly shorter list).
+- Doximity: an empty inbox counts as signed in (it used to wait up to 15 minutes). The fax screen refreshes when an earlier failed download comes through.
+- Sign-in: "incorrect verification code" is treated as a code step, not as a wrong saved password (RxNT and Doximity).
+- After waking up or Wi-Fi coming back: waits for the internet, then reads every overdue part (not just schedule/texts/portal). A failed forced run keeps its short retry.
+- A failure while opening a hidden window can no longer leave prescriptions or faxes stuck as "busy" until restart.
+- Sidebar says "Synced" only with a real read behind it; otherwise "Checking connections…". The sync card shows "still checking" (not a failure) when a part was already running.
+- Diagnostics log now records start, ok, failed (with reason and attempt) and skipped for each part, and how it was started (timer, manual, catch-up).
+- Test names replaced with made-up ones.
+
 ## 2.3.0 (built into the code, not released yet; waiting on the ChatGPT test pass)
 Everything listed below is done, except the RxNT/Doximity "extra page" detection (still to do). Summary of how:
 - Today: wider page; two main columns plus a Checklist | Notes card with tabs; visit status pill on the name line; faxes are their own group with the fax icon; Next up wraps cleanly; one action-button width; shorter checklist placeholder; unread-emails tile shows "—" until Gmail is read.

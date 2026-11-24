@@ -122,7 +122,9 @@ async function waitForSchedule(win, target, timeoutMs = 45000, view) {
       if (idle >= 2 && Date.now() - okSince >= 400) return r;
       const sig = r.items.map((i) => i.appointmentId + i.statusCode + i.start).sort().join('|') + '#' + (r.blocks || []).length;
       if (sig !== last) { last = sig; stableSince = Date.now(); }
-      else if (Date.now() - stableSince > 3000) return r;
+      // "Unchanged for 3 s" only counts when RxNT isn't still loading, or visits are already showing:
+      // an empty screen with requests still going is not a confirmed empty day.
+      else if (Date.now() - stableSince > 3000 && (r.pending === 0 || r.items.length)) return r;
     }
     await sleep(250);
   }
@@ -150,10 +152,10 @@ async function fetchDay(pid, date, reuse) {
     if (r.state !== 'ok') return { error: "RxNT didn't finish loading. Check your internet and try again." };
     // Second source: the Availability calendar. Visits a patient confirmed through the RxNT portal disappear
     // from the Appointments view but stay here. Cancelled visits only show on Appointments, so that view wins.
-    let avail = null, sources = ['appointments'];
+    let avail = null, sources = ['appointments'], incomplete = [];
     if (!r.closed) {
       const r2 = await waitForSchedule(win, target, 30000, 'availabilitycalendar');
-      if (r2.state === 'ok') { avail = r2; sources.push('availability'); }
+      if (r2.state === 'ok') { avail = r2; sources.push('availability'); } else incomplete.push('availability');   // the caller keeps visits only that view had
       win.webContents.executeJavaScript("location.hash = '#/appointment'", true).catch(() => {});
     }
     const byId = {};
@@ -165,7 +167,7 @@ async function fetchDay(pid, date, reuse) {
     const items = Object.values(byId)
       .map((i) => ({ ...i, ...pickPhone(i) }))
       .sort((a, b) => String(a.start).localeCompare(String(b.start)));
-    return { date: r.date, closed: !!r.closed, dateLabel: r.dateLabel, items, sources, blocks: (r.blocks || []).sort((a, b) => a.start.localeCompare(b.start)) };
+    return { date: r.date, closed: !!r.closed, dateLabel: r.dateLabel, items, sources, incomplete, blocks: (r.blocks || []).sort((a, b) => a.start.localeCompare(b.start)) };
   } finally {
     if (!reuse && !win.isDestroyed()) win.destroy();
   }
@@ -221,7 +223,7 @@ function readDash(expectChart) {
   if (!sc) return { state: 'loading' };
   const p = sc.pd.patient, per = p.Person || {}, pi = per.PersonInfo || {}, info = p.PatientInfo || {};
   const chart = String(info.ChartNumber || '');
-  if (expectChart && chart && chart !== String(expectChart)) return { state: 'loading' };   // previous patient still on screen
+  if (expectChart && chart !== String(expectChart)) return { state: 'loading' };   // previous patient still on screen, or no chart number yet: not proof
   let first = '', last = '';
   const nm = document.body.innerText.match(/([A-Za-z'’.\- ]+),\s*([A-Za-z'’.\- ]+)\s*\n[^\n]*DOB/);
   if (nm) { last = nm[1].trim(); first = nm[2].trim(); }
@@ -245,7 +247,7 @@ function readDash(expectChart) {
     guardianFirst: guardian ? guardian.first : '', guardianLast: guardian ? guardian.last : '', guardianRel: guardian ? String(guardian.rel).slice(0, 40) : '',
     patientId: p.PatientId, chart, first, last, age: typeof per.Age === 'number' && per.Age > 0 ? per.Age : null,
     dob: String(pi.DOB || per.DOB || '').replace(/Z$/, '').slice(0, 10),
-    cell: pi.CellPhone || '', home: pi.HomePhone || '', preferred: pi.PreferedNumber || '', emailChecked: true,
+    cell: pi.CellPhone || '', home: pi.HomePhone || '', preferred: pi.PreferedNumber || '', emailChecked: true, emailRead: true,
     email: ((roots) => { const seen = new Set(), ok = (v) => typeof v === 'string' && /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(v.trim()) && !/@ruhwellmed\.com$/i.test(v.trim()); let out = ''; const skip = /guarant|responsib|guardian|parent|emergency|relation|provider|doctor|physician|practice|staff|user|employer|pharmac|insur|referr/i; const go = (o, d) => { if (out || !o || typeof o !== 'object' || d > 4 || seen.has(o)) return; seen.add(o); for (const [k, v] of Object.entries(o)) if (!out && /mail/i.test(k) && ok(v)) out = v.trim(); for (const [k, v] of Object.entries(o)) if (!out && v && typeof v === 'object' && !skip.test(k)) go(v, d + 1); }; roots.forEach((r) => go(r, 0)); return out; })([pi, per, typeof P !== 'undefined' ? P : null, typeof p !== 'undefined' ? p : null]),
   } };
 }
@@ -270,7 +272,7 @@ async function runSearch(win, L) {
     if (r.state === 'dashboard') return { dashboard: true };
     if (r.state === 'ok' && (r.rows.length || Date.now() - started > 3500)) return r;
   }
-  return { rows: [] };
+  return { rows: [], timedOut: true };   // not the same as "no patients for this letter"
 }
 async function waitDash(win, expectChart) {
   const end = Date.now() + 15000;
@@ -288,18 +290,19 @@ async function listLetter(win, L) {
   if (!win.webContents.getURL().includes('SchedulerV2')) await win.loadURL(SCHEDULER).catch(() => {});
   const r = await runSearch(win, L);
   if (r.needsLogin) return { needsLogin: true };
-  if (r.dashboard) { const p = await waitDash(win); return { rows: p ? [{ ...p, detailAt: Date.now(), done: true }] : [] }; }
-  return { rows: r.rows || [] };
+  if (r.dashboard) { const p = await waitDash(win); return p ? { rows: [{ ...p, detailAt: Date.now(), done: true }] } : { rows: [], timedOut: true }; }
+  return { rows: r.rows || [], timedOut: !!r.timedOut };
 }
 async function openPatient(win, L, i, row) {
   const r = await runSearch(win, L);
   if (r.needsLogin) return { needsLogin: true };
-  if (r.dashboard) { const p = await waitDash(win); return { patient: p ? { ...row, ...p, detailAt: Date.now() } : row }; }
+  // Landed straight on one chart: only use it if it's this patient's chart (never mix two people's details).
+  if (r.dashboard) { const p = row.chart ? await waitDash(win, row.chart) : null; return p ? { patient: { ...row, ...p, detailAt: Date.now() } } : { patient: row, failed: true }; }
   const rows = r.rows || [];
   const at = rows.findIndex((x) => x.chart && x.chart === row.chart);
   const o = await call(win, openRow, at >= 0 ? at : i);
-  const p = o.state === 'sent' ? await waitDash(win, row.chart) : null;
-  return { patient: p ? { ...row, ...p, first: row.first || p.first, last: row.last || p.last, detailAt: Date.now() } : row };
+  const p = o.state === 'sent' && row.chart ? await waitDash(win, row.chart) : null;
+  return p ? { patient: { ...row, ...p, first: row.first || p.first, last: row.last || p.last, detailAt: Date.now() } } : { patient: row, failed: true };
 }
 
 // Visible window: user signs in to RxNT once; the session cookie is kept in the
@@ -329,8 +332,10 @@ function autofillStep(u, pw, submit) {
   if (/app2\.rxnt\.com/.test(location.host)) return { step: 'in' };
   const vis = (el) => el && el.offsetParent !== null;
   const text = (document.body.innerText || '').toLowerCase();
-  if (/incorrect|invalid (user|pass|login|cred)|wrong password|not recognized|locked/.test(text)) return { step: 'bad' };
   const pass = [...document.querySelectorAll('input[type=password]')].find(vis);
+  // A code step first: "incorrect verification code" is about the code, never the saved password.
+  if (!pass && /verification code|one-time|authenticator|enter the code|security code/.test(text)) return { step: 'code' };
+  if (/incorrect|invalid (user|pass|login|cred)|wrong password|not recognized|locked/.test(text)) return { step: 'bad' };
   const user = [...document.querySelectorAll('input[autocomplete=username], input[type=email], #tenant-discovery-username, input[name*=user i], input[id*=user i], input[type=text]')].find(vis);
   if (!pass && /verification code|one-time|authenticator|enter the code|security code/.test(text)) return { step: 'code' };
   const step = pass ? 'password' : user ? 'username' : 'wait';
@@ -345,7 +350,24 @@ function autofillStep(u, pw, submit) {
 // Sign back in without bothering anyone: each step (username, then password) is submitted at most once.
 // A "wrong password" answer stops it at once and marks the saved sign-in as needing you, so it never retries
 // and can't lock the account. Returns 'ok', 'code' (a verification code is needed), 'bad' or 'failed'.
-async function autoSignIn(pid) {
+// Quiet sign-in with the saved login. Only one attempt per account at a time (start-up, a sign-out noticed by a
+// read, and the start-up timer all share it), so the saved password is never sent twice at once. After a code
+// was asked for, it waits for the user instead of trying again and again. "ok" only after the schedule really loads.
+const autoInflight = {}, codeAskedAt = {};
+function autoSignIn(pid) {
+  if (codeAskedAt[pid] && Date.now() - codeAskedAt[pid] < 30 * 60000) return Promise.resolve('code');
+  if (!autoInflight[pid]) autoInflight[pid] = autoSignInOnce(pid).then((r) => { if (r === 'code') codeAskedAt[pid] = Date.now(); else if (r === 'ok') delete codeAskedAt[pid]; return r; }).finally(() => { delete autoInflight[pid]; });
+  return autoInflight[pid];
+}
+// Signed in for real = RxNT's scheduler shows a day (not just an RxNT address, which could be a notice page).
+async function provenIn(pid, win) {
+  await win.loadURL(SCHEDULER).catch(() => {});
+  const r = await waitForSchedule(win, localDate(), 30000);
+  if (r.state === 'ok') { await keepSignedIn(pid); return 'ok'; }
+  if (r.state === 'login') return 'failed';
+  return 'step';   // signed in, but RxNT is showing something else first (security check, notice, "continue")
+}
+async function autoSignInOnce(pid) {
   const c = savedLogin(pid); if (!c || c.bad) return 'failed';
   const win = makeWindow(pid, false);
   try {
@@ -355,11 +377,11 @@ async function autoSignIn(pid) {
       await sleep(1500);
       const url = win.webContents.getURL();
       if (!AUTH_OK.test(url)) return 'failed';                       // somewhere unexpected: never fill anything
-      if (/app2\.rxnt\.com/i.test(url)) { await keepSignedIn(pid); return 'ok'; }
+      if (/app2\.rxnt\.com/i.test(url)) return provenIn(pid, win);
       const look = await call(win, autofillStep, '', '', false);
       if (look.step === 'bad') { markLoginBad(pid); return 'bad'; }
       if (look.step === 'code') return 'code';
-      if (look.step === 'in') { await keepSignedIn(pid); return 'ok'; }
+      if (look.step === 'in') return provenIn(pid, win);
       if ((look.step === 'username' || look.step === 'password') && !done.has(look.step)) {
         done.add(look.step); await call(win, autofillStep, c.u, c.p, true);
       } else if (look.step === 'password' && done.has('password')) { await sleep(3000); const again = await call(win, autofillStep, '', '', false); if (again.step === 'bad') { markLoginBad(pid); return 'bad'; } /* still on the password page: slow, not wrong; keep waiting */ }
@@ -368,6 +390,7 @@ async function autoSignIn(pid) {
   } finally { if (!win.isDestroyed()) win.destroy(); }
 }
 
+const clearCodeWait = (pid) => { delete codeAskedAt[pid]; };
 function signIn(pid, parent) {
   return new Promise((resolve) => {
     const win = makeWindow(pid, true, parent);
@@ -860,11 +883,11 @@ let rxBusy = false;
 async function readPendingOnce(pid) {
   if (rxBusy) return { error: 'busy' };
   rxBusy = true;
-  const win = openReader(pid);
-  let timer;
+  let win, timer;
   try {
+    win = openReader(pid);   // inside try, so a failure here can't leave rxBusy stuck
     return await Promise.race([readPending(win), new Promise((r) => { timer = setTimeout(() => r({ error: 'timeout' }), 210000); })]);
-  } finally { clearTimeout(timer); rxBusy = false; if (!win.isDestroyed()) win.destroy(); }
+  } finally { clearTimeout(timer); rxBusy = false; if (win && !win.isDestroyed()) win.destroy(); }
 }
 
 /* ---------- Staying signed in ----------
@@ -886,7 +909,7 @@ async function keepSignedIn(pid) {
   } catch {}
 }
 async function ping(pid) {
-  try { await session.fromPartition(partitionFor(pid)).fetch('https://app2.rxnt.com/ehrv8/SessionAlive.aspx', { cache: 'no-store' }); } catch {}
+  try { await session.fromPartition(partitionFor(pid)).fetch('https://app2.rxnt.com/ehrv8/SessionAlive.aspx', { cache: 'no-store', signal: AbortSignal.timeout(20000) }); } catch {}
 }
 
 /* ---------- RxNT patient portal messages (the Messaging sidebar) ----------
@@ -894,7 +917,7 @@ async function ping(pid) {
    after which its conversation list can be read. Read-only: replies happen in RxNT. */
 const MSG = 'https://messaging.rxnt.com/';
 async function msgGet(pid, pathname) {
-  const r = await session.fromPartition(partitionFor(pid)).fetch(MSG + pathname, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+  const r = await session.fromPartition(partitionFor(pid)).fetch(MSG + pathname, { headers: { Accept: 'application/json' }, cache: 'no-store', signal: AbortSignal.timeout(45000) })   // never hang the portal read;
   if (r.status !== 200) return null;
   const t = await r.text();
   try { return JSON.parse(t); } catch { return null; }   // a sign-in page instead of data
@@ -929,4 +952,4 @@ async function readMessages(pid) {
   return { me: { id: me.id, name: (me.profile && me.profile.name) || '' }, conversations: out };
 }
 
-module.exports = { partitionFor, sameChart, verifyInChart, findChart, uploadToChart, autoSignIn, savedLogin, forgetLogin, argCode, readMessages, keepSignedIn, ping, fetchDay, openReader, listLetter, openPatient, localDate, signIn, status, logout, readPendingOnce };
+module.exports = { clearCodeWait, partitionFor, sameChart, verifyInChart, findChart, uploadToChart, autoSignIn, savedLogin, forgetLogin, argCode, readMessages, keepSignedIn, ping, fetchDay, openReader, listLetter, openPatient, localDate, signIn, status, logout, readPendingOnce };

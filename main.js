@@ -50,7 +50,7 @@ const mail = {
   check: () => (gapi.hasKey() ? gapi.check() : gmail.check()),
   status: () => (gapi.hasKey() ? gapi.status() : gmail.status()),
   signIn: async () => (gapi.hasKey() ? !!(await gapi.signIn()).ok : gmail.signIn(win)),
-  signOut: async () => { if (gapi.hasKey()) gapi.signOut(); await mail.signOut(); },
+  signOut: async () => { if (gapi.hasKey()) return gapi.signOut(); return gmail.signOut(); },   // was calling itself forever
 };
 const checklist = require('./checklist');
 const rxtasks = require('./rxtasks');
@@ -131,16 +131,27 @@ async function rxntSignedOut(id) {
     const r = await rxnt.status(id);
     if (r.connected || r.unknown) return false;
     const saved = rxnt.savedLogin(id);
-    if (saved && !saved.bad) {
+    if (saved && !saved.bad && !userOut('rxnt')) {
       const a = await rxnt.autoSignIn(id);
+      diag('rxnt', 'quiet sign-in', { result: a });
       if (a === 'ok') { setRxntFlag(id, true); send('sync', syncStatus()); return false; }
-      if (a === 'code') notify('RxNT needs a verification code', 'Click to finish signing in (one time).', () => { showWindow(); send('nav', 'settings'); });
+      rxntNeeds = a === 'code' ? 'code' : a === 'step' ? 'step' : a === 'bad' ? 'password' : '';
+      if (a === 'code' || a === 'step') rxStepNotice(a);
       if (a === 'bad') notify("Saved RxNT sign-in didn't work", 'The password may have changed. Sign in again once from Settings.', () => { showWindow(); send('nav', 'settings'); });
     }
     setRxntFlag(id, false); send('sync', syncStatus());
     return true;
   })().finally(() => { setTimeout(() => (confirming = null), 60000); });
   return confirming;
+}
+// Signed out on purpose (Settings → Sign out): no quiet sign-in until the user signs in again.
+const userOut = (k) => !!((store.settings.get().signedOut || {})[k]);
+function setUserOut(k, v) { const s = store.settings.get(); store.settings.set({ ...s, signedOut: { ...(s.signedOut || {}), [k]: !!v } }); }
+let rxStepNotified = 0;
+function rxStepNotice(a) {   // tell the user once (per 30 min) when RxNT needs them, with the exact step
+  if (Date.now() - rxStepNotified < 30 * 60000) return; rxStepNotified = Date.now();
+  if (a === 'code') notify('RxNT needs a verification code', 'Click to finish signing in (one time).', () => { showWindow(); send('nav', 'settings'); });
+  if (a === 'step') notify('RxNT needs you to finish signing in', 'RxNT is showing a page that needs a click. Click to open it.', () => { showWindow(); openRxntIn(RX_URLS.todo); });
 }
 function setRxntFlag(id, v) { const s = store.settings.get(); s.rxntConnected = { ...(s.rxntConnected || {}), [id]: v }; store.settings.set(s); }
 
@@ -167,7 +178,7 @@ ipcMain.handle('app:openData', () => shell.openPath(store.dataDir()));
 
 // At start-up: really check every account, sign back in quietly where a saved sign-in exists, and only
 // then tell the window what still needs the user. Never trusts an old "connected" flag.
-let verifying = null;
+let verifying = null, rxntNeeds = '';   // rxntNeeds: what RxNT is waiting on from the user (code / step / password)
 ipcMain.handle('accounts:verify', () => {
   if (!verifying) verifying = (async () => {
     const id = pid(); if (!id) return { rxnt: false, ringrx: false };
@@ -176,7 +187,13 @@ ipcMain.handle('accounts:verify', () => {
       if (r.connected) { setRxntFlag(id, true); return true; }
       if (r.unknown) return !!store.settings.get().rxntConnected?.[id];   // couldn't tell (offline): don't ask yet
       const c = rxnt.savedLogin(id);
-      if (c && !c.bad && (await rxnt.autoSignIn(id).catch(() => '')) === 'ok') { setRxntFlag(id, true); activity.add('RxNT', 'auto-sign-in', {}, true); return true; }
+      if (c && !c.bad && !userOut('rxnt')) {
+        const a = await rxnt.autoSignIn(id).catch(() => '');
+        diag('rxnt', 'quiet sign-in (start-up)', { result: a || 'error' });
+        if (a === 'ok') { setRxntFlag(id, true); activity.add('RxNT', 'auto-sign-in', {}, true); return true; }
+        rxntNeeds = a === 'code' ? 'code' : a === 'step' ? 'step' : a === 'bad' ? 'password' : '';
+        if (a === 'code' || a === 'step') rxStepNotice(a);
+      }
       setRxntFlag(id, false); return false;
     })();
     const rrCheck = (async () => {
@@ -220,11 +237,12 @@ const RX_URLS = { todo: 'https://app2.rxnt.com/ehrv9/dashboard', billing: 'https
 const openRxntIn = (url) => inapp.open('rxnt', rxnt.partitionFor(pid()), url, win) || shell.openExternal(url);
 ipcMain.handle('rx:open', (_e, where) => openRxntIn(RX_URLS[where] || RX_URLS.todo));
 async function refreshRx() {
-  if (!store.settings.get().rxntConnected?.[pid()]) return;
+  if (!store.settings.get().rxntConnected?.[pid()]) return { skipped: 'RxNT not connected' };
   // Its own hidden window, so prescriptions never hold up or reset the schedule reader.
-  await rxtasks.refresh(() => rxnt.readPendingOnce(pid()));
+  const r = await rxtasks.refresh(() => rxnt.readPendingOnce(pid()));
   rxWaitingAlerts();
   send('sync', syncStatus());
+  return r;
 }
 // Prescriptions are time-sensitive: once one has waited an hour during office hours, alert (once per item).
 // Texts say only how many are waiting, never a name or a drug.
@@ -261,6 +279,7 @@ ipcMain.handle('rxnt:signin', async () => {
   activity.add('RxNT', 'sign-in', {}, !!ok);
   diag('rxnt', ok ? 'signed in' : 'sign-in not finished');
   if (ok) {
+    rxntNeeds = ''; rxStepNotified = 0; setUserOut('rxnt', false); rxnt.clearCodeWait(pid());
     setRxntFlag(pid(), true); rxnt.keepSignedIn(pid()); if (rx.win && !rx.win.isDestroyed()) rx.win.destroy(); rx.win = null; watcher.reschedule();
     // Fresh start for RxNT: old failures cleared, schedule + prescriptions + portal read once the session settles.
     for (const k of ['schedule', 'rx', 'portal']) { fails[k] = 0; lastErr[k] = ''; lastSync[k] = 0; }
@@ -268,7 +287,7 @@ ipcMain.handle('rxnt:signin', async () => {
   }
   return ok;
 });
-ipcMain.handle('rxnt:logout', async () => { await rxnt.logout(pid()); setRxntFlag(pid(), false); return true; });
+ipcMain.handle('rxnt:logout', async () => { await rxnt.logout(pid()); setRxntFlag(pid(), false); setUserOut('rxnt', true); return true; });
 // ---------- One shared RxNT reader window, with a queue so jobs never collide ----------
 const rx = { win: null, pid: null, high: [], low: [], busy: false };
 function reader() {
@@ -276,6 +295,10 @@ function reader() {
   if (!rx.win || rx.win.isDestroyed() || rx.pid !== id) {
     if (rx.win && !rx.win.isDestroyed()) rx.win.destroy();
     rx.win = rxnt.openReader(id); rx.pid = id;
+    // If the hidden page crashes or hangs, throw it away so the next job gets a fresh one (same saved session).
+    const w = rx.win, drop = (why) => { diag('rxnt', 'reader rebuilt', { why }); if (rx.win === w) rx.win = null; if (!w.isDestroyed()) w.destroy(); };
+    w.webContents.on('render-process-gone', (_e, d) => drop((d && d.reason) || 'crashed'));
+    w.webContents.on('unresponsive', () => drop('unresponsive'));
   }
   return rx.win;
 }
@@ -295,7 +318,7 @@ async function pump() {
   try { next.resolve(await Promise.race([next.job(reader()), limit])); }
   catch (e) {
     // A stuck page: throw away the hidden RxNT window so the next job starts fresh.
-    if (/too long/.test(e.message) && rx.win && !rx.win.isDestroyed()) { rx.win.destroy(); rx.win = null; }
+    if (rx.win && !rx.win.isDestroyed() && (/too long/.test(e.message) || rx.win.webContents.isCrashed())) { rx.win.destroy(); rx.win = null; }
     next.reject(e);
   }
   clearTimeout(timer);
@@ -319,10 +342,29 @@ async function loadDay(date, priority = 'low') {
   if (inFlight[key]) return inFlight[key];
   return (inFlight[key] = loadDayNow(date, priority).finally(() => delete inFlight[key]));
 }
+const dropSeen = {};   // date -> when a sudden drop was first seen (believed on the next read)
 async function loadDayNow(date, priority) {
   const id = pid();
-  const r = await rxQueue((w) => rxnt.fetchDay(id, date, w), priority);
+  let r = await rxQueue((w) => rxnt.fetchDay(id, date, w), priority);
   if (r.needsLogin) { rxntSignedOut(id); return r; }
+  // Check the day before it replaces what's on screen.
+  if (r.items && r.date && r.date !== date) return { error: `RxNT showed ${r.date} instead of ${date}` };
+  if (r.items) {
+    const prev = dayCache[date];
+    // Availability view didn't load: keep the visits only it had shown, so portal-confirmed visits don't vanish.
+    if ((r.incomplete || []).includes('availability') && prev && prev.items) {
+      const have = new Set(r.items.map((i) => String(i.appointmentId)));
+      const keep = prev.items.filter((i) => !have.has(String(i.appointmentId)) && (i.seenIn || []).length === 1 && i.seenIn[0] === 'availability');
+      if (keep.length) r = { ...r, items: [...r.items, ...keep].sort((a, b) => String(a.start).localeCompare(String(b.start))) };
+    }
+    // A day that suddenly lost most of its visits is read again before it's believed (a half-loaded page looks the same).
+    const before = prev && prev.items ? prev.items.length : 0;
+    if (!r.closed && before >= 2 && r.items.length <= Math.floor(before / 2) && !(dropSeen[date] && Date.now() - dropSeen[date] < 20 * 60000)) {
+      dropSeen[date] = Date.now(); diag('schedule', 'sudden drop held', { from: before, to: r.items.length });
+      return { error: 'fewer visits than before; checking again before showing it' };
+    }
+    delete dropSeen[date];
+  }
   if (r.items && date === ymd(new Date())) mergeEhrToday(r);
   if (r.items) {
     setRxntFlag(id, true);
@@ -400,7 +442,7 @@ ipcMain.handle('history:list', () => historyForChecks());
 // ---------- Calls & texts (RingRx) ----------
 async function syncComms(force) {
   const st = comms.status();
-  if (!force && st.at && Date.now() - new Date(st.at) < 4 * 60000) return false;
+  if (!force && st.at && Date.now() - new Date(st.at) < 4 * 60000) return { skipped: 'checked recently' };
   send('sync', syncStatus());
   const r = await comms.sync(pid());
   if (r && r.ok) setTimeout(retryRingrxReads, 1000);
@@ -410,7 +452,9 @@ async function syncComms(force) {
     if (n) send('checklist-updated', true);
   }
   send('sync', syncStatus()); send('comms-updated', true);
-  return !r || r.skipped ? true : !!r.ok;
+  if (!r) return { error: 'no answer' };
+  if (r.skipped) return { skipped: 'not signed in or already running' };
+  return r.ok ? { ok: true } : { error: r.error || "texts or calls didn't load" };
 }
 // Sent texts (Front Desk + RingRx app) used for "already messaged" and "review already asked" checks.
 function historyForChecks() {
@@ -441,7 +485,7 @@ function retryRingrxReads() { const p = store.callbacks.get().rrPending || []; i
 // RxNT portal messages (sidebar chat): read-only, alert on new patient messages.
 let portal = { at: null, error: null, me: null, conversations: [] };
 async function refreshPortal() {
-  const id = pid(); if (!id || !store.settings.get().rxntConnected?.[id]) return portal;
+  const id = pid(); if (!id || !store.settings.get().rxntConnected?.[id]) return { skipped: 'RxNT not connected' };
   try {
     const r = await rxnt.readMessages(id);
     // A failed read keeps what we knew (it's not an empty inbox) and says so.
@@ -458,7 +502,7 @@ async function refreshPortal() {
 }
 ipcMain.handle('portal:list', () => ({ ...portal, conversations: portal.conversations.map((c) => ({ ...c, done: comms.doneSince('p:' + c.id, c.at) })) }));
 ipcMain.handle('portal:done', (_e, id) => { comms.markDone('p', String(id)); return true; });
-ipcMain.handle('portal:refresh', async () => { await refreshPortal(); return true; });
+ipcMain.handle('portal:refresh', async () => { const o = await runPart('portal', 'manual'); return o.kind === 'verified'; });
 ipcMain.handle('comms:snooze', (_e, key, until) => { comms.snooze(String(key), Number(until)); return true; });
 ipcMain.handle('comms:snoozes', () => comms.snoozes());
 ipcMain.handle('comms:ignore', (_e, phone, on) => { comms.ignore(String(phone || '').replace(/\D/g, '').slice(-10), on !== false); send('sync', syncStatus()); return true; });
@@ -467,14 +511,19 @@ const ph10 = (p) => String(p || '').replace(/\D/g, '').slice(-10);
 ipcMain.handle('comms:spam', (_e, phone, on, force) => { const p = ph10(phone); comms.markSpam(p, on !== false, !!force); activity.add('RingRx', on !== false ? 'marked-spam' : 'not-spam', { number: p }); send('sync', syncStatus()); send('comms-updated', true); return true; });
 ipcMain.handle('comms:spamList', () => comms.spamList());
 /* ---------- Faxes (Doximity) ---------- */
+let faxCodeAt = 0;
 async function syncFaxes() {
+  if (faxCodeAt && Date.now() - faxCodeAt < 30 * 60000 && faxes.status().error === 'code') return { skipped: 'waiting for the Doximity code' };
   const r = await faxes.sync();
   if (r && r.added) {
     for (const f of r.fresh || []) activity.add('Doximity', 'fax-received', { fax: f.id.slice(0, 12), from_number: f.number, pages: f.pages });
     if (!r.firstRun) watcher.addEvents([{ kind: 'fax', text: r.added === 1 ? 'New fax' : `${r.added} new faxes` }]);   // no names, ever; the first full import isn't an alert
-    send('faxes-updated', true);
   }
-  if (r && r.needsLogin && faxes.status().error === 'code') notify('Doximity needs a code', 'Click to finish signing in (one time).', () => { showWindow(); send('nav', 'settings'); });
+  // Refresh the fax screen whenever something changed, including an earlier download that finally came through.
+  if (r && (r.added || r.downloaded)) send('faxes-updated', true);
+  if (r && r.ok && r.failed) diag('faxes', 'files retrying', { n: r.failed });
+  // A code is needed: say so once, then stop signing in with the saved password until the user finishes it.
+  if (r && r.needsLogin && faxes.status().error === 'code' && !faxCodeAt) { faxCodeAt = Date.now(); notify('Doximity needs a code', 'Click to finish signing in (one time).', () => { showWindow(); send('nav', 'settings'); }); }
   send('sync', syncStatus());
   return r;
 }
@@ -515,10 +564,10 @@ ipcMain.handle('fax:mark', (_e, id, st) => { if (!['new', 'notpatient', 'spam', 
 ipcMain.handle('fax:signin', async () => {
   const ok = await faxes.signIn(win);
   activity.add('Doximity', 'sign-in', {}, !!ok);
-  if (ok) { const f = store.settings.get().faxes || {}; store.settings.set({ ...store.settings.get(), faxes: { ...f, signedIn: true } }); }
+  if (ok) { setUserOut('faxes', false); faxCodeAt = 0; const f = store.settings.get().faxes || {}; store.settings.set({ ...store.settings.get(), faxes: { ...f, signedIn: true } }); }
   send('sync', syncStatus()); return ok;
 });
-ipcMain.handle('fax:signout', async () => { await faxes.signOut(); const f = store.settings.get().faxes || {}; store.settings.set({ ...store.settings.get(), faxes: { ...f, signedIn: false } }); send('sync', syncStatus()); return true; });
+ipcMain.handle('fax:signout', async () => { await faxes.signOut(); setUserOut('faxes', true); const f = store.settings.get().faxes || {}; store.settings.set({ ...store.settings.get(), faxes: { ...f, signedIn: false } }); send('sync', syncStatus()); return true; });
 ipcMain.handle('fax:loginState', () => faxes.loginState());
 ipcMain.handle('fax:forgetLogin', () => faxes.forgetLogin());
 ipcMain.handle('fax:open', (_e, id) => { const f = faxes.list().find((x) => x.id === String(id)); return inapp.open('doximity', faxes.PART, f ? faxes.faxUrl(f) : 'https://www.doximity.com/inbox/faxes', win); });
@@ -651,7 +700,7 @@ function syncStatus() {
 }
 async function syncPatientsNow() {
   const id = pid();
-  if (patientSync.running || !id || !store.settings.get().rxntConnected?.[id]) return;
+  if (patientSync.running || !id || !store.settings.get().rxntConnected?.[id]) return { skipped: patientSync.running ? 'already running' : 'RxNT not connected' };
   patientSync = { running: true, progress: { done: 0, total: 26, count: 0 } }; send('sync', syncStatus());
   const db = store.patients.all();
   const byChart = {}; Object.values(db).forEach((p) => { if (p.chart) byChart[p.chart] = p; });
@@ -661,32 +710,45 @@ async function syncPatientsNow() {
   const needsDetail = (row) => { const c = byChart[row.chart]; return !c || !c.detailAt || !c.emailChecked || Date.now() - c.detailAt > FRESH || (row.listedPhone && row.listedPhone !== c.listedPhone); };
   let count = 0, error = null;
   try {
-    const started = Date.now();
-    for (const [i, L] of [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].entries()) {
-      if (Date.now() - started > 30 * 60000) { error = 'took too long; continues next time'; diag('patients', 'time limit', { letter: L }); break; }
-      const list = await rxQueue((w) => rxnt.listLetter(w, L));
-      if (list.needsLogin) { if (await rxntSignedOut(id)) { error = 'RxNT signed out'; break; } continue; }
+    const started = Date.now(), LETTERS = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
+    // Picks up where the last run stopped (a slow day can't keep skipping the later letters), and letters that
+    // timed out last time are tried again first. A full pass is complete only when every letter really loaded.
+    const prevState = store.syncState.get().patients || {};
+    const startAt = Math.max(0, LETTERS.indexOf(prevState.cursor || 'A'));
+    const order = [...new Set([...(prevState.missed || []), ...LETTERS.slice(startAt), ...LETTERS.slice(0, startAt)])];
+    const missed = [], doneLetters = new Set(prevState.cursor ? prevState.doneLetters || [] : []);
+    let cursor = null;
+    for (const [i, L] of order.entries()) {
+      if (Date.now() - started > 30 * 60000) { error = 'took too long; continues next time'; cursor = L; diag('patients', 'time limit', { letter: L }); break; }
+      let list = await rxQueue((w) => rxnt.listLetter(w, L));
+      if (list.needsLogin) { if (await rxntSignedOut(id)) { error = 'RxNT signed out'; cursor = L; break; } list = await rxQueue((w) => rxnt.listLetter(w, L)); }   // signed back in: read this letter again
+      if (list.needsLogin || list.timedOut) { missed.push(L); diag('patients', 'letter not loaded', { letter: L }); continue; }
       const quick = [];
       for (const [ri, row] of list.rows.entries()) {
         if (row.done || !needsDetail(row)) { quick.push(row); continue; }
-        const r = await rxQueue((w) => rxnt.openPatient(w, L, ri, row));   // one chart per job
-        if (r.needsLogin) { if (await rxntSignedOut(id)) { error = 'RxNT signed out'; break; } continue; }
+        let r = await rxQueue((w) => rxnt.openPatient(w, L, ri, row));   // one chart per job
+        if (r.needsLogin) { if (await rxntSignedOut(id)) { error = 'RxNT signed out'; cursor = L; break; } r = await rxQueue((w) => rxnt.openPatient(w, L, ri, row)); }
+        if (r.failed || r.needsLogin) { quick.push({ ...row, emailChecked: false }); continue; }   // chart didn't open or didn't match: retried next run
         if (r.patient) store.patients.upsert([r.patient]);
         count++;
       }
       if (quick.length) store.patients.upsert(quick);
       count += quick.length;
       if (error) break;
-      patientSync.progress = { letter: L, done: i + 1, total: 26, count }; send('sync', syncStatus());
+      doneLetters.add(L);
+      patientSync.progress = { letter: L, done: i + 1, total: order.length, count }; send('sync', syncStatus());
     }
-  } catch (e) { error = e.message; }
-  store.syncState.set({ patients: error ? { ...(store.syncState.get().patients || {}), error } : { at: new Date().toISOString(), error: null } });
+    const complete = !error && LETTERS.every((L) => doneLetters.has(L));
+    store.syncState.set({ patients: { ...(store.syncState.get().patients || {}), ...(complete ? { at: new Date().toISOString(), cursor: null, doneLetters: [] } : { cursor: cursor || 'A', doneLetters: [...doneLetters] }), missed, error: error || (missed.length ? `${missed.length} letter${missed.length > 1 ? 's' : ''} didn't load; tried again next time` : null) } });
+    if (!error && missed.length) error = `${missed.length} letters didn't load`;
+  } catch (e) { error = e.message; store.syncState.set({ patients: { ...(store.syncState.get().patients || {}), error } }); }
   patientSync = { running: false, progress: null }; send('sync', syncStatus());
   // Patients sign themselves up through the RxNT portal: alert on anyone new since the last check.
   if (!error && knownCharts.size) {
     const fresh = Object.values(store.patients.all()).filter((p) => p.chart && !knownCharts.has(p.chart));
     if (fresh.length) watcher.addEvents(fresh.slice(0, 10).map((p) => ({ kind: 'newpatient', key: p.key, text: `New patient in RxNT: ${`${p.first || ''} ${p.last || ''}`.trim() || 'chart ' + p.chart}` })));
   }
+  return error ? { error: String(error).slice(0, 120) } : { ok: true };
 }
 /* ---------- Smart sync ----------
    What matters most is fast: new / cancelled appointments and texts / calls. The rest is slower.
@@ -707,17 +769,21 @@ function busyNow(d = new Date()) {
   const s = store.settings.get().sync || {}, hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   return d.getDay() >= 1 && d.getDay() <= 5 && hm >= (s.busyStart || '08:00') && hm < (s.busyEnd || '17:00');
 }
+// Every part returns what this attempt proved: { ok: true } (real data read), { error } / { needsLogin }
+// (failed), or { skipped } (busy, not connected, checked a moment ago: proves nothing either way).
 const RUN = {
   schedule: () => watcher.check(),
   comms: () => syncComms(true),
-  portal: () => refreshPortal(),
-  gmail: () => mail.check().then(() => send('sync', syncStatus())),
+  portal: async () => { const r = await refreshPortal(); return r.skipped ? r : r.error ? { error: r.error } : { ok: true }; },
+  gmail: async () => { const st = await mail.check(); send('sync', syncStatus()); return st && st.error ? { error: st.error === 'signin' ? 'sign-in needed' : st.error, needsLogin: st.error === 'signin' } : st && st.connected ? { ok: true } : { error: 'not connected' }; },
   rx: () => refreshRx(),
   patients: () => syncPatientsNow(),
-  faxes: () => syncFaxes(),
+  faxes: async () => { const r = await syncFaxes(); return r && (r.busy || r.off) ? { skipped: r.busy ? 'already running' : 'off' } : r; },
 };
+// Longest a part may take before it counts as failed (and is retried); nothing can hold "Syncing…" forever.
+const DEADLINE_MIN = { schedule: 4, comms: 3, portal: 3, gmail: 2, rx: 5, faxes: 8, patients: 35 };
 // The user can switch a source off in Settings → Connections (Faxes only for now).
-const sourceOn = (k) => { if (k !== 'faxes') return true; const f = store.settings.get().faxes || {}; return f.enabled !== false && (!!f.signedIn || !!faxes.savedLogin()); };
+const sourceOn = (k) => { if (k !== 'faxes') return true; const f = store.settings.get().faxes || {}; return f.enabled !== false && !userOut('faxes') && (!!f.signedIn || !!faxes.savedLogin()); };
 // Did a run work? A failure is retried within minutes (3, then 6, 12…) instead of waiting the full interval.
 const lastOk = {}, fails = {}, syncRunning = {}, lastErr = {};
 // A short, plain reason for a failed run (shown in Accounts and the sync card, and written to the diagnostics log).
@@ -729,31 +795,54 @@ function whyFailed(k, r) {
   if (k === 'gmail' && mail.status().error) return mail.status().error;
   return '';
 }
-const worked = (k, r) => {
-  if (r === false || (r && (r.error || r.needsLogin))) return false;
-  if (k === 'rx') return rxtasks.list().available !== false;
-  if (k === 'gmail') return !mail.status().error;
-  return true;
-};
+// Only an explicit success counts. Skipped, busy, empty or unknown answers never move "last checked".
+function outcomeOf(k, r) {
+  if (r && (r.skipped || r.busy)) return { kind: 'skipped', why: String(r.skipped || 'already running') };
+  if (r && r.ok === true && !r.error && !r.needsLogin) return { kind: 'verified' };
+  return { kind: 'failed', why: whyFailed(k, r) || 'no confirmed result' };
+}
+const normalEvery = (k) => (busyNow() ? PLAN[k][0] : PLAN[k][1]);
+// One run per part at a time: the timer, Sync now, wake and the sync card all share it and get its real result.
+const inflight = {};
+function runPart(k, how = 'timer') {
+  if (inflight[k]) return inflight[k];
+  syncRunning[k] = true; lastSync[k] = Date.now();
+  const t0 = Date.now(); let timer;
+  const deadline = new Promise((res) => { timer = setTimeout(() => res({ error: `timed out after ${DEADLINE_MIN[k]} min` }), DEADLINE_MIN[k] * 60000); });
+  diag(k, 'start', { how });
+  inflight[k] = Promise.race([Promise.resolve().then(RUN[k]).catch((e) => ({ error: String((e && e.message) || e || 'error').slice(0, 120) })), deadline]).then((r) => {
+    clearTimeout(timer);
+    const o = outcomeOf(k, r), every = normalEvery(k);
+    syncRunning[k] = false; delete inflight[k];
+    if (o.kind === 'skipped') {
+      diag(k, 'skipped', { how, why: o.why, ms: Date.now() - t0 });
+      if (/running|busy/.test(o.why)) lastSync[k] = Date.now() - every * 60000 + 60000;   // busy: look again in a minute (not signed in: the normal interval)
+    } else if (o.kind === 'verified') {
+      lastOk[k] = Date.now(); fails[k] = 0; lastErr[k] = '';
+      activity.add(SOURCE_OF[k], 'sync', { part: k, ...(how === 'timer' ? {} : { manual: true }) }, true);
+      diag(k, 'ok', { how, ms: Date.now() - t0 });
+    } else {
+      lastErr[k] = o.why; fails[k] = (fails[k] || 0) + 1;
+      activity.add(SOURCE_OF[k], 'sync', { part: k, ...(how === 'timer' ? {} : { manual: true }) }, false);
+      diag(k, 'failed', { how, ms: Date.now() - t0, why: o.why, tries: fails[k] });
+      // Quick first retry (most failures are a slow page or a session settling), then backing off. Based on the
+      // normal interval, so a forced run (wake, Sync now) keeps its short retry.
+      const retry = Math.min([0.67, 2, 5, 10][Math.min(fails[k], 4) - 1], every) * 60000;
+      lastSync[k] = Date.now() - every * 60000 + retry;
+    }
+    send('sync', syncStatus());
+    return o;
+  });
+  return inflight[k];
+}
 function syncDue(maxAgeMin) {
   const busy = busyNow(), now = Date.now();
   for (const [k, [b, q]] of Object.entries(PLAN)) {
-    if (syncRunning[k] || !sourceOn(k)) continue;   // never two runs of the same source at once
-    const every = maxAgeMin != null && (k === 'schedule' || k === 'comms' || k === 'portal') ? Math.min(maxAgeMin, b) : busy ? b : q;
+    if (inflight[k] || !sourceOn(k)) continue;   // never two runs of the same source at once
+    // After wake / back online (maxAgeMin given), every part that's overdue is read now, not just a few.
+    const every = maxAgeMin != null && k !== 'patients' ? Math.min(maxAgeMin, b) : busy ? b : q;
     if (now - lastSync[k] < every * 60000) continue;
-    lastSync[k] = now; syncRunning[k] = true;
-    const t0 = Date.now();
-    Promise.resolve().then(RUN[k]).then((r) => { lastErr[k] = whyFailed(k, r); return worked(k, r); }, (e) => { lastErr[k] = String((e && e.message) || e || 'error'); return false; }).then((ok) => {
-      syncRunning[k] = false;
-      activity.add(SOURCE_OF[k], 'sync', { part: k }, ok);
-      diag(k, ok ? 'ok' : 'failed', { ms: Date.now() - t0, ...(ok ? {} : { why: lastErr[k], tries: (fails[k] || 0) + 1 }) });
-      if (ok) { lastOk[k] = Date.now(); fails[k] = 0; lastErr[k] = ''; send('sync', syncStatus()); return; }
-      fails[k] = (fails[k] || 0) + 1;
-      // Quick first retry (most failures are a slow page or a session settling), then backing off.
-      const retry = Math.min([0.67, 2, 5, 10][Math.min(fails[k], 4) - 1], every) * 60000;
-      lastSync[k] = Date.now() - every * 60000 + retry;   // due again after `retry`
-      send('sync', syncStatus());
-    });
+    runPart(k, maxAgeMin != null ? 'catch-up' : 'timer');
   }
 }
 setInterval(() => syncDue(), 20000);
@@ -774,40 +863,53 @@ ipcMain.handle('sync:part', async (_e, k) => {
   if (!RUN[k] || k === 'patients') return { ok: false, reason: 'unknown' };
   if (!sourceOn(k)) return { ok: true, off: true };
   if (partReason(k) === 'sign-in needed') { fails[k] = (fails[k] || 0) + 1; return { ok: false, reason: 'sign-in needed' }; }
-  if (syncRunning[k]) { const t0 = Date.now(); while (syncRunning[k] && Date.now() - t0 < 120000) await new Promise((r) => setTimeout(r, 500)); return { ok: !fails[k], reason: fails[k] ? partReason(k) : '' }; }
-  syncRunning[k] = true; lastSync[k] = Date.now();
-  let ok = false;
-  const t0 = Date.now();
-  try { const r = await RUN[k](); lastErr[k] = whyFailed(k, r); ok = worked(k, r); } catch (e) { lastErr[k] = String((e && e.message) || e); ok = false; }
-  syncRunning[k] = false;
-  diag(k, ok ? 'ok (manual)' : 'failed (manual)', { ms: Date.now() - t0, ...(ok ? {} : { why: lastErr[k] }) });
-  if (ok) lastErr[k] = '';
-  activity.add(SOURCE_OF[k], 'sync', { part: k, manual: true }, ok);
-  if (ok) { lastOk[k] = Date.now(); fails[k] = 0; } else fails[k] = (fails[k] || 0) + 1;
-  send('sync', syncStatus());
-  return { ok, reason: ok ? '' : partReason(k) };
+  // Joins a run already in progress and reports that run's real result.
+  const o = await runPart(k, 'manual');
+  if (o.kind === 'verified') return { ok: true, reason: '' };
+  if (o.kind === 'skipped') return { ok: false, soft: true, reason: o.why === 'already running' ? 'still checking' : o.why };
+  return { ok: false, reason: partReason(k) };
 });
 // Health for each account: green only when the last real read is fresh; amber when stale; red when sign-in is needed.
+// One status per account, worked out here only; Settings, the sidebar, Today and the sync card all show this.
+//   ok         Working · checked 9:42           (every part had a verified read recently)
+//   retrying   Retrying                         (one failed read; the last verified data is still shown)
+//   needs      Needs you · exact step           (sign in / code / a page to click / password changed)
+//   unconfirmed Can't confirm · last checked X   (two or more failed reads, or nothing verified for too long)
+//   offline    Offline · showing saved information
+// `level` (green/grey/red/amber/off) and `why` are kept for the existing screens; `short` is the one-line text.
 function accountHealth() {
   const w = watcher.status() || {}; if (w.lastRun && !w.lastError) lastOk.schedule = Math.max(lastOk.schedule || 0, Date.parse(w.lastRun) || 0);
-  const busy = busyNow(), staleMs = (busy ? 1 : 4) * 3600e3, id = pid(), now = Date.now();
-  const lvl = (keys, signedIn) => {
-    if (!signedIn) return { level: 'red', why: 'sign-in needed' };
-    // Every part has to be fresh: a fresh schedule can't hide prescriptions that never loaded.
-    const NAMES = { schedule: 'schedule', rx: 'prescriptions', comms: 'texts and calls', gmail: 'email', faxes: 'faxes' };
-    // One failed read is usually a slow page: say "retrying" (still green/grey); amber after two in a row.
-    const oks = keys.map((k) => lastOk[k] || 0), last = Math.min(...oks), failing = keys.some((k) => (fails[k] || 0) >= 2), retrying = !failing && keys.some((k) => (fails[k] || 0) === 1);
-    const bad = keys.filter((k) => (fails[k] || 0) >= 2), why = bad.length ? `${bad.map((k) => NAMES[k] || k).join(' and ')} couldn't load${lastErr[bad[0]] ? ' · ' + lastErr[bad[0]] : ''}` : '';
-    if (!last) { const wait = keys.filter((k) => !lastOk[k]).map((k) => NAMES[k] || k).join(', '); return { level: failing ? 'amber' : 'grey', why: failing ? why : retrying ? 'retrying…' : `checking ${wait}…`, at: Math.max(...oks) ? new Date(Math.max(...oks)).toISOString() : null }; }
-    const fresh = now - last < staleMs;
-    return { level: fresh && !failing ? 'green' : 'amber', why: failing ? why : retrying ? 'retrying…' : fresh ? '' : 'not checked lately', at: new Date(last).toISOString() };
+  const busy = busyNow(), id = pid(), now = Date.now(), online = net.isOnline();
+  const NAMES = { schedule: 'schedule', rx: 'prescriptions', portal: 'portal messages', comms: 'texts and calls', gmail: 'email', faxes: 'faxes' };
+  const t = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const NEED = { signin: 'sign-in needed', code: 'needs a verification code', step: 'needs you to finish signing in', password: 'saved password stopped working', account: 'signed in to the wrong account' };
+  const lvl = (name, keys, need) => {
+    const at = Math.min(...keys.map((k) => lastOk[k] || 0)), atIso = at ? new Date(at).toISOString() : null;
+    if (need) return { level: 'red', state: 'needs', action: need, why: NEED[need], short: `${name} ${NEED[need]}`, at: atIso };
+    if (!online) return { level: 'grey', state: 'offline', why: 'offline · showing saved information', short: 'Offline · showing saved information', at: atIso };
+    // Too old = about three missed reads at the normal pace (and at least an hour in office hours, four after).
+    const tooOld = (k) => now - (lastOk[k] || 0) > Math.max(3 * normalEvery(k) * 60000, (busy ? 1 : 4) * 3600e3);
+    const bad = keys.filter((k) => (fails[k] || 0) >= 2), retrying = keys.filter((k) => (fails[k] || 0) === 1);
+    const stale = keys.filter((k) => lastOk[k] && tooOld(k));
+    if (bad.length || stale.length) {
+      const which = (bad.length ? bad : stale).map((k) => NAMES[k] || k).join(' and ');
+      const why = bad.length ? `${which} couldn't load${lastErr[bad[0]] ? ' · ' + lastErr[bad[0]] : ''}` : `${which} not confirmed lately`;
+      return { level: 'amber', state: 'unconfirmed', why, short: `${name}: can't confirm ${which}${at ? ' · last checked ' + t(at) : ''}`, at: atIso };
+    }
+    if (retrying.length) return { level: 'grey', state: 'retrying', why: 'retrying…', short: `${name}: retrying`, at: atIso };
+    const waiting = keys.filter((k) => !lastOk[k]);
+    if (waiting.length) return { level: 'grey', state: 'checking', why: `checking ${waiting.map((k) => NAMES[k] || k).join(', ')}…`, short: `${name}: checking…`, at: atIso };
+    return { level: 'green', state: 'ok', why: '', short: `${name} · checked ${t(at)}`, at: atIso };
   };
-  const g = mail.status(), fx = faxes.status();
+  const g = mail.status(), fx = faxes.status(), rr = id ? ringrx.status(id) : { connected: false };
+  const rxOn = !!store.settings.get().rxntConnected?.[id];
+  const fxSet = (store.settings.get().faxes || {}).signedIn || faxes.savedLogin();
   return {
-    rxnt: lvl(['schedule', 'rx'], !!store.settings.get().rxntConnected?.[id]),
-    ringrx: lvl(['comms'], !!(id && ringrx.status(id).connected)),
-    gmail: lvl(['gmail'], g.error !== 'signin' && (g.connected || !!lastOk.gmail)),
-    doximity: !(store.settings.get().faxes || {}).signedIn && !faxes.savedLogin() ? { level: 'off', why: 'not set up' } : sourceOn('faxes') ? lvl(['faxes'], fx.error !== 'signin' && fx.error !== 'code') : { level: 'off', why: 'off' },
+    rxnt: lvl('RxNT', ['schedule', 'rx', 'portal'], rxOn ? '' : rxntNeeds || 'signin'),
+    ringrx: lvl('RingRx', ['comms'], rr.connected ? '' : rr.needsCode ? 'code' : 'signin'),
+    gmail: lvl('Gmail', ['gmail'], g.error === 'signin' || (!g.connected && !lastOk.gmail) ? 'signin' : ''),
+    doximity: userOut('faxes') ? { level: 'off', state: 'off', why: 'signed out', short: '' } : !fxSet ? { level: 'off', state: 'off', why: 'not set up', short: '' }
+      : sourceOn('faxes') ? lvl('Doximity', ['faxes'], fx.error === 'code' ? 'code' : fx.error === 'signin' ? 'signin' : '') : { level: 'off', state: 'off', why: 'off', short: '' },
   };
 }
 // The schedule hasn't been read for 20+ minutes in office hours: Today shows a banner.
@@ -820,7 +922,8 @@ let wasOnline = true;
 function catchUp() {
   diag('app', 'wake/online: catching up');
   const t0 = Date.now();
-  const tryNow = () => { if (net.isOnline() || Date.now() - t0 > 60000) setTimeout(() => syncDue(0), 3000); else setTimeout(tryNow, 3000); };
+  // Wait until the internet is actually back; while offline, keep waiting (saved sign-ins are untouched).
+  const tryNow = () => { if (net.isOnline()) setTimeout(() => syncDue(0), 3000); else if (Date.now() - t0 < 30 * 60000) setTimeout(tryNow, Date.now() - t0 > 60000 ? 15000 : 3000); };
   setTimeout(tryNow, 4000);
 }
 app.whenReady().then(() => {
@@ -1322,8 +1425,9 @@ setInterval(async () => {
 }, 10 * 60000);
 // Opened while signed out of RxNT but with a saved sign-in: sign back in quietly.
 app.whenReady().then(() => setTimeout(async () => {
-  const id = pid(); const c = id && rxnt.savedLogin(id); if (!c || c.bad || store.settings.get().rxntConnected?.[id]) return;
-  if ((await rxnt.autoSignIn(id)) === 'ok') { setRxntFlag(id, true); send('sync', syncStatus()); syncDue(0); }
+  const id = pid(); const c = id && rxnt.savedLogin(id); if (!c || c.bad || userOut('rxnt') || store.settings.get().rxntConnected?.[id]) return;
+  const a = await rxnt.autoSignIn(id);   // shares the start-up attempt if one is running, so the password is sent once
+  if (a === 'ok') { rxntNeeds = ''; setRxntFlag(id, true); send('sync', syncStatus()); syncDue(0); }
 }, 6000));
 app.on('before-quit', () => { const id = pid(); if (id) rxnt.keepSignedIn(id); });
 app.on('window-all-closed', () => { if (!isMac) app.quit(); });

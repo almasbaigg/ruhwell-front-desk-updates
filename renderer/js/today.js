@@ -262,16 +262,13 @@ function paintVisits(range) {
 // One line before each visit: what's still open for this patient, and when they were last seen.
 let todayItems = [], todaySync = null;
 // Sources that failed or haven't worked recently (during office hours, an hour is too long).
+// What Today can't vouch for right now: any account that needs the user, can't confirm its data, or is offline
+// (from the one status the app keeps per account). While any is listed, Today never says "All caught up".
 function staleSources(st) {
-  if (!st) return [];
-  const H = st.health || {}, out = [], old = (t, min) => !t || Date.now() - t > min * 60000;
-  const busy = (() => { const n = new Date(), S = settings.sync || {}, hm = `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`; return n.getDay() >= 1 && n.getDay() <= 5 && hm >= (S.busyStart || '08:00') && hm < (S.busyEnd || '17:00'); })();
-  const lim = busy ? 60 : 240;
-  if (st.rxnt && (H.schedule || {}).failing && old((H.schedule || {}).ok, lim / 2)) out.push({ name: 'the RxNT schedule', since: (H.schedule || {}).ok, rxnt: true });
-  if (st.rxnt && (st.rx || {}).error && old((H.rx || {}).ok, lim * 2)) out.push({ name: 'RxNT prescriptions', since: (H.rx || {}).ok, rxnt: true });
-  if (st.rxnt && (st.portal || {}).error && old((H.portal || {}).ok, lim)) out.push({ name: 'RxNT portal messages', since: (H.portal || {}).ok, rxnt: true });
-  if (st.ringrx && (st.messages || {}).error && old((H.comms || {}).ok, lim)) out.push({ name: 'RingRx texts and calls', since: (H.comms || {}).ok });
-  return out;
+  if (!st || !st.accounts) return [];
+  const N = { rxnt: 'RxNT', ringrx: 'RingRx', gmail: 'Gmail', doximity: 'Doximity faxes' };
+  return Object.entries(st.accounts).filter(([, a]) => a && ['needs', 'unconfirmed', 'offline'].includes(a.state))
+    .map(([k, a]) => ({ name: N[k] || k, since: a.at ? Date.parse(a.at) : null, rxnt: k === 'rxnt', why: a.why }));
 }
 function visitBrief(v) {
   const d = digits(v.phone), name = fullName(v).toLowerCase(), out = [];

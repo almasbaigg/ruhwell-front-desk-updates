@@ -251,7 +251,7 @@ async function loadEmails(more) {
   const r = await loading(() => window.api.emailList({ folder, q, pageToken: more ? emData.next : '' }));
   if (seq !== emSeq) return;
   if (r.error) { $('em-list').innerHTML = `<p class="muted small" style="padding:12px">Couldn't load email: ${esc(r.error)}</p>`; return; }
-  emData = { items: more ? emData.items.concat(r.items) : r.items, next: r.next };
+  emData = { items: more ? emData.items.concat(r.items) : r.items, next: r.next, missing: r.missing || 0 };
   renderEmailList();
   if (!emOpen) $('em-pane').innerHTML = `<div class="empty-state">${I.mail}<h3>Pick an email</h3><p>Or write a new one.</p></div>`;
 }
@@ -281,8 +281,11 @@ function renderEmailList() {
       <span class="em-main"><span class="tr-top"><b>${emFolder === 'sent' ? '<em class="to">To</em> ' : ''}${esc(who)}</b>${m.count > 1 ? `<em class="cnt">${m.count}</em>` : ''}<span class="t">${esc(shortWhen(m.at))}</span></span>
       <span class="em-subj">${esc(decodeEnt(m.subject))}</span><span class="tr-snip">${esc(decodeEnt(m.snippet))}</span></span></button>`;
   }).join('')
-    : `<div class="all-clear small-clear">${I.check}<b>${{ needs: emData.next ? 'Nothing waiting in these emails' : 'Nothing waiting for you', sent: 'Nothing sent', spam: 'No spam' }[emFolder] || 'No emails'}</b></div>`;
+    : emData.missing ? '' : `<div class="all-clear small-clear">${I.check}<b>${{ needs: emData.next ? 'Nothing waiting in these emails' : 'Nothing waiting for you', sent: 'Nothing sent', spam: 'No spam' }[emFolder] || 'No emails'}</b></div>`;
   if (emData.next) $('em-list').insertAdjacentHTML('beforeend', '<button class="btn small em-more" id="em-loadmore">Load older emails</button>');
+  // Never a quietly shorter list: say when some emails didn't load.
+  if (emData.missing) $('em-list').insertAdjacentHTML('afterbegin', `<div class="stale-line">${I.bell}<span>${emData.missing} email${emData.missing > 1 ? 's' : ''} didn't load from Gmail. <button class="linkbtn" id="em-reload">Try again</button></span></div>`);
+  if ($('em-reload')) $('em-reload').onclick = () => loadEmails();
   $('em-list').querySelectorAll('.em-row').forEach((b) => (b.onclick = () => openEmail(b.dataset.id)));
   if ($('em-loadmore')) $('em-loadmore').onclick = () => loadEmails(true);
 }

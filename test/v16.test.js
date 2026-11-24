@@ -102,11 +102,11 @@ const T = ymdOf(tmr);
 
   // I) Filing only into the picked patient's chart.
   const rx = require(APP + '/rxnt-reader');
-  const who = { patientId: '19888266', first: 'Randy', last: 'Wester', dob: '1989-03-15' };
-  assert.ok(rx.sameChart({ chart: '19888266', first: 'Randy', last: 'Wester', dob: '1989-03-15' }, who), 'same chart');
-  assert.ok(!rx.sameChart({ chart: '11111111', first: 'Randy', last: 'Wester', dob: '1989-03-15' }, who), 'different chart number blocks it');
-  assert.ok(!rx.sameChart({ chart: '', first: 'Randy', last: 'Wester', dob: '' }, who), 'name alone is not enough');
-  assert.ok(!rx.sameChart({ chart: '', first: 'Randy', last: 'Wester', dob: '1989-03-15' }, { ...who, dob: '' }), 'missing DOB on our side fails closed');
+  const who = { patientId: '19888266', first: 'Avery', last: 'Stone', dob: '1989-03-15' };
+  assert.ok(rx.sameChart({ chart: '19888266', first: 'Avery', last: 'Stone', dob: '1989-03-15' }, who), 'same chart');
+  assert.ok(!rx.sameChart({ chart: '11111111', first: 'Avery', last: 'Stone', dob: '1989-03-15' }, who), 'different chart number blocks it');
+  assert.ok(!rx.sameChart({ chart: '', first: 'Avery', last: 'Stone', dob: '' }, who), 'name alone is not enough');
+  assert.ok(!rx.sameChart({ chart: '', first: 'Avery', last: 'Stone', dob: '1989-03-15' }, { ...who, dob: '' }), 'missing DOB on our side fails closed');
 
   // J) The Save step exists and never clicks twice (1.6.2 test build shipped without it).
   const src = require('fs').readFileSync(APP + '/rxnt-reader.js', 'utf8');

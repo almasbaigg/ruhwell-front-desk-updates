@@ -51,9 +51,10 @@ async function paintHealth() {
   const set = (k, h, btn) => {
     const pill = $(`s-${k}-health`); if (!pill || !h) return;
     pill.className = 'health ' + ({ green: 'good', amber: 'warn', red: 'bad', grey: 'idle', off: 'idle' }[h.level] || 'idle');
-    pill.textContent = HEALTH_TEXT[h.level] || '';
+    // Same words as everywhere else: the one status the app keeps per account.
+    pill.textContent = { ok: 'Working', retrying: 'Retrying', checking: 'Checking…', needs: 'Needs you', unconfirmed: "Can't confirm", offline: 'Offline', off: 'Off' }[h.state] || HEALTH_TEXT[h.level] || '';
     pill.title = h.why || '';
-    if (btn && $(btn)) { $(btn).classList.toggle('hidden', h.level === 'green' || h.level === 'grey' || h.level === 'off'); $(btn).textContent = h.level === 'red' ? 'Sign in' : 'Reconnect'; }
+    if (btn && $(btn)) { $(btn).classList.toggle('hidden', h.level === 'green' || h.level === 'grey' || h.level === 'off'); $(btn).textContent = h.level === 'red' ? ({ code: 'Enter code', step: 'Finish signing in', password: 'Sign in again' }[h.action] || 'Sign in') : 'Reconnect'; }
   };
   window.api.rxntHasLogin().then((has) => {
     const el = $('s-rxnt-saved'); if (!el) return;

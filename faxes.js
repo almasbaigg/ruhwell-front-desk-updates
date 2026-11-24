@@ -67,8 +67,12 @@ function autofillStep(u, pw, submit) {
   const vis = (el) => el && el.offsetParent !== null;
   const text = (document.body && document.body.innerText || '').toLowerCase();
   if (/inbox\/faxes/.test(location.pathname) && document.querySelector('a[href*="/inbox/faxes/"]')) return { step: 'in' };
-  if (/incorrect|invalid (email|pass|login|cred)|wrong password|not recognized|locked/.test(text)) return { step: 'bad' };
+  // Signed in with an empty inbox counts as signed in (the same check the inbox reader uses).
+  if (/inbox\/faxes/.test(location.pathname) && /no faxes|inbox is empty|you have no/.test(text)) return { step: 'in' };
   const pass = [...document.querySelectorAll('input[type=password]')].find(vis);
+  // A code step first: "incorrect verification code" is about the code, never the saved password.
+  if (!pass && /verification code|one-time|authenticator|enter the code|security code|we sent a code/.test(text)) return { step: 'code' };
+  if (/incorrect|invalid (email|pass|login|cred)|wrong password|not recognized|locked/.test(text)) return { step: 'bad' };
   const user = [...document.querySelectorAll('input[type=email], input[autocomplete=username], input[name*=email i], input[id*=email i], input[name*=login i]')].find(vis);
   if (!pass && /verification code|one-time|authenticator|enter the code|security code|we sent a code/.test(text)) return { step: 'code' };
   const step = pass ? 'password' : user ? 'username' : 'wait';
@@ -202,7 +206,7 @@ async function downloadPdf(win, href) {
   };
   ses.on('will-download', onDl);
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https:\/\//.test(url)) ses.fetch(url).then(async (r) => { if (r.ok) resolveFile({ data: Buffer.from(await r.arrayBuffer()).toString('base64') }); }).catch(() => {});
+    if (/^https:\/\//.test(url)) ses.fetch(url, { signal: AbortSignal.timeout(60000) }).then(async (r) => { if (r.ok) resolveFile({ data: Buffer.from(await r.arrayBuffer()).toString('base64') }); }).catch(() => {});
     return { action: 'deny' };
   });
   const checked = (f) => { if (!f) return null; const mime = sniff(f.data); return mime ? { data: f.data, mime } : null; };
@@ -216,7 +220,7 @@ async function downloadPdf(win, href) {
     let file = clicked ? checked(await Promise.race([got, sleep(45000).then(() => null)])) : null;
     if (!file && !win.isDestroyed()) {   // fallback: the TIF link Doximity puts on the page
       const tif = await call(win, () => { const a = document.querySelector('a[aria-label="Download TIF"]'); return a ? a.href : ''; });
-      if (typeof tif === 'string' && /^https:\/\//.test(tif)) { const r = await ses.fetch(tif).catch(() => null); if (r && r.ok) file = checked({ data: Buffer.from(await r.arrayBuffer()).toString('base64') }); }
+      if (typeof tif === 'string' && /^https:\/\//.test(tif)) { const r = await ses.fetch(tif, { signal: AbortSignal.timeout(60000) }).catch(() => null); if (r && r.ok) file = checked({ data: Buffer.from(await r.arrayBuffer()).toString('base64') }); }
     }
     return file;
   } finally { ses.removeListener('will-download', onDl); }
@@ -235,8 +239,9 @@ async function sync() {
   if (running) return { busy: true };
   if ((store.settings.get().faxes || {}).enabled === false) return { off: true };
   running = true;
-  const win = makeWindow(false);
+  let win;
   try {
+    win = makeWindow(false);   // inside try: if making the window fails, `running` is still released
     await win.loadURL(INBOX).catch(() => {});
     const readAll = async () => {
       let r = { state: 'wait' };
@@ -300,7 +305,7 @@ async function sync() {
   } catch (e) {
     last = { ...last, error: 'failed', at: new Date().toISOString() };
     return { error: 'failed' };
-  } finally { running = false; if (!win.isDestroyed()) win.destroy(); }
+  } finally { running = false; if (win && !win.isDestroyed()) win.destroy(); }
 }
 // One retry right now (the "Retry download" button).
 async function retryDownload(id) {

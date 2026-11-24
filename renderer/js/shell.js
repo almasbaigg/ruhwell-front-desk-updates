@@ -112,13 +112,17 @@ function paintSync(st) {
   // Same source as Settings → Connections: the real checks. Red first, then amber; a source that isn't set up is named.
   const A = st.accounts || {}, NAMES = { rxnt: 'RxNT', ringrx: 'RingRx', gmail: 'Gmail', doximity: 'Doximity' };
   const red = Object.keys(NAMES).find((k) => (A[k] || {}).level === 'red'), amber = Object.keys(NAMES).find((k) => (A[k] || {}).level === 'amber');
-  const accProblem = st.locked ? '' : red ? `${NAMES[red]} sign-in needed` : amber ? `${NAMES[amber]}: ${(A[amber].why || 'needs a look')}` : '';
+  // The one status per account (worked out in the app's main process): needs you first, then can't confirm.
+  const off = Object.keys(NAMES).find((k) => (A[k] || {}).state === 'offline');
+  const accProblem = st.locked ? '' : red ? (A[red].short || `${NAMES[red]} sign-in needed`) : amber ? (A[amber].short || `${NAMES[amber]}: ${A[amber].why || 'needs a look'}`) : off ? A[off].short : '';
   const notSetUp = Object.keys(NAMES).filter((k) => (A[k] || {}).why === 'not set up').map((k) => NAMES[k]);
   // The long patient-list refresh runs quietly (its progress is in Settings → Accounts), so it never holds "Syncing…".
   const working = busy.high || (busy.low && !P.running) || (st.messages || {}).running;
   const issue = (st.locked && problem) || accProblem || problem;
   $('status-line').className = 'status-line ' + (issue ? 'warn' : working ? 'busy' : 'on');
-  $('status-text').textContent = issue || (working ? 'Syncing…' : `${notSetUp.length ? 'Synced · ' + notSetUp.join(', ') + ' not set up' : 'Synced'} · ${minsAgo((st.alerts || {}).lastRun || (st.schedule || {}).at) || 'just now'}`);
+  // "Synced" only with a real, confirmed read behind it; until then it says it's still checking.
+  const proven = (st.fresh || {}).schedule;
+  $('status-text').textContent = issue || (working ? 'Syncing…' : !proven ? 'Checking connections…' : `${notSetUp.length ? 'Synced · ' + notSetUp.join(', ') + ' not set up' : 'Synced'} · ${minsAgo(new Date(proven).toISOString())}`);
 }
 async function paintConnections() { const st = await window.api.syncStatus(); accounts.rxnt.connected = st.rxnt; accounts.ringrx.connected = st.ringrx; paintSync(st); }
 window.api.onSync((st) => { paintSync(st); if (!st.patients.running && view === 'patients') loadPatients(true); if (view === 'settings') paintSyncTimes(); });
@@ -156,9 +160,10 @@ async function syncEverything(only, opts = {}) {
   syncCardBusy = Promise.all(parts.map(async ([k, label]) => {
     let r; try { r = await window.api.syncPart(k); } catch { r = { ok: false, reason: "couldn't load" }; }
     const li = card.querySelector(`li[data-k="${k}"]`);
-    li.classList.remove('run'); li.classList.add(r.off ? 'off' : r.ok ? 'ok' : 'bad');
+    li.classList.remove('run'); li.classList.add(r.off ? 'off' : r.ok ? 'ok' : r.soft ? 'off' : 'bad');
     if (r.off) li.querySelector('em').textContent = 'not set up';
-    if (!r.ok) { li.querySelector('em').textContent = r.reason || "couldn't load"; bad.push(label); }
+    else if (r.soft) li.querySelector('em').textContent = r.reason || 'still checking';   // nothing proven yet, not a failure
+    else if (!r.ok) { li.querySelector('em').textContent = r.reason || "couldn't load"; bad.push(label); }
     done++; level();
   })).then(() => {
     const t = card.querySelector('.sc-title');

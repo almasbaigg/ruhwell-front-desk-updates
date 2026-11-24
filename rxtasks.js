@@ -7,9 +7,11 @@ let last = { available: false, items: [], sent: [], counts: {}, payments: [], fl
 async function refresh(readPending) {
   try {
     const r = await readPending();
-    if (r && r.error === 'busy') return last;
-    if (r && r.needsLogin) { last = { ...last, error: 'signin', at: new Date().toISOString() }; return last; }
-    if (!r || !Array.isArray(r.items)) { last = { ...last, available: false, at: new Date().toISOString(), error: (r && r.error) || 'unavailable' }; return last; }
+    // Returns what THIS attempt proved. A failed attempt keeps the old list and its real time ("at"), so old
+    // prescriptions are never shown as just checked.
+    if (r && r.error === 'busy') return { skipped: 'busy' };
+    if (r && r.needsLogin) { last = { ...last, error: 'signin', failedAt: new Date().toISOString() }; return { error: 'sign-in needed', needsLogin: true }; }
+    if (!r || !Array.isArray(r.items)) { last = { ...last, available: last.at ? last.available : false, error: (r && r.error) || 'unavailable', failedAt: new Date().toISOString() }; return { error: (r && r.error) || 'prescriptions page did not load' }; }
     const c = r.counts || {}, REF = ['sent', 'voided'];
     // Failed sends show up in RxNT's Recent list with a failure status.
     const failed = r.items.filter((i) => i.kind === 'sent' && /fail|error|denied|rejected/i.test(i.detail || '')).map((i) => ({ ...i, kind: 'failed' }));
@@ -26,7 +28,8 @@ async function refresh(readPending) {
       account: r.account || last.account || null,                       // signed-in RxNT account, as RxNT's menu shows it
       today: r.today ? { ...r.today, at: new Date().toISOString() } : last.today || null,   // EHR "Today's Appointments"
       unsigned: c.unsigned ? (r.unsigned || (last.unsigned || []).slice(0, c.unsigned)) : [] };
-  } catch { last = { ...last, error: 'failed', at: new Date().toISOString() }; }
+    return { ok: true };
+  } catch (e) { last = { ...last, error: 'failed', failedAt: new Date().toISOString() }; return { error: 'failed' }; }
   return last;
 }
 // Payments worth a second look: the same patient charged more than once within 2 days

@@ -13,7 +13,7 @@ async function post(path, body, token, query, timeoutMs) {
   const url = new URL(BASE + path);
   if (query) Object.entries(query).forEach(([k, v]) => url.searchParams.set(k, v));
   const res = await fetch(url, {
-    method: 'POST', signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
+    method: 'POST', signal: AbortSignal.timeout(timeoutMs || 30000),   // never wait forever (login and refresh too)
     headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
@@ -37,6 +37,7 @@ function keep(pid, tokens, username, password) {
 }
 
 async function login(pid, username, password, otp) {
+  delete meCache[pid];   // a new sign-in never reuses the previous account's identity
   const body = { username, password };
   if (otp) body.otp = otp;
   const r = await post('/auth/token', body);
@@ -124,13 +125,14 @@ async function wentOut(pid, num, message, since) {
 
 function status(pid) {
   const s = store.ringrx.get(pid);
-  return s?.refreshToken ? { connected: true, username: s.username } : { connected: false };
+  // needsCode: RingRx asked for a verification code; the saved sign-in is kept so only the code is needed.
+  return s?.refreshToken && !s.needsCode ? { connected: true, username: s.username } : { connected: false, needsCode: !!(s && s.needsCode) };
 }
 
 async function get(pid, path, query, retried) {
   const url = new URL(BASE + path);
   if (query) Object.entries(query).forEach(([k, v]) => url.searchParams.set(k, v));
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${await token(pid)}` } });
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${await token(pid)}` }, signal: AbortSignal.timeout(45000) });
   if (res.status === 401 && !retried) { delete cache[pid]; return get(pid, path, query, true); }   // access ran out early: refresh once, read again
   if (!res.ok) throw new RingRxError(`RingRx ${path} ${res.status}`, 'GET_FAILED');
   return res.json();
@@ -187,6 +189,9 @@ async function messages(pid, sinceISO) {
   const since = sinceISO || new Date(Date.now() - 90 * 864e5).toISOString();
   let inbox, sent;
   try { [inbox, sent] = await Promise.all([get(pid, '/voicemails', { message_folder: 'inbox', since }), get(pid, '/voicemails', { message_folder: 'sent', since })]); } catch { return null; }
+  // Only a real list counts. Anything else (an error page, a changed format) is a failed read, so the
+  // saved texts are kept instead of being replaced with nothing. An empty list [] is a real "no messages".
+  if (!Array.isArray(inbox) || !Array.isArray(sent)) return null;
   const us = await ours(pid);
   const out = [];
   for (const [folder, rows] of [['inbox', inbox], ['sent', sent]]) {
@@ -212,6 +217,7 @@ async function calls(pid, days = 90) {
   const end = new Date(Date.now() + 864e5), start = new Date(Date.now() - days * 864e5);
   let rows;
   try { rows = await get(pid, '/cdrs', { startDate: fmt(start), endDate: fmt(end), getAll: 'false' }); } catch { return null; }
+  if (!Array.isArray(rows)) return null;   // not a list: keep the saved calls
   const us = await ours(pid);
   const out = [];
   for (const r of Array.isArray(rows) ? rows : []) {
@@ -240,7 +246,7 @@ async function voicemailAudio(pid, id, media) {
     try {
       const url = new URL(t.startsWith('//') ? 'https:' + t : t, BASE);
       const sameHost = url.host === new URL(BASE).host;
-      const res = await fetch(url, { headers: sameHost ? { Authorization: `Bearer ${await token(pid)}` } : {} });
+      const res = await fetch(url, { headers: sameHost ? { Authorization: `Bearer ${await token(pid)}` } : {}, signal: AbortSignal.timeout(60000) });
       let mime = String(res.headers.get('content-type') || '').split(';')[0];
       if (mime === 'application/octet-stream' || !mime) mime = 'audio/wav';
       if (!res.ok || !/^audio\//.test(mime)) { why.push(`${res.status} ${mime}`); continue; }
@@ -252,7 +258,7 @@ async function voicemailAudio(pid, id, media) {
   return { error: why.join('; ') || 'no audio' };   // reason only (status/type), for the activity log
 }
 
-function logout(pid) { delete cache[pid]; store.ringrx.clear(pid); }
+function logout(pid) { delete cache[pid]; delete meCache[pid]; store.ringrx.clear(pid); }   // forget the old account's identity and number too
 
 // RingRx gives voicemail length in milliseconds (a 16 s message comes back as 16128).
 function vmSeconds(d) { const n = Number(d) || 0; return Math.round(n >= 1000 ? n / 1000 : n); }

@@ -11,10 +11,10 @@ const store = require(APP + '/store');
 (async () => {
   // Chart identity: a matching chart number is not enough when the DOB or name disagrees.
   const rx = require(APP + '/rxnt-reader');
-  const who = { patientId: '19888266', first: 'Randy', last: 'Wester', dob: '1989-03-15' };
-  assert.ok(rx.sameChart({ chart: '19888266', first: 'Randy', last: 'Wester', dob: '1989-03-15' }, who));
-  assert.ok(!rx.sameChart({ chart: '19888266', first: 'Randy', last: 'Wester', dob: '1990-03-15' }, who), 'same chart + name, different DOB → stop');
-  assert.ok(!rx.sameChart({ chart: '19888266', first: 'Randy', last: 'Western', dob: '1989-03-15' }, who), 'same chart + DOB, different name → stop');
+  const who = { patientId: '19888266', first: 'Avery', last: 'Stone', dob: '1989-03-15' };
+  assert.ok(rx.sameChart({ chart: '19888266', first: 'Avery', last: 'Stone', dob: '1989-03-15' }, who));
+  assert.ok(!rx.sameChart({ chart: '19888266', first: 'Avery', last: 'Stone', dob: '1990-03-15' }, who), 'same chart + name, different DOB → stop');
+  assert.ok(!rx.sameChart({ chart: '19888266', first: 'Avery', last: 'Stonen', dob: '1989-03-15' }, who), 'same chart + DOB, different name → stop');
   assert.ok(rx.sameChart({ chart: '', first: 'José', last: 'Núñez', dob: '1980-01-01' }, { first: 'Jose', last: 'Nunez', dob: '1980-01-01' }), 'accents compare equal');
   assert.ok(!rx.sameChart({ chart: '', first: '', last: '', dob: '1980-01-01' }, { first: '', last: '', dob: '1980-01-01' }), 'no names at all → not enough');
 

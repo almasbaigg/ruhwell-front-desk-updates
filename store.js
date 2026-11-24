@@ -172,6 +172,10 @@ module.exports = {
         const m = { ...cur };
         const { visitAt, ...rest } = p;
         for (const [k, v] of Object.entries(rest)) if (v !== undefined && v !== null && v !== '') m[k] = v;
+        // A chart actually read with no email on it: the email was removed in RxNT, so drop the old one
+        // (an address typed in this app is kept separately as emailTyped and isn't touched).
+        if (p.emailRead && p.email === '' && cur.email) delete m.email;
+        delete m.emailRead;
         // Last visit = most recent appointment that has already started; next visit = earliest one still ahead.
         if (visitAt) {
           const t = new Date(visitAt), now = new Date();
