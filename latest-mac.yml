@@ -1,17 +1,17 @@
-version: 2.4.0
+version: 2.4.1
 files:
-  - url: RuhwellFrontDesk-arm64.zip
-    sha512: HXyQGBi4YT1LIirABvRPi5O0DJ6nRJRSXJpPGk8/sd5UhAVDbVZVDtvLA/55kOcVuPBIF6CDn6mu3qFnj2UbmA==
-    size: 116400099
   - url: RuhwellFrontDesk-x64.zip
-    sha512: 04EiLIqR3xK3reiTXSABGBUk92scp8f96YHhGnBF6vdzKSBkEQ+AYCG+/d21Xuf87L5ixiCU7yNhele6nyzc6g==
-    size: 121027292
+    sha512: bFfO/3CAVgke5Evm0HIAO98ea23VYp5QPOf7+V5UVsNgGe1BHoY7GhEnjz2XYblKwiNmlrCBpdLOnFY99H2blw==
+    size: 121028973
+  - url: RuhwellFrontDesk-arm64.zip
+    sha512: pCWP9kFhgqwu5jhkRD7UQgtoSJv3OD5bDOHRyvsAQuyEE+NlCIokmq5O/cxfFY09rjfwrAkE0BTA535z7uL4lA==
+    size: 116401780
   - url: RuhwellFrontDesk-x64.dmg
-    sha512: qLT1v1IEmLqixQUQIWU8gcbpazruOTIIKTur99WSGrGy7IV4E0ZxCYpv+VAjcHeMKY55QaPPlNFjRevgsH/9wQ==
-    size: 124900550
+    sha512: bzqYJkhhiNNTY5o4eXuOc6PLuCMeImp2Lq4Wd1QIUi0X1krIZokelqh88a4b8kRKUFDdygY3g+iEpvRmnS/Jtw==
+    size: 124904839
   - url: RuhwellFrontDesk-arm64.dmg
-    sha512: +oPl7WomAQhinxCVK2Hg3dXf/wL3NExk05WLdReJglWY+wxSNRdbrU63ZYVC/IZJunNpH2cgSR0lTq90dV47ug==
-    size: 120320729
-path: RuhwellFrontDesk-arm64.zip
-sha512: HXyQGBi4YT1LIirABvRPi5O0DJ6nRJRSXJpPGk8/sd5UhAVDbVZVDtvLA/55kOcVuPBIF6CDn6mu3qFnj2UbmA==
-releaseDate: '2026-11-24T14:29:32.878Z'
+    sha512: xZzNgSvs0+LFiVMcNJz65fFzjXvP7ZOeCwC7On7+3luU8Aufqyvnm6LDAyWRfQl9Yjs/F1M0reeShVHfmk5HAQ==
+    size: 120328343
+path: RuhwellFrontDesk-x64.zip
+sha512: bFfO/3CAVgke5Evm0HIAO98ea23VYp5QPOf7+V5UVsNgGe1BHoY7GhEnjz2XYblKwiNmlrCBpdLOnFY99H2blw==
+releaseDate: '2026-11-24T15:03:15.572Z'
