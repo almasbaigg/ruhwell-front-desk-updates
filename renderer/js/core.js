@@ -185,6 +185,23 @@ function statusOf(v) {
   if (/confirm/.test(t) || (!t && c === 'PNF')) return 'confirmed';   // PNF = patient confirmed (often through the RxNT portal)
   return 'booked';   // Pending, Booked, Waitlist, Called, Intake Completed
 }
+// Cancelled + booked again (same patient: same chart, or same name and DOB; within 14 days) = moved.
+// Marks the old visit with movedTo and the new one with movedFrom. A no-show is never a move.
+const normNm = (v) => `${String(v.last || '').toLowerCase().replace(/[^a-z]/g, '')}|${String(v.first || '').toLowerCase().replace(/[^a-z]/g, '')}`;
+const samePatient = (a, b) => (a.patientId && b.patientId && String(a.patientId) === String(b.patientId)) || (!!a.dob && !!b.dob && String(a.dob).slice(0, 10) === String(b.dob).slice(0, 10) && normNm(a) === normNm(b));
+function linkMoves(items, pool) {
+  pool = pool || items;
+  for (const v of pool) { delete v.movedTo; delete v.movedFrom; }
+  for (const c of items) {
+    if (category(c) !== 'cancelled' || statusOf(c) === 'noshow') continue;
+    const t = new Date(c.start).getTime();
+    const other = pool.filter((v) => v !== c && category(v) !== 'cancelled' && samePatient(v, c) && Math.abs(new Date(v.start) - t) <= 14 * 864e5 && !v.movedFrom)
+      .sort((a, b) => Math.abs(new Date(a.start) - t) - Math.abs(new Date(b.start) - t))[0];
+    if (other) { c.movedTo = other.start; other.movedFrom = c.start; }
+  }
+  return items;
+}
+const movedLabel = (to, from) => { const d = new Date(to), same = new Date(from).toDateString() === d.toDateString(); return `Cancelled · moved to ${same ? fmtTime(d) : d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}`; };
 function category(v) { const s = statusOf(v); return s === 'seen' ? 'seen' : (s === 'noshow' || s === 'cancelled' || s === 'moved') ? 'cancelled' : 'pending'; }
 // What a visit looks like right now: a booking whose time has passed without check-in is "Not checked in".
 function stateOf(v) {
@@ -261,7 +278,7 @@ function itemFor(p) {
   const d = digits(p.phone), sharers = patients.filter((x) => x.phone === d || (x.otherPhones || []).includes(d));
   if (sharers.length > 1) warn.push(`Shared number: ${sharers.map((x) => x.first || x.last).filter(Boolean).slice(0, 3).join(', ')}`);
   const msg = finalMessage(p), gaps = missingFields(t.text, p, msg);
-  return { name: fullName(p), phone: d, message: msg, templateName: templateName(p), templateId: p.templateId || 'custom', warn, blocked: gaps.length ? `This text is missing ${gaps.join(' and ')}. Fix it before sending.` : '' };
+  return { name: fullName(p), phone: d, message: msg, templateName: templateName(p), templateId: p.templateId || 'custom', apptId: p.appointmentId || null, warn, blocked: gaps.length ? `This text is missing ${gaps.join(' and ')}. Fix it before sending.` : '' };
 }
 
 

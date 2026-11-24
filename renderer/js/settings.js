@@ -80,10 +80,12 @@ async function paintHealth() {
   const pat = st.patients || {}, pp = $('s-pat-health');
   if (pp) { pp.className = 'health ' + (pat.error ? 'warn' : pat.at ? 'good' : 'idle'); pp.textContent = pat.running ? 'Syncing…' : pat.error ? 'Needs a look' : pat.at ? 'Working' : 'Not yet'; }
   $('s-dox-on').checked = (settings.faxes || {}).enabled !== false;
+  $('s-dox-back').value = String((settings.faxes || {}).backDays || 0);
   const fx = st.faxes || {}; $('s-dox-state').textContent = fx.account ? `Signed in as ${fx.account}` : '';
 }
 document.querySelectorAll('#view-settings [data-check]').forEach((b) => (b.onclick = async () => { b.disabled = true; await syncEverything(b.dataset.check.split(',')); b.disabled = false; paintHealth(); paintSyncTimes(); }));
 $('s-dox-on').onchange = async (e) => { await window.api.setSettings({ faxes: { ...(settings.faxes || {}), enabled: e.target.checked } }); settings = await window.api.getSettings(); paintHealth(); toast(e.target.checked ? 'Fax checks on' : 'Fax checks off'); };
+$('s-dox-back').onchange = async (e) => { await window.api.setSettings({ faxes: { ...(settings.faxes || {}), backDays: Number(e.target.value) } }); settings = await window.api.getSettings(); toast('Saved'); };
 $('s-dox-connect').onclick = async () => { if (await window.api.faxSignIn()) { toast('Doximity connected'); syncEverything(['faxes']); } paintHealth(); };
 $('s-dox-out').onclick = async () => { await window.api.faxSignOut(); paintHealth(); };
 // Templates: a compact list. Click a row to edit it in place; tap a chip to insert a placeholder;

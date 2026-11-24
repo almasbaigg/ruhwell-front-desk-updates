@@ -717,33 +717,46 @@ function readSearchRows() {
 }
 const norm = (v) => String(v || '').toLowerCase().replace(/[^a-z]/g, '');
 // Finds the chart for a patient the user picked and reads its header fresh from RxNT (for the confirm screen).
+// The chart must be this patient: same chart number (the app's patient id), or same name AND date of birth.
+// Anything missing or conflicting fails closed.
+function sameChart(p, who) {
+  if (!p) return false;
+  const chartOk = who.patientId && p.chart ? String(p.chart) === String(who.patientId) : null;
+  if (chartOk === false) return false;
+  const nameOk = norm(p.last) === norm(who.last) && norm(p.first) === norm(who.first);
+  const dobOk = !!who.dob && !!p.dob && p.dob === String(who.dob).slice(0, 10);
+  return chartOk === true ? nameOk || dobOk : nameOk && dobOk;
+}
 async function findChart(pid, who) {
   const win = openReader(pid);
   try {
     const o = await openEhr(win); if (o === 'login') return { needsLogin: true };
     const q = `lname=${encodeURIComponent(String(who.last || '').slice(0, 30))}${who.first ? '&fname=' + encodeURIComponent(String(who.first).slice(0, 1)) : ''}`;
     await win.loadURL('https://app2.rxnt.com/ehrv9/legacy/prescriberDashboard#/dashboard/search?' + q).catch(() => {});
-    let hit = null;
-    for (let i = 0; i < 30 && !win.isDestroyed() && !hit; i++) {
+    for (let i = 0; i < 30 && !win.isDestroyed(); i++) {
       await sleep(700);
       const r = await call(win, readSearchRows);
       if (r.state === 'login') return { needsLogin: true };
-      if (r.state === 'dashboard') { const h = await chartHeader(win); if (h.patient) hit = h.patient; break; }
+      if (r.state === 'dashboard') {   // RxNT jumped straight into a chart: it must be this patient
+        const h = await chartHeader(win); if (h.needsLogin) return h;
+        return h.patient && sameChart(h.patient, who) ? { patient: h.patient } : { error: 'mismatch' };
+      }
       if (r.state !== 'ok') continue;
-      const byChart = r.rows.filter((x) => who.patientId && x.chart && x.chart === String(who.patientId));
-      const byName = r.rows.filter((x) => norm(x.last) === norm(who.last) && norm(x.first) === norm(who.first) && (!who.dob || x.dob === String(who.dob).slice(0, 10)));
-      const pick = byChart.length === 1 ? byChart[0] : byName.length === 1 ? byName[0] : null;
-      if (!pick) return { error: byName.length > 1 ? 'several' : 'notfound' };
+      await sleep(900); const r2 = await call(win, readSearchRows);   // let the list settle; it must read the same twice
+      if (r2.state !== 'ok' || r2.rows.length !== r.rows.length) continue;
+      const matches = r2.rows.filter((x) => sameChart(x, who));
+      if (matches.length !== 1) return { error: matches.length > 1 ? 'several' : 'notfound' };
+      const pick = matches[0];
       await win.loadURL(patientDashUrl(pick.internalId, 'PatientDocuments')).catch(() => {});
       const h = await chartHeader(win); if (h.needsLogin) return h;
-      hit = h.patient || null;
+      if (!h.patient || String(h.patient.internalId) !== String(pick.internalId) || !sameChart(h.patient, who)) return { error: 'mismatch' };
+      return { patient: h.patient };
     }
-    if (!hit) return { error: 'notfound' };
-    return { patient: hit };
+    return { error: 'notfound' };
   } finally { if (!win.isDestroyed()) win.destroy(); }
 }
 // Runs in the patient chart (PatientDashboard iframe). Steps: open the Add form, fill it, save.
-function uploadStep(step, b64, fileName, title, category, docDate, expectId) {
+function uploadStep(step, b64, fileName, title, category, docDate, expectId, mime) {
   const f = [...document.querySelectorAll('iframe')].find((x) => /PatientDashboard/.test(x.src));
   const d = f && f.contentDocument, w = f && f.contentWindow; if (!d || !w) return { state: 'wait' };
   let us = null; d.querySelectorAll('.ng-scope').forEach((el) => { try { const s = w.angular.element(el).scope(); if (s && s.UserSession && s.UserSession.Patient) us = s.UserSession; } catch (e) {} });
@@ -760,49 +773,80 @@ function uploadStep(step, b64, fileName, title, category, docDate, expectId) {
     if (!fi) return { state: 'wait' };
     const form = fi.closest('form');
     const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-    const file = new File([bytes], fileName, { type: 'application/pdf' });
-    const dt = new DataTransfer(); dt.items.add(file); fi.files = dt.files;
-    fi.dispatchEvent(new Event('change', { bubbles: true }));
-    const setv = (el, v) => { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); };
+    // Objects from the chart page's own window, so RxNT's upload code accepts them.
+    const file = new w.File([bytes], fileName, { type: mime || 'application/pdf' });
+    const dt = new w.DataTransfer(); dt.items.add(file); fi.files = dt.files;
+    fi.dispatchEvent(new w.Event('change', { bubbles: true }));
+    const setv = (el, v) => { el.value = v; el.dispatchEvent(new w.Event('input', { bubbles: true })); el.dispatchEvent(new w.Event('change', { bubbles: true })); };
     const t = form.querySelector('[ng-model="vm.PatientDocumentsInfo.Title"]'); if (t) setv(t, title);
     const ds = form.querySelector('[ng-model="vm.PatientDocumentsInfo.Description"]'); if (ds) setv(ds, 'Fax received by Doximity, filed by Ruhwell Front Desk');
     const dd = form.querySelector('[ng-model="vm.PatientDocumentsInfo.DocumentDate"]'); if (dd) setv(dd, docDate);
     const sel = form.querySelector('select[name="CategoryId"]');
-    if (sel) { const o = [...sel.options].find((x) => x.text.trim().toLowerCase() === String(category).toLowerCase()) || [...sel.options].find((x) => x.text.trim() === 'Other'); if (o) { sel.value = o.value; sel.dispatchEvent(new Event('change', { bubbles: true })); } }
-    return { state: 'filled', valid: !/ng-invalid/.test(form.className) };
+    if (sel) { const o = [...sel.options].find((x) => x.text.trim().toLowerCase() === String(category).toLowerCase()) || [...sel.options].find((x) => x.text.trim() === 'Other'); if (o) { sel.value = o.value; sel.dispatchEvent(new w.Event('change', { bubbles: true })); } }
+    return { state: 'filled' };
   }
-  if (step === 'save') {
-    const save = fi && [...fi.closest('form').querySelectorAll('input[type=button], button')].find((b) => /^save$/i.test((b.value || b.innerText || '').trim()));
-    if (!save) return { state: 'wait' };
-    save.click(); return { state: 'saved' };
+  if (step === 'ready') {   // everything really in place: one file of the right size, title, category, valid form, Save enabled
+    if (!fi) return { state: 'wait' };
+    const form = fi.closest('form'), n = fi.files ? fi.files.length : 0, size = n ? fi.files[0].size : 0;
+    const t = form.querySelector('[ng-model="vm.PatientDocumentsInfo.Title"]'), sel = form.querySelector('select[name="CategoryId"]');
+    const save = [...form.querySelectorAll('input[type=button], button')].find((b) => /^save$/i.test((b.value || b.innerText || '').trim()));
+    const ok = n === 1 && size === Math.floor(b64.length * 3 / 4) - (b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0) && t && t.value === title && sel && sel.selectedIndex > 0 && !/ng-invalid/.test(form.className) && save && !save.disabled;
+    return ok ? { state: 'ready' } : { state: 'wait', why: { n, size, title: !!(t && t.value === title), cat: !!(sel && sel.selectedIndex > 0), valid: !/ng-invalid/.test(form.className), save: !!(save && !save.disabled) } };
+  }
+  if (step === 'save') {   // re-check right before the single click: right chart (checked above), one file, title, valid form, Save enabled
+    if (!fi) return { state: 'wait' };
+    if (window.__rmSaveClicked) return { state: 'saved' };   // never a second click
+    const form = fi.closest('form'), t = form.querySelector('[ng-model="vm.PatientDocumentsInfo.Title"]');
+    const save = [...form.querySelectorAll('input[type=button], button')].find((b) => /^save$/i.test((b.value || b.innerText || '').trim()));
+    if (!(fi.files && fi.files.length === 1 && t && t.value === title && !/ng-invalid/.test(form.className) && save && !save.disabled)) return { state: 'notready' };
+    window.__rmSaveClicked = 1; save.click(); return { state: 'saved' };
   }
   if (step === 'check') {   // the form closed and a row with our title is in the chart's documents
     if (fi && fi.offsetParent) return { state: 'wait' };
     const rf = d.querySelector('[ng-click="vm.noteChange()"]'); if (rf && !window.__rmRefreshed) { window.__rmRefreshed = 1; rf.click(); return { state: 'wait' }; }
-    const found = [...d.querySelectorAll('table tbody tr')].some((r) => (r.innerText || '').includes(title));
+    const found = [...d.querySelectorAll('table tbody tr td')].some((td) => (td.innerText || '').trim() === title);   // exact title, in this chart
     return { state: found ? 'ok' : 'wait' };
   }
   return { state: 'wait' };
 }
-async function uploadToChart(pid, internalId, pdfBase64, { fileName, title, category, docDate }) {
+// Look for the document in the chart (exact title). Used after Save, and on its own after a crash or an uncertain result.
+async function verifyInChart(pid, internalId, title) {
+  const win = openReader(pid);
+  try {
+    const o = await openEhr(win); if (o === 'login') return { needsLogin: true };
+    for (let k = 0; k < 2; k++) {
+      await win.loadURL(patientDashUrl(internalId, 'PatientDocuments')).catch(() => {});
+      const h = await chartHeader(win); if (h.needsLogin) return h; if (!h.patient || String(h.patient.internalId) !== String(internalId)) return { unknown: true };
+      let read = false;
+      for (let i = 0; i < 14 && !win.isDestroyed(); i++) {
+        await sleep(800);
+        const r = await call(win, uploadStep, 'check', '', '', title, '', '', internalId, '');
+        if (r.state === 'ok') return { found: true };
+        if (r.state === 'wait') read = await call(win, () => { const f = [...document.querySelectorAll('iframe')].find((x) => /PatientDashboard/.test(x.src)); const d = f && f.contentDocument; return !!(d && d.querySelectorAll('table tbody tr').length); }) === true;
+      }
+      if (!read) return { unknown: true };   // couldn't read the documents list: that proves nothing
+    }
+    return { found: false };   // read the intended chart's documents twice and the title isn't there
+  } finally { if (!win.isDestroyed()) win.destroy(); }
+}
+async function uploadToChart(pid, internalId, pdfBase64, { fileName, title, category, docDate, mime, onSaving }) {
   const win = openReader(pid);
   try {
     const o = await openEhr(win); if (o === 'login') return { needsLogin: true };
     await win.loadURL(patientDashUrl(internalId, 'PatientDocuments')).catch(() => {});
     const h = await chartHeader(win); if (h.needsLogin) return h; if (!h.patient || String(h.patient.internalId) !== String(internalId)) return { error: 'chart' };
-    const run = async (step, n = 25) => { for (let i = 0; i < n && !win.isDestroyed(); i++) { const r = await call(win, uploadStep, step, step === 'fill' ? pdfBase64 : '', fileName, title, category, docDate, internalId); if (r.state === 'wrongpatient') return r; if (!['wait', 'loading'].includes(r.state)) return r; await sleep(700); } return { state: 'timeout' }; };
+    const run = async (step, n = 25) => { for (let i = 0; i < n && !win.isDestroyed(); i++) { const r = await call(win, uploadStep, step, ['fill', 'ready'].includes(step) ? pdfBase64 : '', fileName, title, category, docDate, internalId, mime); if (r.state === 'wrongpatient') return r; if (!['wait', 'loading'].includes(r.state)) return r; await sleep(700); } return { state: 'timeout' }; };
     let r = await run('open'); if (r.state !== 'open') return { error: r.state === 'wrongpatient' ? 'chart' : 'form' };
     await sleep(500);
     r = await run('fill'); if (r.state !== 'filled') return { error: r.state === 'wrongpatient' ? 'chart' : 'form' };
-    await sleep(1200);
-    r = await run('save'); if (r.state !== 'saved') return { error: 'form' };
-    // Verify: reload the chart's documents and look for the new title.
+    r = await run('ready', 20); if (r.state !== 'ready') return { error: r.state === 'wrongpatient' ? 'chart' : 'notready' };   // nothing saved
+    if (onSaving) onSaving();   // from here on the result is uncertain until the chart shows it
+    r = await run('save', 6);
+    if (r.state === 'notready') return { error: 'notready' };   // nothing clicked, nothing saved
+    if (r.state !== 'saved') return { error: 'uncertain' };
     await sleep(2500);
-    for (let i = 0; i < 3; i++) {
-      r = await run('check', 12); if (r.state === 'ok') return { ok: true };
-      await win.loadURL(patientDashUrl(internalId, 'PatientDocuments')).catch(() => {}); await chartHeader(win);
-    }
-    return { error: 'verify' };
+    r = await run('check', 15); if (r.state === 'ok') return { ok: true };
+    return { error: 'uncertain' };   // never press Save again on our own: check the chart instead
   } finally { if (!win.isDestroyed()) win.destroy(); }
 }
 
@@ -880,4 +924,4 @@ async function readMessages(pid) {
   return { me: { id: me.id, name: (me.profile && me.profile.name) || '' }, conversations: out };
 }
 
-module.exports = { findChart, uploadToChart, autoSignIn, savedLogin, forgetLogin, argCode, readMessages, keepSignedIn, ping, fetchDay, openReader, listLetter, openPatient, localDate, signIn, status, logout, readPendingOnce };
+module.exports = { partitionFor, sameChart, verifyInChart, findChart, uploadToChart, autoSignIn, savedLogin, forgetLogin, argCode, readMessages, keepSignedIn, ping, fetchDay, openReader, listLetter, openPatient, localDate, signIn, status, logout, readPendingOnce };

@@ -105,9 +105,15 @@ function paintSync(st) {
   // The one line: green when all is well, otherwise the first thing that needs you.
   const backupFailed = st.backup && st.backup.ok === false && st.backup.failedAt && Date.now() - new Date(st.backup.failedAt) < 2 * 864e5;
   const problem = st.locked ? 'Saved data locked · restart the app' : !st.rxnt ? 'RxNT sign-in needed' : !st.ringrx ? 'RingRx sign-in needed' : !G.connected ? 'Gmail sign-in needed' : (st.alerts || {}).lastError ? 'Can\'t reach RxNT · retrying' : (st.messages || {}).error === 'failed' ? 'Can\'t reach RingRx · retrying' : backupFailed ? 'Backup failed · see Settings' : null;
+  // Same source as Settings → Connections: the real checks. Red first, then amber; a source that isn't set up is named.
+  const A = st.accounts || {}, NAMES = { rxnt: 'RxNT', ringrx: 'RingRx', gmail: 'Gmail', doximity: 'Doximity' };
+  const red = Object.keys(NAMES).find((k) => (A[k] || {}).level === 'red'), amber = Object.keys(NAMES).find((k) => (A[k] || {}).level === 'amber');
+  const accProblem = st.locked ? '' : red ? `${NAMES[red]} sign-in needed` : amber ? `${NAMES[amber]}: ${(A[amber].why || 'needs a look')}` : '';
+  const notSetUp = Object.keys(NAMES).filter((k) => (A[k] || {}).why === 'not set up').map((k) => NAMES[k]);
   const working = busy.high || busy.low || P.running || (st.messages || {}).running;
-  $('status-line').className = 'status-line ' + (problem ? 'warn' : working ? 'busy' : 'on');
-  $('status-text').textContent = problem || (working ? 'Syncing…' : `All connected · ${minsAgo((st.alerts || {}).lastRun || (st.schedule || {}).at) || 'just now'}`);
+  const issue = (st.locked && problem) || accProblem || problem;
+  $('status-line').className = 'status-line ' + (issue ? 'warn' : working ? 'busy' : 'on');
+  $('status-text').textContent = issue || (working ? 'Syncing…' : `${notSetUp.length ? 'Connected · ' + notSetUp.join(', ') + ' not set up' : 'All connected'} · ${minsAgo((st.alerts || {}).lastRun || (st.schedule || {}).at) || 'just now'}`);
 }
 async function paintConnections() { const st = await window.api.syncStatus(); accounts.rxnt.connected = st.rxnt; accounts.ringrx.connected = st.ringrx; paintSync(st); }
 window.api.onSync((st) => { paintSync(st); if (!st.patients.running && view === 'patients') loadPatients(true); if (view === 'settings') paintSyncTimes(); });

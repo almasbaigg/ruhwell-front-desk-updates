@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; media-src blob:; frame-src blob:; object-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; media-src blob:; frame-src blob:; object-src blob:; style-src 'self' 'unsafe-inline'; script-src 'self'">
 <title>Ruhwell Front Desk</title>
 <link rel="stylesheet" href="styles.css">
 </head>
@@ -233,7 +233,7 @@
         <div class="conn-row"><span class="health" id="s-rxnt-health"></span><div class="conn-main"><strong>RxNT</strong><span class="muted small" id="s-rxnt-state"></span><span class="muted small" id="s-rxnt-saved"></span><span class="sx" id="sx-rxnt"></span></div><div class="row-gap"><button class="btn small" data-check="schedule,rx,portal">Check &amp; sync</button><button class="btn small" id="s-rxnt-connect">Reconnect</button><button class="btn ghost small" id="s-rxnt-out">Sign out</button></div></div>
         <div class="conn-row"><span class="health" id="s-ringrx-health"></span><div class="conn-main"><strong>RingRx</strong><span class="muted small" id="s-ringrx-state"></span><span class="from-line" id="s-from"></span><span class="sx" id="sx-comms"></span></div><div class="row-gap"><button class="btn small" data-check="comms">Check &amp; sync</button><button class="btn ghost small" id="s-ringrx-out">Sign out</button></div></div>
         <div class="conn-row"><span class="health" id="s-gmail-health"></span><div class="conn-main"><strong>Gmail</strong><span class="muted small" id="s-gmail-state"></span><span class="sx" id="sx-gmail"></span></div><div class="row-gap"><button class="btn small" data-check="gmail">Check &amp; sync</button><button class="btn small" id="s-gmail-connect">Sign in</button><button class="btn ghost small" id="s-gmail-out">Sign out</button></div></div>
-        <div class="conn-row"><span class="health" id="s-doximity-health"></span><div class="conn-main"><strong>Doximity <small class="muted">(faxes)</small></strong><span class="muted small" id="s-dox-state"></span><span class="muted small" id="s-dox-saved"></span><span class="sx" id="sx-dox"></span></div><div class="row-gap"><label class="switch" title="Check for faxes"><input type="checkbox" id="s-dox-on"><span></span></label><button class="btn small" data-check="faxes">Check &amp; sync</button><button class="btn small" id="s-dox-connect">Sign in</button><button class="btn ghost small" id="s-dox-out">Sign out</button></div></div>
+        <div class="conn-row"><span class="health" id="s-doximity-health"></span><div class="conn-main"><strong>Doximity <small class="muted">(faxes)</small></strong><span class="muted small" id="s-dox-state"></span><span class="muted small" id="s-dox-saved"></span><span class="sx" id="sx-dox"></span><label class="muted small dox-back">First check brings in faxes from <select id="s-dox-back"><option value="0">everything in the inbox</option><option value="1">today</option><option value="3">the last 3 days</option><option value="7">the last 7 days</option></select></label></div><div class="row-gap"><label class="switch" title="Check for faxes"><input type="checkbox" id="s-dox-on"><span></span></label><button class="btn small" data-check="faxes">Check &amp; sync</button><button class="btn small" id="s-dox-connect">Sign in</button><button class="btn ghost small" id="s-dox-out">Sign out</button></div></div>
         <div class="conn-row"><span class="health" id="s-pat-health"></span><div class="conn-main"><strong>Patient list</strong><span class="sx" id="sx-pat"></span></div><span class="muted small">every 4 hours</span></div>
         <span class="hidden" id="sx-rx"></span>
       </div>
@@ -327,6 +327,7 @@
 <script src="js/texts.js"></script>
 <script src="js/calls.js"></script>
 <script src="js/rx.js"></script>
+<script src="vendor/pdfjs/pdf.min.js"></script>
 <script src="js/faxes.js"></script>
 <script src="js/settings.js"></script>
 <script src="js/start.js"></script>

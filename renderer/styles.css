@@ -964,3 +964,51 @@ em.vm{cursor:pointer}
 .sc-body li.off{color:var(--faint)}
 .sc-body li.off em{color:var(--faint)}
 .sc-body li.off i{border-style:dashed;border-color:var(--line)}
+.fx-prev{display:flex;flex-direction:column}
+.fx-tools{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--line-2);font-size:12px;color:var(--ink-2)}
+.fx-tools .icon-btn{width:28px;height:28px;font-size:15px}
+.fx-pages{flex:1;overflow:auto;display:grid;justify-items:center;gap:12px;padding:12px;background:var(--porcelain)}
+.fx-pages canvas{box-shadow:var(--shadow-1);background:#fff;max-width:none}
+.dox-back select{font:inherit;border:1px solid var(--line);border-radius:8px;padding:1px 4px;background:var(--white)}
+/* Cancelled & moved */
+.moved-tag{display:inline-block;font-size:12px;font-weight:600;color:var(--muted);background:#efebe5;border-radius:999px;padding:2px 9px}
+.visit-line.moved{opacity:.6}.visit-line.moved .nm{text-decoration:none}
+.item.moved-item{opacity:.62;padding-top:8px;padding-bottom:8px;box-shadow:none;background:transparent;border-style:dashed}
+.sum.moved i{background:var(--faint)}
+/* Time strip, redone */
+.timestrip2{margin:2px 0 12px}
+.ts-track{position:relative;height:30px;border-radius:10px;background:var(--porcelain);border:1px solid var(--line-2);overflow:hidden}
+.ts-b{position:absolute;top:5px;bottom:5px;border:0;border-radius:6px;padding:0;cursor:pointer;transition:filter .2s}
+.ts-b:hover{filter:brightness(.92)}
+.ts-b.booked{background:#e6d6bd}.ts-b.conf{background:var(--teal-200,#8fbcb8)}.ts-b.in{background:var(--sage)}.ts-b.notin{background:#cfcac3}
+.ts-b.past{opacity:.55}.ts-b.live{box-shadow:0 0 0 2px var(--teal)}
+.ts-free{position:absolute;top:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--faint);white-space:nowrap;overflow:hidden;pointer-events:none}
+.ts-now{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:var(--terra);border-radius:2px}
+.ts-ticks{position:relative;height:16px}
+.ts-tick{position:absolute;top:0;width:1px;height:4px;background:var(--line)}
+.ts-tick em{position:absolute;top:4px;left:0;transform:translateX(-50%);font-style:normal;font-size:10.5px;color:var(--faint)}
+/* Faxes: sorting */
+.fx-chips{display:flex;flex-wrap:wrap;gap:6px;padding:4px 6px 10px}
+.fx-chips button{border:1px solid var(--line);background:var(--white);border-radius:999px;padding:4px 10px;font:500 12px var(--sans);color:var(--ink-2);cursor:pointer}
+.fx-chips button.on{background:var(--teal);border-color:var(--teal);color:#fff}
+.fx-chips em{font-style:normal;opacity:.7;margin-left:2px}
+.fx-cat-tag{font-style:normal;font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:999px;margin-right:6px;background:#efebe5;color:var(--ink-2)}
+.fx-cat-tag.c-priorauthorization{background:var(--terra-50);color:var(--terra-ink)}
+.fx-cat-tag.c-pharmacy{background:var(--teal-50);color:var(--teal)}
+.fx-cat-tag.c-labresults{background:var(--sage-50);color:var(--sage-ink)}
+.fx-cat-tag.c-notice{background:#f1f0ee;color:var(--muted)}
+.fx-sug{display:block;font-size:11.5px;color:var(--teal);margin-top:2px}
+.fx-sugs{display:grid;gap:4px;padding:8px;border-radius:12px;background:var(--teal-50)}
+.fx-pt.sug{background:var(--white)}
+/* the search box: one clean border, no inner box */
+.fx-side .search-box{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:12px;padding:0 12px;background:var(--white);height:42px}
+.fx-side .search-box:focus-within{border-color:var(--teal);box-shadow:0 0 0 3px rgba(0,87,88,.12)}
+.fx-side .search-box svg{width:16px;height:16px;flex:none;stroke:var(--muted);fill:none;stroke-width:2}
+.fx-side .search-box input{flex:1;border:0;outline:0;background:transparent;font:inherit;font-size:13.5px;box-shadow:none;padding:0;height:100%}
+/* Calls: time on the left, what happened in plain words */
+.call-row { grid-template-columns: 78px minmax(0, 1fr) minmax(170px, 260px) auto; }
+.c-time { display: flex; flex-direction: column; gap: 1px; }
+.c-time b { font-size: 13.5px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.c-time span { font-size: 11.5px; color: var(--muted); }
+.call-row.due .c-time span { color: var(--terra-ink); font-weight: 600; }
+.call-row .kind { font-size: 12.5px; white-space: normal; line-height: 1.35; }

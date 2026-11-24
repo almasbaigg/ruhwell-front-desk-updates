@@ -16,15 +16,23 @@ const callIcon = (c) => c.voicemail ? '<svg viewBox="0 0 24 24"><circle cx="7" c
 const callKind = (c) => c.voicemail ? 'Voicemail' : c.missed ? 'Missed' : c.inbound ? 'Incoming' : 'Outgoing';
 const dur = (s) => !s ? '' : s >= 60 ? `${Math.round(s / 60)} min` : `${s} sec`;
 
+// RingRx-style timing: the time on the left, then exactly what happened ("Inbound · 0:43 · Left voicemail 0:16").
+const mmss = (s) => `${Math.floor((s || 0) / 60)}:${String(Math.round(s || 0) % 60).padStart(2, '0')}`;
+function callDetail(c) {
+  if (!c.inbound) return `Outbound · ${mmss(c.secs)}${c.secs ? '' : ' · no answer'}`;
+  if (c.voicemail) return `Inbound${c.secs ? ' · ' + mmss(c.secs) : ''} · Left voicemail${c.vmSecs ? ' ' + mmss(c.vmSecs) : ''}${c.vmAt ? ' at ' + fmtTime(new Date(c.vmAt)) : ''}`;
+  if (c.noMessage) return `Inbound · ${mmss(c.secs)} · Hung up at voicemail, no message`;
+  if (c.answered) return `Inbound · ${mmss(c.secs)} · Answered`;
+  return `Inbound · Missed${c.secs ? ' · rang ' + mmss(c.secs) : ''}`;
+}
 function callRow(c, due) {
   const unknown = c.who.kind === 'unknown';
   const h = hoursSince(c.at), urg = due ? ` u-${h >= 4 ? 'red' : h >= 1 ? 'amber' : 'green'}` : '';
   return `<div class="call-row ${due ? 'due' : ''}${urg} ${c.missed ? 'missed' : ''}" data-id="${esc(c.id)}">
-    <span class="avatar ${unknown ? 'unk' : ''}">${whoInitials(c.who)}</span>
-    <div class="who"><b>${esc(whoName(c.who, c.phone))}${c.voicemail && !c.heardAt && !c.spam ? '<i class="dot-new"></i>' : ''}</b><span>${unknown ? '' : esc(fmtPhone(c.phone)) + ' '}${whoTag(c.who)}${c.inbound && (c.missed || c.voicemail) && !c.spam ? `<span class="rstat ${c.answer ? 'ok' : 'wait'}">${c.answer ? esc(answerLabel(c.answer)) : 'Unanswered'}</span>` : ''}${c.voicemail ? `<span class="rstat ${c.heardAt ? 'ok' : 'new'}">${c.heardAt ? 'Listened ' + esc(fmtTime(new Date(c.heardAt))) : 'New voicemail'}</span>` : ''}${c.transcription ? `<em class="vm">“${esc(c.transcription.slice(0, 120))}”</em>` : ''}</span>${c.voicemail ? '<div class="vm-player"></div>' : ''}</div>
-    <span class="kind k-${c.missed ? 'missed' : c.inbound ? 'in' : 'out'}">${callIcon(c)}${callKind(c)}${dur(c.secs) ? ' · ' + dur(c.secs) : ''}</span>
-    <time>${esc(due ? 'waiting ' + waitLabel(c.at) : fmtTime(c.at))}</time>
-    <div class="row-gap acts">${c.voicemail ? `<button class="btn act-play" title="Play voicemail"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>Play</button>` : ''}${!(c.who.dnt) && !c.spam ? `<button class="btn outline-teal act-text">${I.msg}Text</button>` : ''}${c.inbound && c.who.kind !== 'patient' ? (c.spam ? '<button class="btn act-block">Block in RingRx</button><button class="btn act-notspam">Not spam</button>' : `<button class="icon-btn act-spam" title="Spam">${I.x}</button>`) : ''}${unknown ? `<button class="btn act-who" title="Who is this?">${I.user}</button>` : ''}${due ? `<button class="icon-btn act-done" title="Called back / done">${I.check}</button>` : ''}</div>
+    <div class="c-time"><b>${esc(fmtTime(new Date(c.at)))}</b><span>${esc(due ? 'waiting ' + waitLabel(c.at) : dayLabel(c.at))}</span></div>
+    <div class="who"><b>${esc(whoName(c.who, c.phone))}${c.voicemail && !c.heardAt && !c.spam ? '<i class="dot-new"></i>' : ''}</b><span>${unknown ? '' : esc(fmtPhone(c.phone)) + ' '}${whoTag(c.who)}${c.inbound && (c.missed || c.voicemail) && !c.spam ? `<span class="rstat ${c.answer ? 'ok' : 'wait'}">${c.answer ? esc(answerLabel(c.answer)) : 'Unanswered'}</span>` : ''}${c.voicemail ? `<span class="rstat ${c.heardAt ? 'ok' : 'new'}">${c.heardAt ? 'Listened ' + esc(fmtTime(new Date(c.heardAt))) : 'New voicemail'}</span>` : c.noMessage ? '<span class="rstat">Went to voicemail · no message</span>' : ''}${c.transcription ? `<em class="vm">“${esc(c.transcription.slice(0, 120))}”</em>` : ''}</span>${c.voicemail ? '<div class="vm-player"></div>' : ''}</div>
+    <span class="kind k-${c.missed ? 'missed' : c.inbound ? 'in' : 'out'}">${callIcon(c)}${esc(callDetail(c))}</span>
+    <div class="row-gap acts">${c.voicemail && c.vmId ? `<button class="btn act-play" title="Play voicemail"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>Play</button>` : ''}${!(c.who.dnt) && !c.spam ? `<button class="btn outline-teal act-text">${I.msg}Text</button>` : ''}${c.inbound && c.who.kind !== 'patient' ? (c.spam ? '<button class="btn act-block">Block in RingRx</button><button class="btn act-notspam">Not spam</button>' : `<button class="icon-btn act-spam" title="Spam">${I.x}</button>`) : ''}${unknown ? `<button class="btn act-who" title="Who is this?">${I.user}</button>` : ''}${due ? `<button class="icon-btn act-done" title="Called back / done">${I.check}</button>` : ''}</div>
   </div>`;
 }
 function renderCalls() {
@@ -70,9 +78,9 @@ async function playVoicemail(c, box, btn) {
   if (vmAudio && vmAudio.dataset.id === c.id) { vmAudio.paused ? vmAudio.play() : vmAudio.pause(); return; }
   if (vmAudio) { vmAudio.pause(); URL.revokeObjectURL(vmAudio.src); vmAudio.closest('.vm-player') && (vmAudio.closest('.vm-player').innerHTML = ''); vmAudio = null; }
   btn.disabled = true; box.innerHTML = '<span class="muted small">Loading…</span>';
-  const r = await window.api.vmAudio(c.vmId || String(c.id).replace(/^vm-/, ''), c.media || '');
+  const r = await window.api.vmAudio(c.vmId, c.media || '');
   btn.disabled = false;
-  if (!r) { box.innerHTML = `<span class="muted small">RingRx didn't share this recording.</span> <button class="btn small act-ringrx">Listen in RingRx</button>`; box.querySelector('.act-ringrx').onclick = () => window.api.openRingrx('messages'); return; }
+  if (!r || r.error) { box.innerHTML = `<span class="muted small">Couldn't play this one here${r && r.error ? ' (' + esc(String(r.error).slice(0, 40)) + ')' : ''}.</span> <button class="btn small act-ringrx">Listen in RingRx</button>`; box.querySelector('.act-ringrx').onclick = () => window.api.openRingrx('voicemail'); return; }
   const bytes = Uint8Array.from(atob(r.data), (ch) => ch.charCodeAt(0));
   const a = new Audio(URL.createObjectURL(new Blob([bytes], { type: r.mime })));
   a.dataset.id = c.id; vmAudio = a;
@@ -86,5 +94,5 @@ async function playVoicemail(c, box, btn) {
   pp.onclick = () => (a.paused ? a.play() : a.pause());
   box.querySelector('.vm-track').onclick = (e) => { const r2 = e.currentTarget.getBoundingClientRect(); if (a.duration) a.currentTime = ((e.clientX - r2.left) / r2.width) * a.duration; };
   box.querySelectorAll('.vm-speed button').forEach((b) => (b.onclick = () => { a.playbackRate = +b.dataset.s; box.querySelectorAll('.vm-speed button').forEach((x) => x.classList.toggle('on', x === b)); }));
-  icon(); a.play().catch(() => {});
+  icon(); a.onerror = () => window.api.vmPlayFailed('cannot decode'); a.play().catch((e) => { window.api.vmPlayFailed(e && e.name); box.querySelector('.vm-time').textContent = 'Tap ▶ to play'; });
 }

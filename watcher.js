@@ -29,7 +29,7 @@ function pairMoves(newOnes, goneOnes) {
   // Only within 2 weeks of each other: a cancellation and a booking further apart are two separate changes.
   // Same patient = same chart id, or (a second chart under the same name) the same name and date of birth.
   const key = (a) => `${String(a.last || '').toLowerCase().replace(/[^a-z]/g, '')}|${String(a.first || '').toLowerCase().replace(/[^a-z]/g, '')}|${String(a.dob || '').slice(0, 10)}`;
-  const same = (n, g) => g.patientId === n.patientId || (!!n.dob && !!g.dob && key(n) === key(g));
+  const same = (n, g) => (!!n.patientId && !!g.patientId && String(g.patientId) === String(n.patientId)) || (!!n.dob && !!g.dob && !!n.last && key(n) === key(g));   // missing ids never match each other
   const cand = newOnes.map((n) => goneOnes.filter((g) => same(n, g)).map((g) => ({ n, g, d: Math.abs(new Date(n.start) - new Date(g.start)) })).filter((x) => x.d <= 14 * 864e5))
     .flat().sort((x, y) => x.d - y.d);
   for (const { n, g } of cand) { if (pairs.has(n.appointmentId) || used.has(g.appointmentId)) continue; pairs.set(n.appointmentId, g); used.add(g.appointmentId); }
@@ -48,7 +48,7 @@ function diff(prev, cur, prevRange) {
   const movedFrom = new Set([...moves.values()].map((g) => g.appointmentId));
   for (const a of added) {
     // RxNT often "moves" a visit by cancelling it and booking a new one. Same patient + same time = just an edit.
-    const twin = Object.values(cur).find((x) => x !== a && x.patientId === a.patientId && x.start === a.start && isCancel(x));
+    const twin = Object.values(cur).find((x) => x !== a && !!x.patientId && x.patientId === a.patientId && x.start === a.start && isCancel(x));
     // Cancelled and booked again into the same slot: worth seeing (it often follows a patient's call or portal change).
     if (twin && !isCancel(a)) { events.push({ kind: 'rebooked', appt: a, text: `Rebooked: ${name(a)}, ${when(a.start)}`, quiet: !(prev[twin.appointmentId] && !isCancel(prev[twin.appointmentId])) }); continue; }
     if (isCancel(a)) continue;
@@ -128,7 +128,9 @@ async function check({ silent = false } = {}) {
     let out = [...events.filter((e) => !isCx(e)), ...confirmed, ...corrections];
     const pid = (e) => e.appt && e.appt.patientId;
     const pendingCx = [...waiting.map((p) => p.e), ...fresh], usedCx = new Set();
-    const near = (list, nw) => list.filter((c) => pid(c) === pid(nw) && !usedCx.has(c)).sort((x, y) => Math.abs(new Date(x.appt.start) - new Date(nw.appt.start)) - Math.abs(new Date(y.appt.start) - new Date(nw.appt.start)))[0];
+    // Same patient only when both have an id (two unknown patients are never "the same"), or same name + DOB.
+    const samePt = (c, nw) => (pid(c) && pid(nw) && String(pid(c)) === String(pid(nw))) || (c.appt && nw.appt && c.appt.dob && nw.appt.dob && c.appt.last && `${c.appt.last}|${c.appt.first}|${String(c.appt.dob).slice(0, 10)}`.toLowerCase() === `${nw.appt.last}|${nw.appt.first}|${String(nw.appt.dob).slice(0, 10)}`.toLowerCase());
+    const near = (list, nw) => list.filter((c) => samePt(c, nw) && !usedCx.has(c)).sort((x, y) => Math.abs(new Date(x.appt.start) - new Date(nw.appt.start)) - Math.abs(new Date(y.appt.start) - new Date(nw.appt.start)))[0];
     for (const nw of out.filter((e) => e.kind === 'new')) {
       const cx = near(pendingCx, nw) || near(confirmed, nw);
       const earlier = cx ? null : near((state.alerts || []).filter((a) => isCx(a) && !a.handled && Date.now() - new Date(a.at) < 864e5), nw);
@@ -146,7 +148,7 @@ async function check({ silent = false } = {}) {
     // A visit cancelled earlier and now rebooked at the same time: if that cancellation was already reported,
     // say it's back on the schedule; either way the old "cancelled" alert no longer needs you.
     for (const e of stamped.filter((x) => x.kind === 'rebooked')) (state.alerts || []).forEach((old) => {
-      if (old.kind === 'cancelled' && !old.handled && old.appt && old.appt.patientId === e.appt.patientId && old.appt.start === e.appt.start) {
+      if (old.kind === 'cancelled' && !old.handled && old.appt && !!old.appt.patientId && old.appt.patientId === e.appt.patientId && old.appt.start === e.appt.start) {
         old.handled = true; e.quiet = false; e.kind = 'backon'; e.text = `Back on the schedule: ${name(e.appt)}, ${when(e.appt.start)}`;
       }
     });

@@ -60,9 +60,11 @@ function confirmAndSend(items, after) {
   }, 1000);
 }
 async function doSend(items, after) {
+  if (doSend.busy) return; doSend.busy = true; setTimeout(() => { doSend.busy = false; }, 3000);   // one confirmed send = one operation
+  const opId = `op-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   openModal(`<h2>Sending…</h2><div class="progress"><div id="m-bar"></div></div>
     <div class="send-list live">${items.map((i, k) => `<div class="send-item" id="si-${k}"><strong>${esc(i.name)}</strong><span class="muted small">${esc(fmtPhone(i.phone))}</span><span class="st">${k === 0 ? '<span class="spinner"></span>Sending' : 'Waiting'}</span></div>`).join('')}</div>`);
-  const results = await window.api.sendBatch(items);
+  const results = await window.api.sendBatch(items, opId);
   // "Remind me if no reply": a checklist task with a reminder, which checks itself off when they reply.
   for (const r of results) if (r.ok && r.follow) {
     const due = r.follow === 't' ? (() => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d.toISOString(); })() : new Date(Date.now() + Number(r.follow) * 36e5).toISOString();

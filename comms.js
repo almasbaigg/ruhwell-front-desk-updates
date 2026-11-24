@@ -9,6 +9,33 @@ const STOP_RE = /^\s*(stop|stopall|unsubscribe|cancel|end|quit|revoke|optout|opt
 const CONFIRM_RE = /^\s*(c|confirm|confirmed|yes|y)\s*[.!]*\s*$/i;
 let running = false;
 
+// A call is a voicemail only when RingRx has the message. Each message is matched to at most one call and
+// each call to at most one message: a mailbox call from the same number that started up to 15 minutes before
+// the message, and only when that pairing is the closest both ways. Anything else gets its own voicemail row.
+function attachVoicemails(list, vms) {
+  const cands = [];
+  for (const v of vms) {
+    const t = new Date(v.at).getTime();
+    for (const c of list) {
+      if (!c.inbound || !c.toMailbox || c.phone !== v.phone) continue;
+      const d = t - new Date(c.at).getTime();
+      if (d >= -2 * 60000 && d <= 15 * 60000) cands.push({ v, c, d: Math.abs(d) });
+    }
+  }
+  const usedV = new Set(), usedC = new Set();
+  for (const x of cands.sort((a, b) => a.d - b.d)) {
+    if (usedV.has(x.v.id) || usedC.has(x.c.id)) continue;
+    const closerForCall = cands.some((y) => y.c === x.c && y.v !== x.v && !usedV.has(y.v.id) && y.d < x.d);
+    const closerForVm = cands.some((y) => y.v === x.v && y.c !== x.c && !usedC.has(y.c.id) && y.d < x.d);
+    if (closerForCall || closerForVm) continue;
+    usedV.add(x.v.id); usedC.add(x.c.id);
+    Object.assign(x.c, { voicemail: true, missed: true, transcription: x.v.transcription, vmId: x.v.id, media: x.v.media, vmSecs: x.v.secs || 0, vmAt: x.v.at });
+  }
+  for (const v of vms) if (!usedV.has(v.id)) list.push({ id: 'vm-' + v.id, inbound: true, phone: v.phone, at: v.at, secs: 0, answered: false, voicemail: true, missed: true, transcription: v.transcription, vmId: v.id, media: v.media, vmSecs: v.secs || 0, vmAt: v.at });
+  for (const c of list) if (c.toMailbox && !c.voicemail) c.noMessage = true;   // went to voicemail, no message left
+  return list;
+}
+
 // Pull texts, voicemails, calls and contacts from RingRx (last 90 days). Returns new inbound texts for reply handling.
 async function sync(pid) {
   if (running || !pid || !ringrx.status(pid).connected) return { skipped: true };
@@ -29,15 +56,10 @@ async function sync(pid) {
     }
     if (calls === null) { ok = false; store.calls.set({ ...prevCalls, error: 'unavailable', failedAt: new Date().toISOString() }); }
     else {
-      // Voicemails come as messages; attach each to its call (same number within 10 minutes) or add it on its own.
       const list = calls.filter(keep);
-      for (const vm of (msgs || []).filter((m) => m.kind === 'voicemail')) {
-        const t = new Date(vm.at).getTime();
-        const call = list.find((c) => c.inbound && c.phone === vm.phone && Math.abs(new Date(c.at) - t) < 10 * 60000);
-        if (call) Object.assign(call, { voicemail: true, missed: true, transcription: vm.transcription, vmId: vm.id, media: vm.media });
-        else list.push({ id: 'vm-' + vm.id, inbound: true, phone: vm.phone, at: vm.at, secs: 0, answered: false, voicemail: true, missed: true, transcription: vm.transcription, vmId: vm.id, media: vm.media });
-      }
-      store.calls.set({ items: list, at: new Date().toISOString(), error: null, v: 2 });
+      const vms = msgs === null ? (prevCalls.vms || []) : (msgs || []).filter((m) => m.kind === 'voicemail' && keep(m)).map((m) => ({ id: m.id, phone: m.phone, at: m.at, transcription: m.transcription || '', media: m.media || '', secs: m.secs || 0 }));
+      attachVoicemails(list, vms);
+      store.calls.set({ items: list, vms, at: new Date().toISOString(), error: null, v: 2 });
     }
     if (contacts) store.ringrxContacts.set({ items: contacts.filter((c) => c.type !== 'directory'), at: new Date().toISOString() });
   } catch (e) {
@@ -71,7 +93,14 @@ function events() {
   const local = store.log.all().filter((h) => h.ok).map((h) => ({ id: 'fd-' + h.at + h.phone, type: 'text', inbound: false, phone: d10(h.phone), at: h.at, body: h.message || '', via: 'Front Desk', by: h.sentBy || '', template: h.template || '' }));
   const rr = (store.ringrxHistory.get().items || []).filter((m) => m.v !== undefined || m.kind || true).map((m) => ({ id: m.id, type: 'text', inbound: !!m.inbound, phone: m.phone, at: m.at, body: m.body || '', via: m.inbound ? '' : 'RingRx', unread: m.unread }));
   // A text sent from Front Desk also shows up in RingRx's sent folder: keep the Front Desk copy.
-  const outRR = rr.filter((m) => !m.inbound && !local.some((h) => h.phone === m.phone && Math.abs(new Date(h.at) - new Date(m.at)) < 10 * 60000));
+  // Same number, same words, within 10 minutes; each Front Desk copy hides at most one RingRx copy.
+  const nb = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase(), used = new Set();
+  const outRR = rr.filter((m) => {
+    if (m.inbound) return false;
+    const h = local.find((x) => !used.has(x.id) && x.phone === m.phone && nb(x.body) === nb(m.body) && Math.abs(new Date(x.at) - new Date(m.at)) < 10 * 60000);
+    if (h) { used.add(h.id); return false; }
+    return true;
+  });
   const calls = (store.calls.get().items || []).map((c) => ({ ...c, type: c.voicemail ? 'voicemail' : 'call' }));
   return [...local, ...outRR, ...rr.filter((m) => m.inbound), ...calls].filter((e) => e.phone);
 }
@@ -184,7 +213,8 @@ function handleReplies(fresh, addEvents) {
     if (STOP_RE.test(m.body)) {
       const prev = (st.optOut || {})[m.phone];
       if (!prev || new Date(m.at) >= new Date(prev.at)) st.optOut = { ...(st.optOut || {}), [m.phone]: { at: m.at } };
-      for (const x of hits) store.patients.update(x.key, { dnt: true, dntReason: 'Replied STOP', dntAt: new Date().toISOString() });
+      // A manual do-not-text stays exactly as Maria set it; STOP is recorded on the number (optOut) either way.
+      for (const x of hits) if (!x.dnt) store.patients.update(x.key, { dnt: true, dntReason: 'Replied STOP', dntAt: new Date().toISOString() });
       if (!hits.length) store.patients.upsert([{ first: '', last: '', phone: m.phone, phoneSource: 'Typed', dnt: true, dntReason: 'Replied STOP' }]);
       if (recent(m)) events.push({ kind: 'optout', text: `Opted out: ${who} replied STOP`, appt: { first: p?.first, last: p?.last, phone: m.phone } });
     } else if (/^\s*(start|unstop)\s*[.!]?\s*$/i.test(m.body) && (st.optOut || {})[m.phone] && new Date(m.at) > new Date(st.optOut[m.phone].at)) {   // only a START sent after the STOP counts
@@ -194,10 +224,15 @@ function handleReplies(fresh, addEvents) {
       if (recent(m)) events.push({ kind: 'reply', text: `${who} replied START (texts allowed again)`, appt: { first: p?.first, last: p?.last, phone: m.phone } });
     } else if (recent(m) && CONFIRM_RE.test(m.body)) {
       // Credit the confirmation to whoever was last texted on this number (the reminder), not just anyone on it.
-      const sent = store.log.all().filter((h) => h.ok && h.phone === m.phone && new Date(h.at) <= new Date(m.at) && new Date(m.at) - new Date(h.at) < 4 * DAY).sort((a, b) => new Date(b.at) - new Date(a.at))[0];
-      const forName = sent ? sent.name : p ? fullName(p) : '';
-      st.confirmed = { ...(st.confirmed || {}), [m.phone]: { at: m.at, name: forName } };
-      events.push({ kind: 'confirmed', text: `Confirmed: ${forName || who} replied ${m.body.trim()}`, appt: { first: p?.first, last: p?.last, phone: m.phone } });
+      // Credit it only to an appointment reminder sent to this number in the last 4 days, and only when exactly
+      // one person got one. Otherwise it needs Maria to look (shared numbers, or a YES to something else).
+      const rem = store.log.all().filter((h) => h.ok && h.phone === m.phone && (h.apptId || /remind/i.test(String(h.templateId || h.template || ''))) && new Date(h.at) <= new Date(m.at) && new Date(m.at) - new Date(h.at) < 4 * DAY);
+      const people = [...new Set(rem.map((h) => h.name || ''))];
+      if (people.length === 1 && (hits.length <= 1 || rem.every((h) => h.apptId))) {
+        const sent = rem.sort((a, b) => new Date(b.at) - new Date(a.at))[0];
+        st.confirmed = { ...(st.confirmed || {}), [m.phone]: { at: m.at, name: sent.name, apptId: sent.apptId || null } };
+        events.push({ kind: 'confirmed', text: `Confirmed: ${sent.name || who} replied ${m.body.trim()}`, appt: { first: p?.first, last: p?.last, phone: m.phone } });
+      } else events.push({ kind: 'reply', text: `Reply needs review: ${who} replied ${m.body.trim()}`, appt: { first: p?.first, last: p?.last, phone: m.phone } });
     } else if (recent(m)) {
       events.push({ kind: 'reply', text: `New text from ${who}`, appt: { first: p?.first, last: p?.last, phone: m.phone } });
     }
@@ -208,4 +243,4 @@ function handleReplies(fresh, addEvents) {
 
 const status = () => { const h = store.ringrxHistory.get(), c = store.calls.get(); return { running, at: h.at, error: h.error || c.error, texts: (h.items || []).length, calls: (c.items || []).length }; };
 
-module.exports = { markSpam, spamList, spamCleanup, spamMap, markHeard, unmarkHeard, unmarkSeen, answerOf, unmarkDone, optedOut, clearOptOut, sync, textThreads, callList, thread, markDone, doneSince, markSeen, snooze, snoozes, ignore, counts, handleReplies, status, events, directory, d10 };
+module.exports = { attachVoicemails, markSpam, spamList, spamCleanup, spamMap, markHeard, unmarkHeard, unmarkSeen, answerOf, unmarkDone, optedOut, clearOptOut, sync, textThreads, callList, thread, markDone, doneSince, markSeen, snooze, snoozes, ignore, counts, handleReplies, status, events, directory, d10 };

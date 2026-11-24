@@ -175,6 +175,17 @@
 ### Deferred
 - Splitting main.js into smaller files (no behavior change): saved for a quiet release, so it can't mix with these fixes.
 
+## 1.6.3 (Windows + Mac, Nov 23)
+Everything below (the 1.6.2 work plus the fixes from both reviews). 1.6.2 was a Windows-only test build.
+
+### 1.6.2 work
+Everything logged below is now in the code, tested (`npm test`) and smoke-run, except where noted: "cancelled & moved" is in Today and the Day view (not yet in the Week view or patient timeline), and the startup cleanup still needs a look at the names and paths of the entries on Almas's PC. The Windows installer script can only be compiled on the Windows build machine (CI).
+
+### Installer and startup
+- Installer takes care of processes: closes Ruhwell Front Desk (and any older Ruhwell app, e.g. Ruhwell Messenger) gently, then for sure, before installing (no locked files, nothing mid-save) and copies the saved data to "%APPDATA%\Ruhwell Front Desk Backup (before update)" before installing.
+- "Restart to update" makes a fresh backup of today's data first (Windows and Mac).
+- Installer takes care of startup: it removes every old or duplicate Ruhwell entry from Windows Startup apps (current user only; only entries with "Ruhwell" in the name or path). The app then registers itself once as "Ruhwell Front Desk", and also cleans leftovers on each start.
+
 ## 1.6.1 (Windows + Mac)
 - Fix: 1.6.0 crashed on start ("Cannot find module './activity'"): two new files were left out of the installer. Added them, plus a test that fails the build if any file the app needs isn't packaged.
 
@@ -243,3 +254,98 @@ What's new, in short (details of each item are logged below):
 - Sync settings: add Doximity (Faxes) alongside RxNT, RingRx and Gmail — on/off toggle, how often to check (same choices as the others; default every 10 min, 5 in office hours), last checked / last new fax time, per-row "Check & sync", and included in "Sync now" / "Check everything".
 
 ## Next release (logged)
+- Schedule: a cancelled visit whose patient is booked again (same chart, or same name + DOB; same day or within 14 days) is a **move**, not a cancellation (seen Nov 20: a patient cancelled at 10:00, was rebooked at 1:20 and checked in, but the 10:00 card still showed "Cancelled" with Message/Send).
+  - The old card turns muted and compact: "Cancelled · moved to 1:20 PM" (or "Cancelled · moved to Mon, Nov 23"; wording chosen by Almas), with no Message/Send and no "Offer new time" anywhere (Day view, Today, alerts).
+  - The new card says "Moved from 10:00 AM".
+  - The day summary says "1 cancelled & moved" instead of a plain "1 cancelled"; the time strip and "not checked in" counts ignore the old one.
+  - Same linking in the Week view and the patient's timeline. Add a test with this exact case.
+- Today's visits: redo the time strip (current one reads as a "blob": back-to-back visits merge into one shape, no hours, cancelled/moved visits confuse it).
+  - Each visit is its own small block with a 2px gap, colored by status (green checked in, teal confirmed, sand booked, grey not checked in); cancelled and moved visits are left out.
+  - Hour ticks along the bottom (8, 9, 10 …) from office hours; a thin terracotta "now" line during the day.
+  - Free time shows as a soft label only when the gap is 30 min or more ("Free until 12:40"), never squeezed or cut.
+  - Hover or tap a block: name, time, status; click opens that visit.
+  - If the day has no open gaps worth showing, the strip hides instead of drawing something meaningless.
+- Fix (seen Nov 20 on 1.6.1): voicemail didn't play, and "Listen in RingRx" opened a page that doesn't exist.
+  - Calls RingRx marks as voicemail now always find their recording (voicemail messages are kept with the calls and matched by number and time); before, some calls had no recording id and the app asked RingRx for the wrong one.
+  - A failed play is written to the activity log with the reason (status and type only) so it can be traced.
+  - "Listen in RingRx" and other RingRx links open the RingRx dashboard (its Activity list has voicemails and texts) instead of a missing page.
+- In-app browser (seen Nov 20: "Open in Doximity" opened a normal browser that wasn't signed in). Every "Open in Doximity" and "Open in RxNT" opens inside the app, in a Ruhwell Front Desk window that uses the app's own saved sign-in (the same hidden session that reads faxes and the schedule), so it's already signed in. Back/forward/reload buttons and a "Open in my browser" option for anything else. Links to other sites still open in the normal browser.
+- Fax preview (seen Nov 20: fax wouldn't open in the app): render the PDF pages in-app with a bundled PDF viewer (pdf.js) instead of relying on the built-in PDF plugin; page thumbnails, zoom, rotate. Still kept only in memory and the encrypted store.
+- Fax pickup accuracy (seen Nov 20: "not picking up the right faxes"): verify each fax against its own page (sender, fax number, pages, received date and time) instead of guessing the date from the inbox's day headings; never treat an older fax as new; on the first run, show what was found and let Maria choose how far back to bring in (today / 3 days / 7 days). Recheck against what Maria saw before building.
+- Voicemail (checked on RingRx's website Nov 23): Maria has only her own mailbox, no shared one, so that wasn't the cause. RingRx's own player uses /voicemails/<id>/voice_payload with the same sign-in the app uses, and it returns the MP3 fine. So the problem is the app picking the wrong recording id for some calls (fixed above); the activity log will now show the reason if one still fails. The voicemail record's "voicemail" field is the MP3 file name, not a link.
+  - Reported Nov 20: faxes were missing (not wrong). To discuss in detail before building. Likely suspects: only the first page of the inbox list is read (Doximity loads more as you scroll), the first-run 3-day cutoff hides recent ones whose day heading wasn't read, and a fax whose PDF download fails is skipped silently. Fix all: scroll to load the full list back to the cutoff, show a fax even if its PDF didn't download yet ("Retry download"), and log each missed one.
+
+- Fix (found Nov 23): fax preview was blocked by the app's own security setting (object-src 'none' stops the built-in PDF viewer). Allow it for the in-memory fax only (object-src blob:), on top of the bundled PDF viewer planned above.
+- Fax dates (found Nov 23 on Doximity): the inbox groups recent faxes under weekday names ("Thursday", "Tuesday", "Monday"), not dates. The app couldn't read those and treated them as "now", so recent faxes got the wrong day. Fixed: a weekday means the most recent past one. (Still to confirm with Almas which faxes were missing.)
+
+### From ChatGPT's review of 1.6.1 (Nov 23), each checked against the code
+- **Missing faxes, root cause confirmed:** weekday headings ("Thursday") were read as Jan 1, 2026, so on the first run those faxes counted as older than 3 days and were put on the ignore list for good. The weekday fix is in. Also needed: on update, clear that ignore list and re-read the inbox so the skipped faxes come in; treat a date the app can't read as "unknown", never as old.
+- **Faxes whose download fails** are saved in the list as "Download failed · Retry" instead of vanishing. Retries rotate, so a few bad ones can't block the rest.
+- **Download button bug:** a script error on the fax page counted as "clicked". Only an actual click counts, and the TIF fallback runs whenever the PDF doesn't arrive. The download catcher only accepts files from that fax's own window.
+- **Fax type from the file itself:** a PDF that Doximity sends as generic data was labeled TIF with no preview. The app now checks the first bytes (PDF or TIFF), stores the real type, rejects anything else (an HTML error page, for example), and fixes existing faxes when they're opened.
+- **Read the whole inbox:** scroll the sidebar until no new faxes load, back to the cutoff.
+- **"Open in Doximity"** uses the app's signed-in window (in-app browser above) with Doximity's own link format.
+- **Fax list race:** clicking faxes quickly could show fax A's filing controls while fax B is highlighted. Each open is numbered and stale ones are dropped.
+- **Filing to RxNT, safety fixes (must be in before filing is used on real charts):**
+  - Document title includes the fax's own ID, and verification needs an exact match on that title in that chart after refresh. Two faxes from the same sender on the same day can't stand in for each other.
+  - No double uploads: the fax is claimed before the upload starts, and the attempt (fax, confirmed chart, state) is saved before Save is pressed. After a crash or an uncertain result the app only re-checks the chart; it never presses Save again on its own. One filing at a time.
+  - Right patient: if RxNT opens a chart directly from the search, its chart number, name and DOB must match the picked patient. Missing DOB, more than one match, or anything conflicting stops it. The main process re-checks the confirmed chart right before Save.
+  - "Filled" and "saved" only count when they really happened: create the file with the RxNT page's own File/DataTransfer objects and the real file type, check that RxNT's form shows the attachment, title and category, check that Save is enabled, and treat clicking Save as an attempt, not a success.
+  - Before 1.6.2 goes to Maria, test filing once on a test patient chart.
+- **Voicemail:**
+  - Play only shows when the call has a real recording id; it never falls back to the call's own id.
+  - If reading voicemails fails during a sync, keep the existing voicemail-to-call matches instead of wiping them.
+  - Match voicemails to calls only when it's one-to-one (an unclaimed call that went to the mailbox); otherwise the voicemail gets its own row.
+  - Give clear failure reasons (no recording id, HTTP status, wrong file type, playback blocked) in the activity log, including when play() fails.
+- **Installer:** do the close-the-app + backup in the customCheckAppRunning hook (runs right where electron-builder checks for the running app, before the old version is removed). Back up to a dated folder, verify the copy, and stop the update if copying existing data fails; a first install with no data is fine. Local `dist:win` builds the NSIS installer too (it was building the portable version, so the installer was never exercised locally).
+- **Startup entries:** one stable name and the installed exe path. Remove only confirmed old Ruhwell entries (check names and paths on Almas's PC before writing the cleanup), then check the result: one entry when on, none when off.
+- Voicemail labels (seen Nov 23 on Almas's PC): two calls showed "New voicemail · Play" (1 min, 31 sec), but RingRx's own list has no message for them (its 4 voicemails are 15–39 sec). RingRx sends a call to the mailbox ("mbx-" in its call path) whether or not the caller leaves a message, and the app took that as a voicemail. New rule: it's a voicemail only when RingRx has the message. Otherwise the call shows as "Missed · went to voicemail, no message" (still a missed call that may need a callback), with no Play button and no "New voicemail" badge.
+- Faxes page wording: when Doximity isn't signed in on this computer, say so plainly with a "Sign in to Doximity" button right there, instead of "No faxes waiting".
+- Status line (seen Nov 23: it said "All connected" while Doximity wasn't signed in in the app and the Faxes page said to sign in): the line now comes from the same real checks as Settings → Connections. A red account says "<name> sign-in needed", amber says what's wrong, and a source that isn't set up is named ("Connected · Doximity not set up"). It never says "All connected" unless every set-up account passed its last real read.
+- Settings, simplified (asked Nov 23: "super complicated"):
+  - Settings becomes 4 short sections with a small menu on the left: **Connections · Alerts · Messages · App**. Each opens on its own; nothing else on screen.
+  - **Connections:** one line per account, like "● RxNT · Working · 5 min ago". Click a line to see the details (signed in as, saved sign-in / Forget it, Doximity on/off, how far back faxes go, Sign out). One "Check everything" button at the top. The explanation text goes into a small (i) tooltip. The patient list folds into the RxNT line.
+  - **Alerts:** instead of a grid of checkboxes, a short list where each alert has one simple choice: **Pop-up · Pop-up + text · Off**. The alert-cell number only appears once something is set to text. "Visit starting in 15 min" stays as a single line.
+  - **Messages:** your name/signature, templates (compact list as now), Google review link.
+  - **App:** updates, start with Windows/Mac, backups, activity log, spam numbers.
+  - Same look as now (Ruhwell colors), just fewer things at once. Nothing is removed, only tucked one click deeper.
+- Modular app (asked Nov 23: "so future changes don't break the whole app"):
+  - Split by feature. Each section (Schedule, Texts, Calls, Faxes, RxNT, Timer, Checklist & notes, Settings, Updates) gets its own folder with its main-process part, its screen and its tests. main.js keeps only start-up, the window, and wiring the sections in.
+  - Each section registers its own IPC channels under its own name (e.g. "faxes:…"), and the window only talks to a section through its small preload API.
+  - Fault isolation: if a section fails to load or throws, only that section shows "This part had a problem · Retry"; the rest of the app keeps working. Background syncs run per section with their own error handling, so one failing source never stops the others.
+  - Shared pieces stay in one place: storage, activity log, notifications, sign-in helpers, colors and components.
+  - Each section can be switched off with a setting, so a new feature can ship turned off and be tried first on Windows.
+  - Tests per section plus the packaging check. A build only goes out if every section's tests pass.
+  - Do this as its own release with no new features in it, then confirm everything behaves exactly the same before adding anything new.
+- Fixes from the first look at 1.6.2 on Windows (Nov 23):
+  - Fax preview showed the page turned sideways and zoomed into the margin: the viewer ignored the page's own rotation (faxes are often stored turned). It now keeps it, opens at "Fit width", and Zoom/Rotate/Fit width work from there.
+  - Monday's fax (5 pages) was missing: "last 7 days" counted back from this exact minute, so a fax from that morning fell just outside. It now counts whole days, and the ignore list is cleared once more so it comes in.
+  - "Which patient is this for?" showed "No matches" with nothing typed: "this week's patients" now come from each patient's last/next visit. Clearer hint when a search finds nothing.
+- Faxes, round 2 (Nov 23, after comparing with Doximity):
+  - Everything in the Doximity inbox comes into the app (not just the last few days); the first full import doesn't send alerts. Settings can still limit it.
+  - Sorting help: each fax's first pages are read on this computer (OCR, bundled; nothing leaves the computer) and get a category: Prior authorization, Pharmacy, Lab results, Records, Referral, Insurance, Notice, Other or Unreadable. Category chips above the list filter by type.
+  - Possible patients found on the fax (name and/or DOB) show under the fax and at the top of "Which patient is this for?" with what matched. Still only a suggestion: Maria picks and confirms the chart before anything is filed. Only the category and suggestions are kept, never the fax text.
+  - "Which patient is this for?" search box: one clean border (the double box is gone).
+- Calls, RingRx-style timing: the time and day are on the left of every row, and each row says exactly what happened, e.g. "Inbound · 0:43 · Left voicemail 0:16 at 4:53 PM", "Inbound · 0:04 · Hung up at voicemail, no message", "Outbound · 4:09". The voicemail's own length and time come from RingRx, so a voicemail never seems missing just because it's shown on its call.
+
+### From ChatGPT's hands-on test of 1.6.2 on Windows (Nov 23), checked against the code
+Passed there: voicemail playback (2 recordings, speeds), "no message" labels, installer backup + kept sign-ins, Open in Doximity in-app, moved visits, quick capture.
+Fixed now:
+- **Release blocker: filing never pressed Save.** The save step was lost when the fill/ready checks were rewritten. Restored, with the checks repeated right before a single click (right chart, one file, title, valid form, Save enabled) and a guard against a second click. Test added.
+- A chart re-check that couldn't read the chart now counts as "unknown", never as "not there", so it can't lead to a second upload.
+- No chart number from RxNT: filing is blocked (on the screen and in the main process).
+- STOP no longer overwrites a do-not-text Maria set by hand, so a later START can't undo her choice.
+- A "YES" on a shared or reused number only confirms when exactly one person got an appointment reminder there (sent texts now store the appointment id). Otherwise: "Reply needs review".
+- One confirmed send = one operation id; a duplicate request returns the first result instead of texting twice.
+- Two cancellations/bookings with no patient id are never paired as one reschedule (all three pairing paths). Test added.
+- RxNT shows green only when every part is fresh (schedule AND prescriptions); otherwise "checking prescriptions…".
+- A fax date the app can't read shows "Date unavailable", never "Today".
+- A Front Desk text hides its RingRx copy only when the words match too.
+- RingRx: a dropped connection during re-sign-in keeps the saved sign-in.
+- Fax viewer: every fax opens upright and fit to the pane (rotation/zoom no longer carry over); the previous fax is released when switching.
+Logged for later (not done yet):
+- Today: one count per queue everywhere (tile, summary and sidebar agree, e.g. "10 need a reply · 3 unread"), one clear next action on the top card.
+- Speed: draw only visible fax pages; RxNT portal messages only re-read changed conversations; show the last snapshot instead of blank screens while syncing; record time-to-first-screen.
+- Small polish: "Quick task · Ctrl+Shift+Space" hint next to the checklist; "Line → task" becomes "Add this line to checklist"; fall back to another shortcut if that one is taken; time strip after hours says "Today's visits have ended" / "First visit at …"; keep "Needs callback" separate from "Unheard".
+- Bigger ideas, ranked by time saved: one follow-up per patient across calls/texts/portal; pre-visit readiness line; refill follow-through; a "waiting on" queue; end-of-day handoff to tomorrow.
+- Startup entry count: Windows blocked ChatGPT from reading it; check by hand in Task Manager.

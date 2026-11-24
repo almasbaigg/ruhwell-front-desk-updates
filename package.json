@@ -1,14 +1,14 @@
 {
   "name": "ruhwell-front-desk",
   "productName": "Ruhwell Front Desk",
-  "version": "1.6.1",
+  "version": "1.6.3",
   "description": "Ruhwell Med front desk: visits, alerts and patient messaging",
   "main": "main.js",
   "author": "Ruhwell Medical PLLC",
   "license": "UNLICENSED",
   "scripts": {
     "start": "electron .",
-    "dist:win": "electron-builder --win portable --x64",
+    "dist:win": "electron-builder --win nsis --x64 --publish never",
     "dist:mac": "electron-builder --mac dmg --arm64 --x64",
     "test": "node test/data.test.js && node test/status.test.js && node test/ringrx.test.js && node test/alerts.test.js && node test/rx.test.js && node test/safety.test.js && node test/reader.test.js && node test/v16.test.js && node test/package.test.js"
   },
@@ -42,7 +42,10 @@
       "updater.js",
       "timer.js",
       "faxes.js",
-      "activity.js"
+      "inapp.js",
+      "activity.js",
+      "ocr.js",
+      "ocr/**"
     ],
     "win": {
       "icon": "build/icon.ico",
@@ -89,7 +92,8 @@
       "shortcutName": "Ruhwell Front Desk",
       "uninstallDisplayName": "Ruhwell Front Desk",
       "deleteAppDataOnUninstall": false,
-      "guid": "69544c5d-65b6-5e2d-83c5-3a7d2305f7d4"
+      "guid": "69544c5d-65b6-5e2d-83c5-3a7d2305f7d4",
+      "include": "build/installer.nsh"
     },
     "publish": [
       {
@@ -99,9 +103,15 @@
     ],
     "electronLanguages": [
       "en-US"
+    ],
+    "asarUnpack": [
+      "ocr/**",
+      "node_modules/tesseract.js/**",
+      "node_modules/tesseract.js-core/**"
     ]
   },
   "dependencies": {
-    "electron-updater": "^6.8.11"
+    "electron-updater": "^6.8.11",
+    "tesseract.js": "^5.1.1"
   }
 }

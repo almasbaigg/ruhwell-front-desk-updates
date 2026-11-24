@@ -33,7 +33,7 @@ function makeWindow(show, parent) {
 const index = () => store.raw.readSecure(INDEX, { items: [], seeded: null });
 const saveIndex = (v) => store.raw.writeSecure(INDEX, v);
 const list = () => (index().items || []).slice().sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
-function pdf(id) { const r = store.raw.readSecure(path.join(DIR, `${safe(id)}.bin`), null); return r && r.data ? r : null; }
+function pdf(id) { const r = store.raw.readSecure(path.join(DIR, `${safe(id)}.bin`), null); if (!r || !r.data) return null; const mime = sniff(r.data); return mime ? { data: r.data, mime } : null; }
 const safe = (id) => String(id).replace(/[^\w-]/g, '_').slice(0, 80);
 function update(id, patch) { const ix = index(); const i = (ix.items || []).findIndex((f) => f.id === id); if (i < 0) return null; ix.items[i] = { ...ix.items[i], ...patch }; saveIndex(ix); return ix.items[i]; }
 function prune() {
@@ -141,7 +141,7 @@ function readInbox() {
   const items = [];
   // Walk the page in order so each fax gets the nearest day heading above it.
   const all = [...document.querySelectorAll('.sidebar-list-section-title, a[href*="/inbox/faxes/Fax::"]')];
-  let day = 'Today';
+  let day = '';   // no heading seen yet: the date is unknown, never assumed to be today
   for (const el of all) {
     if (el.matches('.sidebar-list-section-title')) { day = el.textContent.trim(); continue; }
     const href = el.getAttribute('href') || '';
@@ -154,48 +154,74 @@ function readInbox() {
   }
   return { state: 'ok', items };
 }
-// "Today"/"Yesterday"/"Nov 12" + "11:46 AM" → ISO time (Doximity shows no year; a future date means last year).
+// "Today" / "Yesterday" / "Thursday" / "Nov 12" + "11:46 AM" → ISO time, or null when the heading can't be read.
+// (Doximity shows no year; a date ahead of today means last year. Weekdays mean the most recent past one.)
 function whenOf(day, time) {
-  const now = new Date(); let d;
-  if (/^today$/i.test(day)) d = new Date(now); else if (/^yesterday$/i.test(day)) { d = new Date(now); d.setDate(d.getDate() - 1); }
-  else { d = new Date(`${day} ${now.getFullYear()}`); if (isNaN(d)) d = new Date(now); else if (d - now > 2 * 864e5) d.setFullYear(d.getFullYear() - 1); }
+  const now = new Date(), t = String(day || '').trim(); let d = null;
+  const WD = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'].indexOf(t.toLowerCase());
+  const MON = /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.? (\d{1,2})(,? (\d{4}))?$/i.exec(t);
+  if (/^today$/i.test(t)) d = new Date(now);
+  else if (/^yesterday$/i.test(t)) { d = new Date(now); d.setDate(d.getDate() - 1); }
+  else if (WD >= 0) { d = new Date(now); const back = (d.getDay() - WD + 7) % 7 || 7; d.setDate(d.getDate() - back); }
+  else if (MON) {
+    const mi = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'].indexOf(MON[1].toLowerCase().slice(0, 3));
+    d = new Date(MON[4] ? Number(MON[4]) : now.getFullYear(), mi, Number(MON[2]));
+    if (!MON[4] && d - now > 2 * 864e5) d.setFullYear(d.getFullYear() - 1);
+  }
+  if (!d) return null;
   const m = /^(\d{1,2}):(\d{2})\s?(AM|PM)$/i.exec(time || '');
-  if (m) { let h = Number(m[1]) % 12; if (/pm/i.test(m[3])) h += 12; d.setHours(h, Number(m[2]), 0, 0); }
+  if (m) { let h = Number(m[1]) % 12; if (/pm/i.test(m[3])) h += 12; d.setHours(h, Number(m[2]), 0, 0); } else d.setHours(12, 0, 0, 0);
   return d.toISOString();
 }
-// Download one fax as PDF: open it and press Doximity's own "Download PDF"; the file is caught in memory.
+// What a file really is, from its first bytes (never from the type the server claims).
+function sniff(b64) {
+  const head = Buffer.from(String(b64 || '').slice(0, 16), 'base64');
+  if (head.slice(0, 4).toString('latin1') === '%PDF') return 'application/pdf';
+  if ((head[0] === 0x49 && head[1] === 0x49 && head[2] === 0x2a && head[3] === 0) || (head[0] === 0x4d && head[1] === 0x4d && head[2] === 0 && head[3] === 0x2a)) return 'image/tiff';
+  return null;
+}
+// Download one fax: open it and press Doximity's own "Download PDF"; the file is caught in memory.
+// Only downloads started by this window count, and the file must really be a PDF or TIFF.
 async function downloadPdf(win, href) {
   const ses = win.webContents.session;
   let resolveFile; const got = new Promise((r) => { resolveFile = r; });
   const tmp = path.join(store.raw.file(''), `tmp-fax-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
-  const onDl = (_e, item) => {
+  const onDl = (_e, item, wc) => {
+    if (wc && wc !== win.webContents) return;   // someone else's download: not this fax
     item.setSavePath(tmp);
     item.once('done', (_e2, st) => {
-      try { if (st === 'completed') { const buf = fs.readFileSync(tmp); resolveFile({ data: buf.toString('base64'), mime: item.getMimeType() || 'application/pdf' }); } else resolveFile(null); }
+      try { if (st === 'completed') resolveFile({ data: fs.readFileSync(tmp).toString('base64') }); else resolveFile(null); }
       catch { resolveFile(null); } finally { try { fs.rmSync(tmp, { force: true }); } catch {} }
     });
   };
   ses.on('will-download', onDl);
-  // If Doximity opens the PDF in a new window instead of downloading, fetch it with the same session.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https:\/\//.test(url)) ses.fetch(url).then(async (r) => { const ct = r.headers.get('content-type') || ''; if (r.ok && /pdf|octet/.test(ct)) resolveFile({ data: Buffer.from(await r.arrayBuffer()).toString('base64'), mime: 'application/pdf' }); }).catch(() => {});
+    if (/^https:\/\//.test(url)) ses.fetch(url).then(async (r) => { if (r.ok) resolveFile({ data: Buffer.from(await r.arrayBuffer()).toString('base64') }); }).catch(() => {});
     return { action: 'deny' };
   });
+  const checked = (f) => { if (!f) return null; const mime = sniff(f.data); return mime ? { data: f.data, mime } : null; };
   try {
     await win.loadURL('https://www.doximity.com' + href).catch(() => {});
     let clicked = false;
     for (let i = 0; i < 25 && !clicked && !win.isDestroyed(); i++) {
       await sleep(700);
-      clicked = await call(win, () => { const b = document.querySelector('button[aria-label="Download PDF"]'); if (b) { b.click(); return true; } return false; });
+      clicked = (await call(win, () => { const b = document.querySelector('button[aria-label="Download PDF"]'); if (b && !b.disabled) { b.click(); return true; } return false; })) === true;
     }
-    if (!clicked) return null;
-    let file = await Promise.race([got, sleep(45000).then(() => null)]);
-    if (!file) {   // fallback: the TIF link Doximity puts on the page
+    let file = clicked ? checked(await Promise.race([got, sleep(45000).then(() => null)])) : null;
+    if (!file && !win.isDestroyed()) {   // fallback: the TIF link Doximity puts on the page
       const tif = await call(win, () => { const a = document.querySelector('a[aria-label="Download TIF"]'); return a ? a.href : ''; });
-      if (tif && /^https:\/\//.test(tif)) { const r = await ses.fetch(tif).catch(() => null); if (r && r.ok) file = { data: Buffer.from(await r.arrayBuffer()).toString('base64'), mime: 'image/tiff' }; }
+      if (typeof tif === 'string' && /^https:\/\//.test(tif)) { const r = await ses.fetch(tif).catch(() => null); if (r && r.ok) file = checked({ data: Buffer.from(await r.arrayBuffer()).toString('base64') }); }
     }
     return file;
   } finally { ses.removeListener('will-download', onDl); }
+}
+// Scroll the inbox list until it stops growing (Doximity loads older faxes as you scroll), then read it.
+function scrollInbox() {
+  const a = document.querySelector('a[href*="/inbox/faxes/Fax::"]'); if (!a) return { n: 0 };
+  let el = a.parentElement;
+  while (el && el !== document.body) { const cs = getComputedStyle(el); if (/(auto|scroll)/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 4) break; el = el.parentElement; }
+  (el && el !== document.body ? el : document.scrollingElement).scrollTop = 1e9;
+  return { n: document.querySelectorAll('a[href*="/inbox/faxes/Fax::"]').length };
 }
 
 let running = false;
@@ -211,11 +237,18 @@ async function sync() {
       for (let i = 0; i < 30 && !win.isDestroyed(); i++) {
         await sleep(800);
         r = await call(win, readInbox);
-        if (r.state === 'ok') { await sleep(800); const r2 = await call(win, readInbox); if (r2.state === 'ok' && r2.items.length === r.items.length) break; r = r2; }
-        if (r.state === 'login') break;
+        if (r.state === 'ok') break;
+        if (r.state === 'login') return r;
         if (r.state === 'elsewhere' && i % 5 === 4) win.loadURL(INBOX).catch(() => {});
       }
-      return r;
+      if (r.state !== 'ok') return r;
+      // Load the whole list: scroll until the count stops growing (twice), at most ~40 rounds.
+      let last = -1, same = 0;
+      for (let k = 0; k < 80 && same < 2 && !win.isDestroyed(); k++) {
+        const s2 = await call(win, scrollInbox); await sleep(1200);
+        const n = (s2 && s2.n) || 0; same = n === last ? same + 1 : 0; last = n;
+      }
+      return await call(win, readInbox);
     };
     const signedOut = (x) => x.state === 'login' || (x.state === 'elsewhere' && /signin|login|auth/i.test(x.url || ''));
     let r = await readAll();
@@ -226,36 +259,62 @@ async function sync() {
       r = await readAll();
     }
     if (r.state !== 'ok') { last = { ...last, error: 'failed', at: new Date().toISOString() }; return { error: 'failed' }; }
-    const ix = index(), known = new Set((ix.items || []).map((f) => f.id));
-    const firstRun = !ix.seeded, cutoff = Date.now() - FIRST_RUN_DAYS * 864e5;
-    const fresh = [];
+
+    // Everything new goes into the list right away (with or without its file yet), so nothing can vanish.
+    // Default: everything in the Doximity inbox. (Settings can limit the first check to today / 3 / 7 days.)
+    const backDays = Number((store.settings.get().faxes || {}).backDays) || 0;
+    let ix = index();
+    const known = new Set((ix.items || []).map((f) => f.id));
+    // "Last 7 days" means whole days: from midnight 7 days ago, so a fax from that morning still counts.
+    const firstRun = !ix.seeded, cutoff = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - backDays); return d.getTime(); })();
+    const found = [];
     for (const it of r.items) {
-      if (known.has(it.id)) continue;
+      if (known.has(it.id) || (ix.ignored || []).includes(it.id)) continue;
       const at = whenOf(it.day, it.time);
-      if (firstRun && new Date(at) < cutoff) { (ix.ignored = ix.ignored || []).push(it.id); continue; }
-      if ((ix.ignored || []).includes(it.id)) continue;
-      fresh.push({ ...it, at });
+      if (firstRun && backDays > 0 && at && new Date(at) < cutoff) { (ix.ignored = ix.ignored || []).push(it.id); continue; }   // unknown dates are never treated as old
+      found.push({ id: it.id, href: it.href, from: it.from, number: it.number, pages: it.pages, at: at || new Date().toISOString(), dateUnknown: !at, status: 'new', download: 'pending', tries: 0, receivedAt: new Date().toISOString() });
     }
-    let added = 0;
-    for (const f of fresh.slice(0, 15)) {
-      const file = await downloadPdf(win, f.href);
-      if (!file) continue;
-      fs.mkdirSync(store.raw.file(DIR), { recursive: true });
-      store.raw.writeSecure(path.join(DIR, `${safe(f.id)}.bin`), file);
-      ix.items = [...(ix.items || []), { id: f.id, from: f.from, number: f.number, pages: f.pages, at: f.at, mime: file.mime, status: 'new', receivedAt: new Date().toISOString() }];
-      added++;
-    }
+    ix.items = [...(ix.items || []), ...found];
     ix.seeded = ix.seeded || new Date().toISOString();
     ix.ignored = (ix.ignored || []).slice(-2000);
     saveIndex(ix);
+
+    // Download up to 15 per run, fewest tries first, so a few stubborn ones can't block the rest.
+    const todo = list().filter((f) => f.download && f.download !== 'done' && f.status === 'new' && f.href).sort((a, b) => (a.tries || 0) - (b.tries || 0) || String(b.at).localeCompare(String(a.at))).slice(0, 25);
+    let added = 0, failed = 0;
+    for (const f of todo) {
+      const file = await downloadPdf(win, f.href);
+      if (file) { fs.mkdirSync(store.raw.file(DIR), { recursive: true }); store.raw.writeSecure(path.join(DIR, `${safe(f.id)}.bin`), file); update(f.id, { download: 'done', mime: file.mime }); added++; }
+      else { failed++; update(f.id, { download: 'failed', tries: (f.tries || 0) + 1, lastTry: new Date().toISOString() }); }
+    }
     await keepSignedIn();
-    last = { ...last, connected: true, error: null, at: new Date().toISOString(), lastNewAt: added ? new Date().toISOString() : last.lastNewAt };
+    last = { ...last, connected: true, error: null, at: new Date().toISOString(), lastNewAt: found.length ? new Date().toISOString() : last.lastNewAt };
     prune();
-    return { ok: true, added, fresh: added ? list().filter((f) => f.status === 'new').slice(0, added) : [] };
+    return { ok: true, added: found.length, downloaded: added, failed, fresh: found, firstRun };
   } catch (e) {
     last = { ...last, error: 'failed', at: new Date().toISOString() };
     return { error: 'failed' };
   } finally { running = false; if (!win.isDestroyed()) win.destroy(); }
 }
+// One retry right now (the "Retry download" button).
+async function retryDownload(id) {
+  const f = list().find((x) => x.id === id); if (!f || !f.href) return false;
+  const win = makeWindow(false);
+  try {
+    const file = await downloadPdf(win, f.href);
+    if (!file) { update(id, { download: 'failed', tries: (f.tries || 0) + 1, lastTry: new Date().toISOString() }); return false; }
+    fs.mkdirSync(store.raw.file(DIR), { recursive: true }); store.raw.writeSecure(path.join(DIR, `${safe(id)}.bin`), file);
+    update(id, { download: 'done', mime: file.mime }); return true;
+  } finally { if (!win.isDestroyed()) win.destroy(); }
+}
+// The fax's own page on Doximity (for the in-app window). Older records rebuild it from the id.
+const faxUrl = (f) => 'https://www.doximity.com' + (f.href || `/inbox/faxes/Fax::InboundFax%2F${encodeURIComponent(f.id)}`);
+// 1.6.1 misread weekday headings as Jan 1 and put recent faxes on the ignore list on the first run:
+// forget that list once, so they're picked up again with the right dates.
+function repairOnce() {
+  const ix = index(); if (ix.v >= 4) return;
+  saveIndex({ ...ix, ignored: [], seeded: null, v: 4 });   // bring in the whole inbox once
+}
 
-module.exports = { sync, status, list, pdf, update, signIn, signOut, autoSignIn, forgetLogin, loginState, savedLogin, prune, whenOf, readInbox, KEEP_FILED_DAYS };
+function setMeta(id, meta) { const allowed = ['category', 'suggest', 'ocrAt', 'ocrError', 'textHint']; const m = Object.fromEntries(Object.entries(meta || {}).filter(([k]) => allowed.includes(k))); return update(id, m); }
+module.exports = { setMeta, sniff, retryDownload, faxUrl, repairOnce, PART, sync, status, list, pdf, update, signIn, signOut, autoSignIn, forgetLogin, loginState, savedLogin, prune, whenOf, readInbox, KEEP_FILED_DAYS };

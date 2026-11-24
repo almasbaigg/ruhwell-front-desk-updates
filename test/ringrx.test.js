@@ -40,7 +40,7 @@ const comms = require(APP + '/comms');
   const c = await ringrx.calls('almas');
   assert(!c.find((x) => x.id === 'c3'), 'internal call skipped');
   const cb = Object.fromEntries(c.map((x) => [x.id, x]));
-  assert(cb.c1.inbound && cb.c1.voicemail && cb.c1.missed, 'call to voicemail = missed');
+  assert(cb.c1.inbound && cb.c1.toMailbox && !cb.c1.voicemail && cb.c1.missed, 'call sent to the mailbox = missed, but not a voicemail until RingRx has the message');
   assert(!cb.c2.inbound && cb.c2.phone === '5125550103' && cb.c2.secs === 75, 'outgoing call');
   assert(cb.c4.missed && !cb.c4.answered, 'unanswered call = missed');
   assert(!c.some((x) => x.phone === '9795550100'), 'never lists our own number');

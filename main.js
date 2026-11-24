@@ -36,6 +36,8 @@ const watcher = require('./watcher');
 const comms = require('./comms');
 const activity = require('./activity');
 const faxes = require('./faxes');
+const inapp = require('./inapp');
+const ocr = require('./ocr');
 const gmail = require('./gmail');
 const checklist = require('./checklist');
 const rxtasks = require('./rxtasks');
@@ -86,6 +88,7 @@ function showWindow() { if (!win || win.isDestroyed()) createWindow(); win.show(
 const LINK_OK = /^https:\/\/([\w-]+\.)*(rxnt\.com|ringrx\.com|google\.com|g\.page|goo\.gl|github\.com|ruhwellmed\.com)(\/|$)/i;
 function openLink(url) {
   const review = store.settings.get().reviewLink;
+  if (/^https:\/\/([\w-]+\.)*rxnt\.com(\/|$)/i.test(String(url))) return openRxntIn(String(url));   // RxNT opens inside the app, signed in
   if (LINK_OK.test(String(url)) || (review && url === review && /^https:/i.test(url))) shell.openExternal(url);
 }
 function createTray() {
@@ -133,7 +136,17 @@ ipcMain.handle('rxnt:hasLogin', () => { const c = rxnt.savedLogin(pid()); return
 ipcMain.handle('app:info', () => ({ platform: process.platform, version: app.getVersion(), dataDir: store.dataDir() }));
 ipcMain.handle('update:status', () => updater.status());
 ipcMain.handle('update:check', () => updater.checkNow());
-ipcMain.handle('update:restart', () => { const st = updater.status(); if (st.status === 'ready') quitting = true; return updater.restart(); });
+// Before installing an update: a fresh backup of today's data, then quit cleanly (the installer also closes
+// any copy still running and keeps its own safety copy).
+ipcMain.handle('update:restart', () => {
+  const st = updater.status();
+  if (st.status === 'ready') {
+    try { const f = `auto-${ymd(new Date())}.bin`, p2 = store.raw.file(path.join('Backups', f)); if (fs.existsSync(p2)) fs.unlinkSync(p2); backups.autoDaily(); } catch {}
+    activity.add('App', 'update', { to: st.version || '' }, true);
+    quitting = true;
+  }
+  return updater.restart();
+});
 ipcMain.handle('app:openData', () => shell.openPath(store.dataDir()));
 
 // At start-up: really check every account, sign back in quietly where a saved sign-in exists, and only
@@ -186,7 +199,10 @@ ipcMain.handle('checklist:toggle', (_e, id) => checklist.toggle(pid(), id));
 ipcMain.handle('checklist:remove', (_e, id) => checklist.remove(pid(), id));
 ipcMain.handle('rx:list', () => rxtasks.list());
 ipcMain.handle('rx:refresh', async () => { await refreshRx(); return rxtasks.list(); });
-ipcMain.handle('rx:open', (_e, where) => shell.openExternal({ todo: 'https://app2.rxnt.com/ehrv9/dashboard', billing: 'https://app2.rxnt.com/BillingV2/#/', messages: 'https://app2.rxnt.com/dashboard/', unsigned: 'https://app2.rxnt.com/ehrv9/legacy/prescriberDashboard#/dashboard/encounters/unsigned' }[where] || 'https://app2.rxnt.com/ehrv9/legacy/prescriberDashboard#/dashboard/rx/pending'));
+// "Open in RxNT": inside the app, already signed in (the app's own RxNT session).
+const RX_URLS = { todo: 'https://app2.rxnt.com/ehrv9/dashboard', billing: 'https://app2.rxnt.com/BillingV2/#/', messages: 'https://app2.rxnt.com/dashboard/', unsigned: 'https://app2.rxnt.com/ehrv9/legacy/prescriberDashboard#/dashboard/encounters/unsigned' };
+const openRxntIn = (url) => inapp.open('rxnt', rxnt.partitionFor(pid()), url, win) || shell.openExternal(url);
+ipcMain.handle('rx:open', (_e, where) => openRxntIn(RX_URLS[where] || RX_URLS.todo));
 async function refreshRx() {
   if (!store.settings.get().rxntConnected?.[pid()]) return;
   // Its own hidden window, so prescriptions never hold up or reset the schedule reader.
@@ -413,7 +429,7 @@ async function syncFaxes() {
   const r = await faxes.sync();
   if (r && r.added) {
     for (const f of r.fresh || []) activity.add('Doximity', 'fax-received', { fax: f.id.slice(0, 12), from_number: f.number, pages: f.pages });
-    watcher.addEvents([{ kind: 'fax', text: r.added === 1 ? 'New fax' : `${r.added} new faxes` }]);   // no names, ever
+    if (!r.firstRun) watcher.addEvents([{ kind: 'fax', text: r.added === 1 ? 'New fax' : `${r.added} new faxes` }]);   // no names, ever; the first full import isn't an alert
     send('faxes-updated', true);
   }
   if (r && r.needsLogin && faxes.status().error === 'code') notify('Doximity needs a code', 'Click to finish signing in (one time).', () => { showWindow(); send('nav', 'settings'); });
@@ -421,6 +437,17 @@ async function syncFaxes() {
   return r;
 }
 ipcMain.handle('fax:list', () => faxes.list());
+// Sorting help: the window sends rendered pages; text is read here (OCR, on this computer) into a category
+// and up to three possible patients. Only the category and the suggestions are kept, not the text.
+ipcMain.handle('fax:sort', async (_e, id, pages) => {
+  const f = faxes.list().find((x) => x.id === String(id)); if (!f) return null;
+  try {
+    const text = await ocr.read(pages);
+    const pats = Object.entries(store.patients.all()).map(([key, p]) => ({ key, first: p.first, last: p.last, dob: p.dob }));
+    const meta = { category: ocr.categorize(text, f.from), suggest: ocr.suggest(text, pats), ocrAt: new Date().toISOString() };
+    faxes.setMeta(String(id), meta); return meta;
+  } catch (e) { faxes.setMeta(String(id), { ocrAt: new Date().toISOString(), ocrError: String(e.message || e).slice(0, 80), category: 'Unreadable' }); return null; }
+});
 ipcMain.handle('fax:pdf', (_e, id) => faxes.pdf(String(id)));
 ipcMain.handle('fax:mark', (_e, id, st) => { if (!['new', 'notpatient', 'spam'].includes(st)) return false; const f = faxes.update(String(id), { status: st, doneAt: new Date().toISOString() }); activity.add('Doximity', 'fax-marked', { fax: String(id).slice(0, 12), as: st }); send('sync', syncStatus()); return !!f; });
 ipcMain.handle('fax:signin', async () => {
@@ -432,34 +459,78 @@ ipcMain.handle('fax:signin', async () => {
 ipcMain.handle('fax:signout', async () => { await faxes.signOut(); const f = store.settings.get().faxes || {}; store.settings.set({ ...store.settings.get(), faxes: { ...f, signedIn: false } }); send('sync', syncStatus()); return true; });
 ipcMain.handle('fax:loginState', () => faxes.loginState());
 ipcMain.handle('fax:forgetLogin', () => faxes.forgetLogin());
-ipcMain.handle('fax:open', (_e, id) => shell.openExternal('https://www.doximity.com/inbox/faxes/' + encodeURIComponent('Fax::InboundFax/' + String(id))));
+ipcMain.handle('fax:open', (_e, id) => { const f = faxes.list().find((x) => x.id === String(id)); return inapp.open('doximity', faxes.PART, f ? faxes.faxUrl(f) : 'https://www.doximity.com/inbox/faxes', win); });
+ipcMain.handle('fax:retry', async (_e, id) => { const ok = await faxes.retryDownload(String(id)); activity.add('Doximity', 'fax-download', { fax: String(id).slice(0, 12), retry: true }, ok); send('sync', syncStatus()); return ok; });
 // Step 1 of filing: find the chart for the patient Maria picked and read it fresh from RxNT (for her to confirm).
-ipcMain.handle('fax:findChart', async (_e, key) => {
+// The chart she's shown is remembered here, so step 2 can only file into exactly that chart.
+const shownChart = {};   // fax id -> { internalId, chart, key, at }
+ipcMain.handle('fax:findChart', async (_e, key, faxId) => {
   const p = store.patients.all()[key]; if (!p) return { error: 'nopatient' };
   if (!store.settings.get().rxntConnected?.[pid()]) return { error: 'signin' };
   const r = await rxnt.findChart(pid(), { patientId: p.patientId, first: p.first, last: p.last, dob: p.dob });
   if (r.needsLogin) { rxntSignedOut(pid()); return { error: 'signin' }; }
+  if (r.patient && faxId) shownChart[String(faxId)] = { internalId: String(r.patient.internalId), chart: r.patient.chart, key, at: Date.now() };
   return r;
 });
-// Step 2: upload, only with Maria's confirmation of that exact chart (internal id + chart # she saw).
-ipcMain.handle('fax:file', async (_e, { id, internalId, chart, category, confirmed }) => {
+// Step 2: file it. One filing at a time; the fax is claimed and the attempt saved before anything is pressed
+// in RxNT. If a past attempt ended uncertain (crash, timeout), the app only checks the chart; it never
+// presses Save again by itself.
+let filingNow = false;
+const faxTitle = (f) => {
+  const d = new Date(f.at || Date.now());
+  const date = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
+  return { date, title: `Fax ${String(f.id).replace(/[^a-z0-9]/gi, '').slice(0, 8)} – ${String(f.from || f.number || 'Doximity').replace(/\s+/g, ' ').slice(0, 36)} – ${date}` };
+};
+ipcMain.handle('fax:file', async (_e, { id, internalId, category, confirmed, again }) => {
+  id = String(id);
   if (confirmed !== true || !internalId) return { error: 'confirm' };
-  const f = faxes.list().find((x) => x.id === String(id)); const file = faxes.pdf(String(id));
+  const shown = shownChart[id];
+  if (!shown || shown.internalId !== String(internalId) || Date.now() - shown.at > 20 * 60000) return { error: 'confirm' };   // must be the chart she just saw
+  if (!shown.chart) return { error: 'nochart' };   // no chart number from RxNT: don't file
+  if (filingNow) return { error: 'busy' };
+  const f = faxes.list().find((x) => x.id === id); const file = faxes.pdf(id);
   if (!f || !file) return { error: 'nofile' };
   if (f.status === 'filed') return { error: 'already' };
-  const d = new Date(f.at || Date.now());
-  const docDate = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
-  const ext = file.mime === 'image/tiff' ? 'tif' : 'pdf';
-  const title = `Fax – ${String(f.from || f.number || 'Doximity').replace(/\s+/g, ' ').slice(0, 40)} – ${docDate}`;
-  const r = await rxnt.uploadToChart(pid(), internalId, file.data, { fileName: `Fax ${docDate.replace(/\//g, '-')}.${ext}`, title, category: category || 'Other', docDate });
-  activity.add('RxNT', 'fax-filed', { fax: String(id).slice(0, 12), chart, document: title, confirmed_by: 'Maria (in app)', verified: r.ok ? 'yes' : 'no', reason: r.error || '' }, !!r.ok);
-  if (r.needsLogin) { rxntSignedOut(pid()); return { error: 'signin' }; }
-  if (!r.ok) return { error: r.error || 'failed' };
-  faxes.update(String(id), { status: 'filed', doneAt: new Date().toISOString(), filed: { chart, title, at: new Date().toISOString() } });
-  send('sync', syncStatus());
-  return { ok: true, title };
+  filingNow = true;   // claimed (synchronously, before any await)
+  try {
+    const { date, title } = faxTitle(f);
+    const prev = f.attempt;
+    if (prev && ['saving', 'uncertain'].includes(prev.state)) {   // a past attempt may have saved: check only
+      const v = await rxnt.verifyInChart(pid(), prev.internalId, prev.title);
+      if (v.needsLogin) { rxntSignedOut(pid()); return { error: 'signin' }; }
+      if (v.unknown) return { error: 'uncertain' };   // couldn't read the chart: never treat that as "not there"
+      if (v.found) { faxes.update(id, { status: 'filed', doneAt: new Date().toISOString(), filed: { chart: prev.chart, title: prev.title, at: new Date().toISOString() }, attempt: { ...prev, state: 'done' } }); activity.add('RxNT', 'fax-filed', { fax: id.slice(0, 12), chart: prev.chart, document: prev.title, verified: 'yes', note: 'found on re-check' }); send('sync', syncStatus()); return { ok: true, title: prev.title }; }
+      // Not in the chart. A new upload needs Maria to say so explicitly ("upload again"), never automatically.
+      activity.add('RxNT', 'fax-filed', { fax: id.slice(0, 12), chart: prev.chart, verified: 'no', note: 'earlier attempt not found in chart' }, false);
+      if (again !== true) return { error: 'notfound-after', chart: prev.chart };
+    }
+    faxes.update(id, { attempt: { state: 'uploading', internalId: String(internalId), chart: shown.chart, title, at: new Date().toISOString() } });
+    const ext = file.mime === 'image/tiff' ? 'tif' : 'pdf';
+    const r = await rxnt.uploadToChart(pid(), internalId, file.data, { fileName: `Fax ${date.replace(/\//g, '-')}.${ext}`, title, category: category || 'Other', docDate: date, mime: file.mime,
+      onSaving: () => faxes.update(id, { attempt: { state: 'saving', internalId: String(internalId), chart: shown.chart, title, at: new Date().toISOString() } }) });
+    activity.add('RxNT', 'fax-filed', { fax: id.slice(0, 12), chart: shown.chart, document: title, confirmed_by: 'Maria (in app)', verified: r.ok ? 'yes' : 'no', reason: r.error || '' }, !!r.ok);
+    if (r.needsLogin) { faxes.update(id, { attempt: null }); rxntSignedOut(pid()); return { error: 'signin' }; }
+    if (r.ok) {
+      faxes.update(id, { status: 'filed', doneAt: new Date().toISOString(), filed: { chart: shown.chart, title, at: new Date().toISOString() }, attempt: { state: 'done', internalId: String(internalId), chart: shown.chart, title } });
+      delete shownChart[id]; send('sync', syncStatus());
+      return { ok: true, title };
+    }
+    if (r.error === 'uncertain') { faxes.update(id, { attempt: { state: 'uncertain', internalId: String(internalId), chart: shown.chart, title, at: new Date().toISOString() } }); return { error: 'uncertain' }; }
+    faxes.update(id, { attempt: null });   // nothing was saved (stopped before Save)
+    return { error: r.error || 'failed' };
+  } finally { filingNow = false; }
 });
-ipcMain.handle('comms:vmAudio', async (_e, vmId, media) => { try { return await ringrx.voicemailAudio(pid(), String(vmId), String(media || '')); } catch { return null; } });
+// Voicemail audio. Finds the recording's message id if the call doesn't have it yet; failures are logged
+// (status and type only) so a "didn't play" can be traced.
+ipcMain.handle('comms:vmAudio', async (_e, vmId, media) => {
+  try {
+    if (!vmId) { activity.add('RingRx', 'voicemail-play', { reason: 'no recording id' }, false); return { error: 'noid' }; }
+    const r = await ringrx.voicemailAudio(pid(), String(vmId), String(media || ''));
+    if (!r || r.error) { activity.add('RingRx', 'voicemail-play', { reason: (r && r.error) || 'failed' }, false); return { error: (r && r.error) || 'failed' }; }
+    return r;
+  } catch (e) { activity.add('RingRx', 'voicemail-play', { reason: e.code || 'error' }, false); return { error: 'failed' }; }
+});
+ipcMain.handle('comms:vmPlayFailed', (_e, why) => { activity.add('RingRx', 'voicemail-play', { reason: 'player: ' + String(why || '').slice(0, 80) }, false); return true; });
 ipcMain.handle('comms:spamReview', () => { const c = store.callbacks.get(), r = c.spamReview || []; if (r.length) { c.spamReview = []; store.callbacks.set(c); } return r; });
 ipcMain.handle('comms:heard', (_e, id, on) => { on === false ? comms.unmarkHeard(String(id)) : comms.markHeard(String(id)); send('sync', syncStatus()); return true; });
 ipcMain.handle('comms:unseen', (_e, phone) => { comms.unmarkSeen(ph10(phone)); send('sync', syncStatus()); return true; });
@@ -470,7 +541,7 @@ ipcMain.handle('activity:export', async (_e, f) => {
   if (r.canceled || !r.filePath) return { canceled: true };
   require('fs').writeFileSync(r.filePath, activity.csv(rows)); return { ok: true, n: rows.length };
 });
-ipcMain.handle('ringrx:openPortal', (_e, page) => shell.openExternal('https://portal.ringrx.com/' + ({ contacts: 'contacts', calls: 'calls', messages: 'messages', block: 'my-phone' }[page] || 'dashboard')));
+ipcMain.handle('ringrx:openPortal', (_e, page) => shell.openExternal('https://portal.ringrx.com/' + ({ contacts: 'contacts', block: 'my-phone' }[page] || '')));
 ipcMain.handle('alerts:test', async () => {
   const to = await ringrx.alertNumber(pid());
   if (!to) return { error: 'Add a number first.' };
@@ -638,8 +709,10 @@ function accountHealth() {
   const busy = busyNow(), staleMs = (busy ? 1 : 4) * 3600e3, id = pid(), now = Date.now();
   const lvl = (keys, signedIn) => {
     if (!signedIn) return { level: 'red', why: 'sign-in needed' };
-    const oks = keys.map((k) => lastOk[k] || 0), last = Math.max(...oks), failing = keys.some((k) => (fails[k] || 0) > 0);
-    if (!last) return { level: failing ? 'amber' : 'grey', why: failing ? "couldn't load" : 'checking…', at: null };
+    // Every part has to be fresh: a fresh schedule can't hide prescriptions that never loaded.
+    const oks = keys.map((k) => lastOk[k] || 0), last = Math.min(...oks), failing = keys.some((k) => (fails[k] || 0) > 0);
+    const NAMES = { schedule: 'schedule', rx: 'prescriptions', comms: 'texts and calls', gmail: 'email', faxes: 'faxes' };
+    if (!last) { const wait = keys.filter((k) => !lastOk[k]).map((k) => NAMES[k] || k).join(', '); return { level: failing ? 'amber' : 'grey', why: failing ? "couldn't load" : `checking ${wait}…`, at: Math.max(...oks) ? new Date(Math.max(...oks)).toISOString() : null }; }
     const fresh = now - last < staleMs;
     return { level: fresh && !failing ? 'green' : 'amber', why: failing ? "couldn't load" : fresh ? '' : 'not checked lately', at: new Date(last).toISOString() };
   };
@@ -762,7 +835,7 @@ function nudgeCheck() {
     const after = (now - end) / 60000;
     if (after >= 0 && after < 3 && !nudged.has('c' + a.appointmentId)) {
       nudged.add('c' + a.appointmentId);
-      notify('Chart this visit?', `${nm(a)} · ${tm(a.start)} visit ended`, () => shell.openExternal('https://app2.rxnt.com/ehrv9/dashboard'));
+      notify('Chart this visit?', `${nm(a)} · ${tm(a.start)} visit ended`, () => openRxntIn('https://app2.rxnt.com/ehrv9/dashboard'));
     }
   }
 }
@@ -895,7 +968,14 @@ ipcMain.handle('backup:restoreAuto', (_e, file) => { try { return { ok: true, ..
 ipcMain.handle('backup:now', () => { try { const f = `auto-${ymd(new Date())}.bin`; const p2 = store.raw.file(path.join('Backups', f)); if (fs.existsSync(p2)) fs.unlinkSync(p2); backups.autoDaily(); return { ok: true }; } catch (e) { return { error: e.message }; } });
 setInterval(() => { try { backups.autoDaily(); activity.prune(); } catch {} }, 60 * 60 * 1000);
 
-ipcMain.handle('send:batch', async (e, items) => {
+// Each confirmed send carries an operation id; a second request with the same id gets the first result
+// instead of sending again (double clicks, retries). A deliberately new message gets a new id.
+const sendOps = new Map();
+ipcMain.handle('send:batch', async (e, items, opId) => {
+  if (opId) { if (sendOps.has(opId)) return sendOps.get(opId); const p = sendBatch(e, items); sendOps.set(opId, p); setTimeout(() => sendOps.delete(opId), 10 * 60000); return p; }
+  return sendBatch(e, items);
+});
+async function sendBatch(e, items) {
   const id = pid();
   // Blocked numbers, read fresh before every single text (a STOP can arrive mid-batch): anyone marked
   // do-not-text (main or extra numbers) and every number that replied STOP. All compared as 10 digits.
@@ -917,23 +997,46 @@ ipcMain.handle('send:batch', async (e, items) => {
     } catch (err) {
       res = { ...it, ok: false, error: err.message, code: err.code };
     }
-    store.log.add({ name: it.name, phone: it.phone, template: it.templateName, templateId: it.templateId, ok: res.ok, error: res.error || '', message: it.message });
+    store.log.add({ name: it.name, phone: it.phone, template: it.templateName, templateId: it.templateId, apptId: it.apptId || null, ok: res.ok, error: res.error || '', message: it.message });
     results.push(res);
     e.sender.send('send:progress', { done: i + 1, total: items.length, last: res });
     if (res.code === 'SIGNED_OUT') break;
     if (i < items.length - 1) await new Promise((r) => setTimeout(r, 1500));
   }
   return results;
-});
+}
 
 // Present a standard Chrome user agent; some sign-in pages stall on "Electron".
 app.userAgentFallback = app.userAgentFallback
   .replace(/\sElectron\/\S+/, '')
   .replace(/\s(ruhwell-messenger|Ruhwell Messenger|Ruhwell Front Desk)\/\S+/i, '');
 
+// Start with Windows / Open at login. Exactly one entry: older versions and older names left extra startup
+// entries behind (some pointing at programs that no longer exist), so those are cleaned up first.
+const LOGIN_NAME = 'Ruhwell Front Desk';
+function cleanOldLoginItems() {
+  if (process.platform !== 'win32') return;
+  const { execFile } = require('child_process');
+  const RUN = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run', OK = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run';
+  execFile('reg', ['query', RUN], { windowsHide: true }, (err, out) => {
+    if (err || !out) return;
+    for (const line of String(out).split(/\r?\n/)) {
+      const m = /^\s{4}(.+?)\s{4}REG_\w+\s{4}(.*)$/.exec(line); if (!m) continue;
+      const [, name, data] = m;
+      if (!/ruhwell/i.test(name + ' ' + data) || name === LOGIN_NAME) continue;   // only ours, never anything else
+      execFile('reg', ['delete', RUN, '/v', name, '/f'], { windowsHide: true }, () => {});
+      execFile('reg', ['delete', OK, '/v', name, '/f'], { windowsHide: true }, () => {});
+    }
+  });
+}
 function applyLoginItem() {
   if (!app.isPackaged) return;
-  try { app.setLoginItemSettings({ openAtLogin: !!store.settings.get().openAtLogin, args: ['--hidden'], openAsHidden: true }); } catch {}
+  try {
+    cleanOldLoginItems();
+    const opts = { openAtLogin: !!store.settings.get().openAtLogin, args: ['--hidden'], openAsHidden: true };
+    if (process.platform === 'win32') Object.assign(opts, { name: LOGIN_NAME, path: process.execPath });
+    app.setLoginItemSettings(opts);
+  } catch {}
 }
 
 // Saved data that can't be unlocked (e.g. the Mac Keychain said no after an update) is never treated
@@ -959,6 +1062,7 @@ app.whenReady().then(() => {
   store.log.migrate();
   store.log.prune(store.settings.get().historyKeep);
   activity.prune();
+  try { faxes.repairOnce(); } catch {}
   migrations.run();
   if (process.platform === 'win32') {
     // Windows names notifications after a Start-menu shortcut with the same app ID; without one it shows

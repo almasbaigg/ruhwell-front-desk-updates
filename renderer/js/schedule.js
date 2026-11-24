@@ -96,11 +96,12 @@ function emptyReason(blocks, H) {
 }
 function renderVisits() {
   const L = $('visit-list'), mode = dayMode(), H = inferHours();
+  linkMoves(visits);
   const n = (fn) => visits.filter(fn).length;
   const elig = visits.filter((v) => v.eligible && !v.selected).length;
   $('summary').innerHTML = (visits.length ? [
     [visits.length === 1 ? 'visit' : 'visits', visits.length, ''], ['checked in', n((v) => v.cat === 'seen'), 'seen'], ['booked', n((v) => stateOf(v) === 'booked' || stateOf(v) === 'confirmed'), 'pending'],
-    ['not checked in', n((v) => stateOf(v) === 'notin'), 'notin'], ['cancelled', n((v) => v.cat === 'cancelled'), 'cancelled'], ['messaged', n((v) => v.already.length), 'sent'],
+    ['not checked in', n((v) => stateOf(v) === 'notin'), 'notin'], ['cancelled', n((v) => v.cat === 'cancelled' && !v.movedTo), 'cancelled'], ['cancelled & moved', n((v) => !!v.movedTo), 'moved'], ['messaged', n((v) => v.already.length), 'sent'],
   ].filter(([, c], i) => i < 2 || c).map(([l, c, k]) => `<span class="sum ${k}">${k ? '<i></i>' : ''}<b>${c}</b>${l}</span>`).join('') : '') + (elig ? `<button class="btn small" id="sel-elig">${I.check}Select all who need a text (${elig})</button>` : '');
   if ($('sel-elig')) $('sel-elig').onclick = () => { visits.forEach((v) => { if (v.eligible) v.selected = true; }); renderVisits(); };
   const blocks = mergedBlocks(visits.blocks);
@@ -117,6 +118,10 @@ function renderVisits() {
     const wrap = document.createElement('div'); wrap.className = 'trow';
     if (r.t === 'block') { wrap.innerHTML = rowHTML(r); L.appendChild(wrap); continue; }
     const v = r.v, st = stateOf(v);
+    if (v.movedTo) {   // cancelled and booked again: muted, compact, nothing to send
+      wrap.innerHTML = `<div class="tcol"><b>${esc(fmtTime(v.start))}</b></div><div class="item moved-item"><span></span><div class="avatar">${esc(initials(v))}</div><div class="main"><p class="name">${esc(fullName(v))} ${typeTag(v.visitType)}</p><p class="sub-line"><span class="moved-tag">${esc(movedLabel(v.movedTo, v.start))}</span></p></div><div class="actions"></div></div>`;
+      L.appendChild(wrap); continue;
+    }
     const dnt = !!(v.rec && v.rec.dnt), hasPhone = digits(v.phone).length === 10;
     const selectable = !!v.templateId && !dnt && hasPhone && (v.cat === 'seen' ? mode !== 'future' : v.cat === 'pending' && mode === 'future');
     const dur = Math.round((new Date(v.end) - new Date(v.start)) / 60000);
@@ -128,7 +133,7 @@ function renderVisits() {
         <div class="main">
           <p class="name">${esc(fullName(v))} ${typeTag(v.visitType)}</p>
           <p class="sub-line">${hasPhone ? `<span class="phone">${esc(fmtPhone(v.phone))}</span>` : `<span class="phone"><input placeholder="Add a phone number" value="${esc(v.phone)}"></span>`}${stateTag(v.confirmed && st === 'booked' ? 'confirmed' : st)}</p>
-          ${v.why ? `<div class="why-line">${esc(v.why)}</div>` : ''}<div class="meta">${v.encounter && !v.encounter.started && /check-?in completed/i.test(v.statusText || '') ? '<span class="pill red">Chart not started</span>' : ''}${phoneBadge(v, v.rec)}${minorBadge(v, v.rec)}${dnt ? '<span class="pill red">Do not text</span>' : ''}${(() => { const c = lastCall(v.phone); return c && new Date(c.at) >= parseYmd(currentDate) ? `<span class="pill">${I.phone}${c.missed ? 'Missed call' : c.inbound ? 'Called in' : 'Called'} ${esc(fmtTime(c.at))}</span>` : ''; })()}${v.review ? `<span class="pill teal">Google review asked ${esc(v.review.toLocaleDateString([], { month: 'short', day: 'numeric' }))}</span>` : ''}</div>
+          ${v.movedFrom ? `<div class="why-line">Moved from ${esc(new Date(v.movedFrom).toDateString() === new Date(v.start).toDateString() ? fmtTime(v.movedFrom) : fmtDateShort(v.movedFrom))}</div>` : ''}${v.why ? `<div class="why-line">${esc(v.why)}</div>` : ''}<div class="meta">${v.encounter && !v.encounter.started && /check-?in completed/i.test(v.statusText || '') ? '<span class="pill red">Chart not started</span>' : ''}${phoneBadge(v, v.rec)}${minorBadge(v, v.rec)}${dnt ? '<span class="pill red">Do not text</span>' : ''}${(() => { const c = lastCall(v.phone); return c && new Date(c.at) >= parseYmd(currentDate) ? `<span class="pill">${I.phone}${c.missed ? 'Missed call' : c.inbound ? 'Called in' : 'Called'} ${esc(fmtTime(c.at))}</span>` : ''; })()}${v.review ? `<span class="pill teal">Google review asked ${esc(v.review.toLocaleDateString([], { month: 'short', day: 'numeric' }))}</span>` : ''}</div>
           ${v.editing ? composerHTML(v) : v.open ? `<div class="preview">${esc(finalMessage(v)) || '<span class="muted">No message</span>'}</div>` : ''}
           ${v.editing ? '<div class="row-actions"><button class="link-btn act-done">Done</button></div>' : ''}
         </div>

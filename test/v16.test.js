@@ -74,6 +74,52 @@ const T = ymdOf(tmr);
   assert.ok(!fs.existsSync(store.raw.file(old)), 'old months removed');
   assert.ok(/^at,source,type,ok,chart/.test(activity.csv(activity.list())), 'csv header');
 
+
+  // G) Voicemail: only real messages, one-to-one, and a mailbox call without a message isn't a voicemail.
+  const T0 = Date.parse('2026-11-20T15:00:00Z');
+  const iso = (m) => new Date(T0 + m * 60000).toISOString();
+  const calls = [
+    { id: 'A', inbound: true, phone: '2816545418', at: iso(0), toMailbox: true },    // went to mailbox, no message
+    { id: 'B', inbound: true, phone: '5125550111', at: iso(10), toMailbox: true },   // message left
+    { id: 'C', inbound: true, phone: '5125550111', at: iso(12), toMailbox: true },   // same caller again, second message
+    { id: 'D', inbound: true, phone: '5125550111', at: iso(13), toMailbox: false, answered: true },
+  ];
+  const vmsList = [{ id: 'uuid-1', phone: '5125550111', at: iso(11) }, { id: 'uuid-2', phone: '5125550111', at: iso(13) }];
+  comms.attachVoicemails(calls, vmsList);
+  const by = Object.fromEntries(calls.map((c) => [c.id, c]));
+  assert.ok(!by.A.voicemail && by.A.noMessage, 'mailbox call without a message is not a voicemail');
+  assert.ok(by.B.vmId === 'uuid-1' && by.C.vmId === 'uuid-2', 'each message to its own call');
+  assert.ok(!by.D.vmId, 'answered call never gets a recording');
+  assert.strictEqual(calls.filter((c) => c.vmId === 'uuid-1').length, 1, 'no recording used twice');
+
+  // H) Fax dates: weekday headings, unknown text never "old"; file type from the bytes.
+  const faxes = require(APP + '/faxes');
+  assert.ok(faxes.whenOf('Thursday', '11:46 AM') && new Date(faxes.whenOf('Thursday', '11:46 AM')).getDay() === 4, 'weekday heading');
+  assert.strictEqual(faxes.whenOf('Pinned', '9:00 AM'), null, 'unknown heading is unknown, not a date');
+  assert.strictEqual(faxes.sniff(Buffer.from('%PDF-1.4 x').toString('base64')), 'application/pdf');
+  assert.strictEqual(faxes.sniff(Buffer.from([0x49, 0x49, 0x2a, 0, 1, 2]).toString('base64')), 'image/tiff');
+  assert.strictEqual(faxes.sniff(Buffer.from('<html>').toString('base64')), null, 'an HTML page is not a fax');
+
+  // I) Filing only into the picked patient's chart.
+  const rx = require(APP + '/rxnt-reader');
+  const who = { patientId: '19888266', first: 'Randy', last: 'Wester', dob: '1989-03-15' };
+  assert.ok(rx.sameChart({ chart: '19888266', first: 'Randy', last: 'Wester', dob: '1989-03-15' }, who), 'same chart');
+  assert.ok(!rx.sameChart({ chart: '11111111', first: 'Randy', last: 'Wester', dob: '1989-03-15' }, who), 'different chart number blocks it');
+  assert.ok(!rx.sameChart({ chart: '', first: 'Randy', last: 'Wester', dob: '' }, who), 'name alone is not enough');
+  assert.ok(!rx.sameChart({ chart: '', first: 'Randy', last: 'Wester', dob: '1989-03-15' }, { ...who, dob: '' }), 'missing DOB on our side fails closed');
+
+  // J) The Save step exists and never clicks twice (1.6.2 test build shipped without it).
+  const src = require('fs').readFileSync(APP + '/rxnt-reader.js', 'utf8');
+  assert.ok(/step === 'save'/.test(src) && /__rmSaveClicked/.test(src), 'upload has a save step with a one-click guard');
+  // K) Two cancellations/bookings with no patient ids are never paired as one reschedule.
+  events.length = 0; Date.now = () => clock; clock += 5 * 60000;
+  const noid = (id, h, st, first, last) => ({ appointmentId: id, patientId: '', first, last, dob: '', start: at(h), statusText: st, statusCode: st.slice(0, 3).toUpperCase(), phone: '' });
+  byDay = { [T]: [...byDay[T], noid(50, 9, 'Booked', 'Xa', 'One')] }; await watcher.check({ silent: true }); clock += 5 * 60000;
+  byDay = { [T]: [...byDay[T].filter((a) => a.appointmentId !== 50), noid(50, 9, 'Canceled', 'Xa', 'One'), noid(51, 11, 'Booked', 'Yb', 'Two')] };
+  events.length = 0; await watcher.check({ silent: true });
+  if (events.some((e) => e.kind === 'rescheduled')) console.log(JSON.stringify(events.map((e) => [e.kind, e.text])));
+  assert.ok(!events.some((e) => e.kind === 'rescheduled'), 'missing ids never pair two different people');
+  Date.now = realNow;
   console.log('1.6.0 OK');
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -77,7 +77,9 @@ async function gatherToday() {
   const open = alerts.filter((x) => !x.handled && !x.quiet && ALERT[x.kind] && ALERT[x.kind].action && Date.now() - new Date(x.at) < WEEK);
   const slot = (x) => `${(x.appt || {}).patientId}|${(x.appt || {}).start}`;
   const newSlots = new Set(open.filter((x) => x.kind === 'new').map(slot)), cxSlots = new Set(open.filter((x) => x.kind === 'cancelled').map(slot));
-  for (const a of open.filter((x) => !((x.kind === 'new' && cxSlots.has(slot(x))) || (x.kind === 'cancelled' && newSlots.has(slot(x)))))) {
+  const pool = Object.values(range || {}).flatMap((x) => x.items || []);
+  const rebooked = (appt) => pool.some((v) => category(v) !== 'cancelled' && samePatient(v, appt) && v.appointmentId !== appt.appointmentId && Math.abs(new Date(v.start) - new Date(appt.start)) <= 14 * 864e5);
+  for (const a of open.filter((x) => !((x.kind === 'new' && cxSlots.has(slot(x))) || (x.kind === 'cancelled' && (newSlots.has(slot(x)) || rebooked(x.appt || {})))))) {
     const A = ALERT[a.kind];
     if (a.kind === 'newpatient') { const p = patients.find((x) => x.key === a.key); items.push({ key: 'a:' + a.id, sec: 'schedule', at: a.at, kind: 'change', icon: `<svg viewBox="0 0 24 24">${A.icon}</svg>`, title: a.text.replace('New patient in RxNT: ', ''), tag: 'New patient', sub: `Registered in RxNT · ${ago(a.at)}`, action: p ? ['Open patient', () => { go('patients'); openPatient(p); }] : null, done: () => window.api.watchHandle(a.id) }); continue; }
     const appt = a.appt || {}, rec = recordFor(appt);
@@ -212,9 +214,11 @@ function paintVisits(range) {
     $('today-visits').innerHTML = `<div class="quiet">${I.cal}<span>No visits today${next ? `<br><small>Next: ${esc(fmtDateShort(next[0].start))}, ${esc(fmtTime(next[0].start))}</small>` : ''}</span></div>`;
     return;
   }
+  linkMoves(td, Object.values(range).flatMap((x) => x.items || []));
   $('today-visits').innerHTML = timeStrip(td) + td.map((v) => { const st = stateOf(v), b = ['booked', 'confirmed'].includes(st) ? visitBrief(v) : '';
-    return `<button class="visit-line st-${st}" data-d="${esc(ymd())}"><time>${esc(fmtTime(v.start))}</time><span class="nm">${esc(fullName(v))}${v.visitType ? `<small>${esc(v.visitType)}</small>` : ''}${b ? `<small class="brief">${esc(b)}</small>` : ''}</span>${stateTag(st)}</button>`; }).join('');
-  $('today-visits').querySelectorAll('.visit-line').forEach((b) => (b.onclick = () => { go('visits'); loadDay(ymd()); }));
+    if (v.movedTo) return `<button class="visit-line moved" data-d="${esc(ymd())}"><time>${esc(fmtTime(v.start))}</time><span class="nm">${esc(fullName(v))}</span><span class="moved-tag">${esc(movedLabel(v.movedTo, v.start))}</span></button>`;
+    return `<button class="visit-line st-${st}" data-d="${esc(ymd())}"><time>${esc(fmtTime(v.start))}</time><span class="nm">${esc(fullName(v))}${v.visitType ? `<small>${esc(v.visitType)}</small>` : ''}${v.movedFrom ? `<small class="brief">Moved from ${esc(new Date(v.movedFrom).toDateString() === new Date(v.start).toDateString() ? fmtTime(v.movedFrom) : fmtDateShort(v.movedFrom))}</small>` : b ? `<small class="brief">${esc(b)}</small>` : ''}</span>${stateTag(st)}</button>`; }).join('');
+  $('today-visits').querySelectorAll('.visit-line, .ts-b').forEach((b) => (b.onclick = () => { go('visits'); loadDay(ymd()); }));
 }
 
 // One line before each visit: what's still open for this patient, and when they were last seen.
@@ -244,24 +248,27 @@ function visitBrief(v) {
   return [...new Set(out)].slice(0, 3).join(' · ');
 }
 
-// The day as a strip: visits as blocks, gaps labeled with how much free time they hold. Makes time visible.
+// The day as a strip: each visit its own block (colored by status), hour ticks, a "now" line, and free time
+// labeled only when it's 30 minutes or more. Cancelled and moved visits are left out. Hidden when there's nothing to show.
 function timeStrip(td) {
   const live = td.filter((v) => category(v) !== 'cancelled'); if (!live.length) return '';
   const S = settings.sync || {}, base = parseYmd(ymd()), at = (hm) => { const [h, m] = hm.split(':').map(Number); const d = new Date(base); d.setHours(h, m, 0, 0); return d.getTime(); };
   const endOf = (v) => (v.end ? new Date(v.end).getTime() : new Date(v.start).getTime() + 30 * 60000);
-  const from = Math.min(at(S.busyStart || '08:00'), new Date(live[0].start).getTime()), to = Math.max(at(S.busyEnd || '17:00'), endOf(live[live.length - 1]));
-  const pct = (t) => ((t - from) / (to - from)) * 100, now = Date.now(), dur = (m) => (m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ''}` : `${m}m`);
-  let html = '', cursor = from;
-  const gap = (a, b) => { const m = Math.round((b - a) / 60000); if (m < 15) return ''; const isNow = now >= a && now < b; return `<div class="ts-gap ${isNow ? 'now' : ''} ${b < now ? 'past' : ''}" style="left:${pct(a)}%;width:${pct(b) - pct(a)}%"><span>${isNow ? 'Free now · ' + dur(Math.round((b - now) / 60000)) : 'Free ' + dur(m)}</span></div>`; };
+  const from = Math.min(at(S.busyStart || '08:00'), new Date(live[0].start).getTime()), to = Math.max(at(S.busyEnd || '17:00'), Math.max(...live.map(endOf)));
+  const span = to - from, pct = (t) => ((t - from) / span) * 100, now = Date.now();
+  let html = '', cursor = from, gaps = [];
   for (const v of live) {
     const s = new Date(v.start).getTime(), e = endOf(v);
-    if (s > cursor) html += gap(cursor, s);
-    html += `<div class="ts-visit st-${stateOf(v)} ${e < now ? 'past' : s <= now && now < e ? 'live' : ''}" style="left:${pct(s)}%;width:${Math.max(1.5, pct(e) - pct(s))}%" title="${esc(fmtTime(v.start))} · ${esc(fullName(v))}"></div>`;
+    if (s - cursor >= 30 * 60000) gaps.push([cursor, s]);
+    const st = stateOf(v), cls = st === 'seen' ? 'in' : st === 'confirmed' || v.confirmed ? 'conf' : st === 'notin' ? 'notin' : 'booked';
+    html += `<button class="ts-b ${cls} ${e < now ? 'past' : s <= now && now < e ? 'live' : ''}" style="left:calc(${pct(s)}% + 1px);width:calc(${Math.max(0.8, pct(e) - pct(s))}% - 2px)" title="${esc(fmtTime(v.start))} · ${esc(fullName(v))} · ${esc(({ seen: 'Checked in', confirmed: 'Confirmed', notin: 'Not checked in', booked: 'Booked' })[cls === 'conf' ? 'confirmed' : st] || st)}"></button>`;
     cursor = Math.max(cursor, e);
   }
-  if (to > cursor) html += gap(cursor, to);
+  if (to - cursor >= 30 * 60000) gaps.push([cursor, to]);
+  const labels = gaps.filter(([a, b]) => pct(b) - pct(a) >= 16 && b > now).map(([a, b]) => `<span class="ts-free" style="left:${pct(a)}%;width:${pct(b) - pct(a)}%">${now >= a ? 'Free now' : 'Free'} until ${esc(fmtTime(new Date(b)).replace(':00', ''))}</span>`).join('');
+  const ticks = []; for (let t = Math.ceil(from / 3600e3) * 3600e3; t <= to; t += 3600e3) { const h = new Date(t).getHours(); ticks.push(`<i class="ts-tick" style="left:${pct(t)}%"><em>${h % 12 || 12}</em></i>`); }
   const marker = now > from && now < to ? `<i class="ts-now" style="left:${pct(now)}%"></i>` : '';
-  return `<div class="timestrip">${html}${marker}</div><div class="ts-scale"><span>${esc(fmtTime(new Date(from)))}</span><span>${esc(fmtTime(new Date(to)))}</span></div>`;
+  return `<div class="timestrip2"><div class="ts-track">${html}${labels}${marker}</div><div class="ts-ticks">${ticks.join('')}</div></div>`;
 }
 
 // Progress: a running count of what's been finished today.

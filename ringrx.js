@@ -60,7 +60,11 @@ async function token(pid) {
   // The token really expired: sign back in once with the saved sign-in (never retried, so it can't lock anything).
   if (saved.password && saved.username) {
     try { await login(pid, saved.username, saved.password); return cache[pid].access; }
-    catch (e) { if (e.code === 'BAD_LOGIN' || e.code === 'OTP_REQUIRED') store.ringrx.set(pid, { ...store.ringrx.get(pid), password: undefined }); }
+    catch (e) {
+      // Only a definite "wrong password / needs a code" ends the sign-in. A dropped connection keeps everything saved.
+      if (e.code !== 'BAD_LOGIN' && e.code !== 'OTP_REQUIRED') throw new RingRxError("Can't reach RingRx right now.", 'OFFLINE');
+      store.ringrx.set(pid, { ...store.ringrx.get(pid), password: undefined });
+    }
   }
   store.ringrx.clear(pid);
   throw new RingRxError('Your RingRx sign-in expired. Please sign in again.', 'SIGNED_OUT');
@@ -185,7 +189,7 @@ async function messages(pid, sinceISO) {
       const kind = r.message_type === 'voicemail' ? 'voicemail' : 'text';
       // Any link RingRx gives for the recording (field name isn't documented; keep the first URL-looking one).
       const media = kind === 'voicemail' ? ['file', 'url', 'recording', 'recording_url', 'audio', 'audio_url', 'media_url', 'attachment', 'file_url', 'download_url'].map((k) => r[k]).find((v) => typeof v === 'string' && /^(https?:)?\/\//.test(v) || (typeof v === 'string' && v.startsWith('/'))) || '' : '';
-      out.push({ id: String(r.id), kind, inbound, phone, at, body: String(r.message || '').trim(), transcription: r.transcription ? String(r.transcription) : '', unread: r.status === 'new', media });
+      out.push({ id: String(r.id), kind, inbound, phone, at, body: String(r.message || '').trim(), transcription: r.transcription ? String(r.transcription) : '', unread: r.status === 'new', media, secs: kind === 'voicemail' ? Math.round(Number(r.duration) || 0) : 0 });
     }
   }
   return out;
@@ -208,9 +212,10 @@ async function calls(pid, days = 90) {
     const at = r.start_time ? new Date(String(r.start_time).replace(' ', 'T')).toISOString() : null;
     if (!at) continue;
     const answered = !!r.answered_time;
-    const voicemail = inbound && /mbx-/.test(String(r.callflow || ''));
+    // Sent to the mailbox. That doesn't mean a message was left: only a voicemail message from RingRx proves that.
+    const toMailbox = inbound && /mbx-/.test(String(r.callflow || ''));
     const secs = Number(r.bill_duration || r.duration) || 0;
-    out.push({ id: String(r.id), inbound, phone, at, secs, answered, voicemail, missed: inbound && (!answered || voicemail) });
+    out.push({ id: String(r.id), inbound, phone, at, secs, answered, toMailbox, voicemail: false, missed: inbound && (!answered || toMailbox) });
   }
   return out;
 }
@@ -219,6 +224,7 @@ async function calls(pid, days = 90) {
 async function voicemailAudio(pid, id, media) {
   // RingRx's own web app plays voicemails from /voicemails/<id>/voice_payload (octet-stream means WAV).
   const tries = [`/voicemails/${encodeURIComponent(id)}/voice_payload`, media].filter(Boolean);
+  const why = [];
   for (const t of tries) {
     try {
       const url = new URL(t.startsWith('//') ? 'https:' + t : t, BASE);
@@ -226,13 +232,13 @@ async function voicemailAudio(pid, id, media) {
       const res = await fetch(url, { headers: sameHost ? { Authorization: `Bearer ${await token(pid)}` } : {} });
       let mime = String(res.headers.get('content-type') || '').split(';')[0];
       if (mime === 'application/octet-stream' || !mime) mime = 'audio/wav';
-      if (!res.ok || !/^audio\//.test(mime)) continue;
+      if (!res.ok || !/^audio\//.test(mime)) { why.push(`${res.status} ${mime}`); continue; }
       const buf = Buffer.from(await res.arrayBuffer());
-      if (buf.length < 500) continue;
+      if (buf.length < 500) { why.push(`short ${buf.length}`); continue; }
       return { mime, data: buf.toString('base64') };
-    } catch {}
+    } catch (e) { why.push(e.code || 'error'); }
   }
-  return null;
+  return { error: why.join('; ') || 'no audio' };   // reason only (status/type), for the activity log
 }
 
 function logout(pid) { delete cache[pid]; store.ringrx.clear(pid); }
