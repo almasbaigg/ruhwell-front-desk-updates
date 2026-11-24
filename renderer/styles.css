@@ -1250,3 +1250,216 @@ h1 { font-size: 32px; letter-spacing: -.012em; }
 .ec-body { min-height: 200px; max-height: calc(100vh - 480px); }
 .modal:has(#m-now) { width: 580px; }
 .modal:has(#m-now) .send-foot { flex-wrap: nowrap; gap: 8px; }
+
+/* ======================= 2.3 · Layout pass ======================= */
+/* Use wide screens: content grows to 1440 px instead of a narrow centered column. */
+.view { max-width: 1440px; }
+.actionbar { max-width: 1440px; }
+/* Today: Needs attention (wide) + Today's visits + one card with Checklist | Notes tabs. */
+.board { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1.15fr) minmax(0, 1fr); gap: 18px; }
+.board-col { grid-template-rows: auto minmax(0, 1fr); gap: 10px; }
+.pad-tabs { justify-self: start; }
+.board-col .panel.pad:not(.on) { display: none; }
+.board-col .panel-head .ph { display: none; }
+.board-col .checklist .panel-head { display: none; }
+.notes .panel-head { flex-wrap: nowrap; margin-bottom: 6px; }
+.notes .nt-nav { margin-left: 0; width: 100%; justify-content: space-between; }
+.nt-nav .nt-day { flex: 1; text-align: left; padding-left: 6px; }
+@media (max-width: 1380px) {
+  .board { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); grid-template-rows: minmax(260px, 1.7fr) minmax(170px, 1fr); }
+  .board-col { grid-column: 1 / -1; grid-template-columns: none; grid-template-rows: auto minmax(0, 1fr); }
+}
+/* Panel headers: the title stays on one line; freshness is a small dot + time. */
+.board .panel-head { flex-wrap: nowrap; gap: 8px; }
+.board .panel-head .ph { white-space: nowrap; }
+.fresh { margin-left: auto; margin-right: 4px; font-size: 11px; }
+.fresh:not(.run)::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--sage); }
+.fresh.old:not(.run)::before { background: var(--terra); }
+.panel.visits .link-btn { white-space: nowrap; }
+/* Notes: every line of text sits on a ruled line; one quiet color for all rules. */
+#nt-text { padding-top: 3px; line-height: 26px;
+  background: linear-gradient(90deg, transparent 28px, rgba(228,146,110,.32) 28px, rgba(228,146,110,.32) 29px, transparent 29px),
+              repeating-linear-gradient(180deg, transparent 0 22px, rgba(0,87,88,.09) 22px 23px, transparent 23px 26px);
+  background-attachment: local; }
+/* Needs attention: more air between groups, buttons in one column. */
+.todo-list .sec-head, .todo-list h4 { margin-top: 18px; }
+.todo-list .row .act, .todo-list .item .act { min-width: 118px; justify-content: center; }
+/* Visits: status pill on the right of the name line, notes underneath. */
+.visit-line { grid-template-columns: 64px minmax(0, 1fr) auto; align-items: start; padding: 10px 6px; }
+.visit-line .st-tag { grid-column: 3; grid-row: 1; justify-self: end; margin-top: 0; font-size: 11px; white-space: nowrap; }
+.visit-line .nm { white-space: normal; }
+.visit-line .nm small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Time strip: short free-time labels only where they fit. */
+.ts-free { font-size: 10.5px; text-overflow: clip; }
+/* Next up: label on top, then the title, then the details; buttons on the right. */
+.next-up { grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto auto; row-gap: 2px; }
+.next-up .lbl { grid-row: 1; grid-column: 1; justify-self: start; margin-bottom: 4px; }
+.next-up b { grid-column: 1; grid-row: 2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14.5px; }
+.next-up .d { grid-column: 1; grid-row: 3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.next-up .nu-acts { grid-column: 2; grid-row: 1 / 4; align-self: center; }
+/* Sync card: checks centered in their circles; a big centered version over a soft blur when it matters. */
+.sc-body li i { width: 15px; height: 15px; display: grid; place-items: center; }
+.sc-body li.ok i::after { position: static; left: auto; top: auto; width: 3.5px; height: 7px; margin-top: -2px; border-width: 0 1.7px 1.7px 0; transform: rotate(45deg); }
+.sc-keep { display: none; margin-top: 12px; }
+.sync-veil { position: fixed; inset: 0; z-index: 55; background: rgba(246, 241, 235, .35); backdrop-filter: blur(6px) saturate(.9); opacity: 0; pointer-events: none; transition: opacity .35s ease; }
+.sync-veil.show { opacity: 1; pointer-events: auto; cursor: default; }
+.sync-card { transition: opacity .35s ease, transform .5s cubic-bezier(.2,.8,.2,1), right .5s cubic-bezier(.2,.8,.2,1), bottom .5s cubic-bezier(.2,.8,.2,1); }
+.sync-card.big { right: 50%; bottom: 50%; transform: translate(50%, 50%) scale(1.25); padding: 22px 26px 20px 22px; border-radius: 22px; box-shadow: var(--shadow-3); }
+.sync-card.big .sc-mark { width: 80px; height: 78px; }
+.sync-card.big .sc-keep { display: inline-flex; }
+@media (prefers-reduced-motion: reduce) { .sync-card, .sync-veil { transition: none; } }
+.clock em { display: grid; gap: 1px; white-space: normal; padding: 6px 9px; line-height: 1.25; }
+.clock em b { font: 700 12px/1.2 var(--sans); color: inherit; letter-spacing: 0; }
+.clock em span { font-size: 11.5px; font-weight: 500; color: inherit; opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Emails 2.3: same-height panes, day groups, avatars, one clean reading surface. */
+.split.comms { height: calc(100vh - 140px); align-items: stretch; }
+.split.comms .list-pane .tlist { flex: 1; min-height: 0; overflow-y: auto; }
+.em-day { font-size: 10.5px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); padding: 12px 12px 4px; }
+.em-row { grid-template-columns: 34px minmax(0, 1fr); column-gap: 10px; align-items: start; position: relative; }
+.em-row .em-main { display: grid; gap: 1px; min-width: 0; }
+.em-row.unread::before { content: ""; position: absolute; left: 3px; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: var(--terra); }
+.em-av { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--teal-50); color: var(--teal); font: 700 12px var(--sans); letter-spacing: .02em; flex: none; }
+.em-row.unread .em-av { background: var(--teal); color: #fff; }
+.em-row .to { font-style: normal; font-weight: 600; font-size: 11px; color: var(--muted); }
+#em-pane { overflow-y: auto; padding: 0; }
+.em-read-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 12px; padding: 18px 24px 14px; background: linear-gradient(var(--porcelain) 75%, rgba(252,247,245,0)); }
+.em-read-head h2 { flex: 1; min-width: 0; margin: 0; font: 400 22px/1.25 var(--display); color: var(--ink); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.em-read-head .row-gap { flex: none; align-items: center; }
+.em-thread { display: block; overflow: visible; padding: 0 24px 28px; }
+.em-msg { background: transparent; border: 0; border-top: 1px solid var(--line-2); border-radius: 0; padding: 16px 0 6px; }
+.em-msg:first-child { border-top: 0; padding-top: 4px; }
+.em-mh { display: flex; align-items: center; gap: 10px; }
+.em-mh .em-av { width: 32px; height: 32px; font-size: 11.5px; }
+.em-from { display: grid; min-width: 0; line-height: 1.25; }
+.em-from b { font-size: 13.5px; }
+.em-from .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.em-mh .t { margin-left: auto; white-space: nowrap; }
+.em-msg.old { padding-bottom: 12px; }
+.em-msg.old .em-mh { opacity: .75; }
+.em-frame { display: block; background: transparent; margin: 10px 0 0 42px; width: calc(100% - 42px); min-height: 40px; }
+.em-msg .ec-files { margin: 8px 0 0 42px; }
+.em-done svg { width: 16px; height: 16px; }
+#em-pane .em-read-head h2 { font: 400 23px/1.25 var(--display); letter-spacing: 0; color: var(--ink); }
+/* Faxes 2.3: list + full-width document; "Add to chart" slides in as a sheet. */
+#view-faxes .split.comms { grid-template-columns: 300px minmax(0, 1fr); }
+.fx-head { display: flex; align-items: center; gap: 14px; padding: 16px 18px 6px; }
+.fx-title { flex: 1; min-width: 0; }
+.fx-title h2 { margin: 0; font: 400 21px/1.25 var(--display); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fx-title p { margin: 2px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fx-head .row-gap { flex: none; align-items: center; }
+.fx-filed { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--teal); }
+.fx-filed svg { width: 14px; height: 14px; }
+.fx-body { display: block; position: relative; padding: 10px 16px 16px; flex: 1; min-height: 0; }
+.fx-body .fx-prev { height: 100%; }
+.fx-sheet { position: absolute; top: 10px; right: 16px; bottom: 16px; width: 340px; display: flex; flex-direction: column; background: rgba(252,247,245,.97); backdrop-filter: blur(12px); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow-3); padding: 14px 16px 16px; transform: translateX(calc(100% + 24px)); opacity: 0; pointer-events: none; transition: transform .32s cubic-bezier(.2,.8,.2,1), opacity .25s ease; z-index: 3; }
+.fx-sheet.open { transform: none; opacity: 1; pointer-events: auto; }
+.fx-sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.fx-sheet-head b { font: 400 18px var(--display); color: var(--ink); }
+.fx-sheet .fx-side { flex: 1; }
+.fx-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.fx-chips::-webkit-scrollbar { display: none; }
+.fx-chips button { white-space: nowrap; flex: none; }
+.fx-times { display: block; margin-top: 2px; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#fx-list .trow-btn .mid { min-width: 0; }
+#fx-list .trow-btn .wait, #fx-list .trow-btn .rstat { white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .fx-sheet { transition: none; } }
+#fx-pane .fx-title h2 { font: 400 21px/1.25 var(--display); letter-spacing: 0; }
+.fx-sheet-x { position: absolute; top: 10px; right: 10px; }
+.fx-sheet .fx-q { padding-right: 36px; margin-top: 4px; }
+#view-faxes .split.comms { grid-template-columns: 330px minmax(0, 1fr); }
+#fx-list .trow-btn .wait, #fx-list .trow-btn .rstat { font-size: 11px; padding: 2px 7px; }
+/* Composer fields: all borderless and identical; custom recipient list. */
+.ec-fields input, .ec-fields input:focus { border: 0 !important; box-shadow: none !important; background: transparent !important; padding: 0 !important; border-radius: 0 !important; height: 40px; outline: 0; }
+.ec-fields label:focus-within > span { color: var(--teal); }
+.ec-to-wrap { position: relative; flex: 1; display: flex; min-width: 0; }
+.ec-sugg { position: absolute; top: calc(100% + 4px); left: -8px; right: -8px; z-index: 20; background: var(--porcelain); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow-3); padding: 6px; display: grid; gap: 2px; }
+.ec-sugg button { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 7px 8px; border: 0; background: none; border-radius: 10px; text-align: left; cursor: pointer; font: inherit; color: var(--ink); }
+.ec-sugg button:hover, .ec-sugg button.on { background: var(--teal-50); }
+.ec-sugg .em-av { width: 30px; height: 30px; font-size: 11px; }
+.ec-sugg .sg-main { display: grid; min-width: 0; line-height: 1.25; }
+.ec-sugg .sg-main b { font-size: 13.5px; font-weight: 600; }
+.ec-sugg .sg-main span { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ec-sugg em { font-style: normal; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.ec-fields { overflow: visible; }
+.ec-sugg .sg-main b, .ec-sugg .sg-main span, .ec-sugg em { text-transform: none; letter-spacing: 0; }
+/* Sidebar: New text | New email side by side. */
+.new-split { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 0 0 14px; }
+.new-split .btn { padding: 0 8px; height: 36px; font-size: 12.5px; gap: 6px; justify-content: center; white-space: nowrap; }
+.new-split .btn svg { width: 15px; height: 15px; }
+.new-split .btn + .btn { background: var(--card); color: var(--teal); border: 1px solid var(--teal-100); box-shadow: none; }
+.new-split .btn + .btn:hover { background: var(--teal-50); }
+.tpl-open svg { width: 17px; height: 17px; }
+/* Info icon: a drawn circle-i (not a letter in a font), same size everywhere. */
+.info { font-size: 0; color: transparent; width: 15px; height: 15px; border: 0; background: none; }
+.info::before { content: ""; width: 15px; height: 15px; background: var(--teal); opacity: .55; transition: opacity .15s;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='9.5'/%3E%3Cpath d='M12 11v6'/%3E%3Ccircle cx='12' cy='7.6' r='.6' fill='black'/%3E%3C/svg%3E") center / contain no-repeat; }
+.info:hover, .info:focus { background: none; color: transparent; border: 0; }
+.info:hover::before, .info:focus::before { opacity: 1; }
+/* Focus rings only when using the keyboard. */
+:focus:not(:focus-visible) { outline: none; }
+.btn:focus-visible, .icon-btn:focus-visible, .trow-btn:focus-visible, .em-row:focus-visible, .seg-toggle button:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+/* Texts list: compact "Needs reply" pill on the name line. */
+
+#tx-list .rstat.wait { display: inline-flex; margin-left: 6px; padding: 1px 7px; font-size: 10.5px; font-weight: 700; border-radius: 999px; vertical-align: 1px; line-height: 1.5; }
+.new-split .btn { min-width: 0; font-size: 12px; padding: 0 6px; gap: 5px; }
+.new-split .btn svg { width: 14px; height: 14px; }
+/* Settings: wider cards; template rows with the chevron always at the far right. */
+#view-settings .card { max-width: 1040px; }
+.tpl-row { display: flex; align-items: center; gap: 10px; }
+.tpl-row > b, .tpl-row .pill, .tpl-row .tpl-aud { flex: none; white-space: nowrap; }
+.tpl-row .tpl-prev { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tpl-row .chev { flex: none; margin-left: auto; }
+#es-sig:empty::before { content: attr(data-placeholder); color: var(--faint); pointer-events: none; }
+/* Motion (macOS-like: short, soft, purposeful). Everything below is off with "Reduce motion". */
+.view:not(.hidden) { animation: view-in .26s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes view-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.btn, .icon-btn { transition: transform .12s ease, background-color .15s ease, box-shadow .15s ease, border-color .15s ease; }
+.btn:active:not(:disabled), .icon-btn:active:not(:disabled) { transform: scale(.97); }
+.modal { animation: sheet-in .28s cubic-bezier(.2,.9,.25,1) both; }
+@keyframes sheet-in { from { opacity: 0; transform: translateY(14px) scale(.985); } to { opacity: 1; transform: none; } }
+.todo { transition: opacity .3s ease, transform .3s cubic-bezier(.4,0,.2,1), max-height .3s ease .1s, margin .3s ease .1s, padding .3s ease .1s; max-height: 400px; }
+.todo.leaving { opacity: 0; transform: translateX(24px); max-height: 0; margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; overflow: hidden; }
+.icon-btn.done.ticked { background: var(--teal); border-color: var(--teal); color: #fff; }
+.icon-btn.done.ticked svg { stroke: #fff; stroke-dasharray: 24; stroke-dashoffset: 24; animation: draw-check .3s ease forwards; }
+@keyframes draw-check { to { stroke-dashoffset: 0; } }
+.nav .badge.roll, .roll { animation: roll .35s cubic-bezier(.3,1.4,.5,1); }
+@keyframes roll { 0% { transform: translateY(-40%); opacity: 0; } 100% { transform: none; opacity: 1; } }
+.panel.refreshing .scroll { filter: blur(1.2px) saturate(.85); opacity: .6; transition: filter .4s ease, opacity .4s ease; }
+.panel .scroll { transition: filter .4s ease, opacity .4s ease; }
+.all-clear.cheer svg { animation: cheer .7s cubic-bezier(.3,1.5,.5,1); }
+.all-clear.cheer::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(circle at 50% 30%, rgba(163,177,138,.28), transparent 55%); animation: cheer-glow 1.4s ease-out forwards; }
+.all-clear { position: relative; }
+@keyframes cheer { 0% { transform: scale(.3) rotate(-20deg); } 70% { transform: scale(1.15); } 100% { transform: none; } }
+@keyframes cheer-glow { from { opacity: 1; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .view:not(.hidden), .modal, .roll, .all-clear.cheer svg, .all-clear.cheer::after, .icon-btn.done.ticked svg { animation: none !important; }
+  .todo, .btn, .icon-btn, .panel .scroll { transition: none !important; }
+  .btn:active, .icon-btn:active { transform: none; }
+}
+.todo.k-fax .ic { background: var(--teal-50); color: var(--teal); }
+/* Today: patient tags on one line; Needs attention rows a touch roomier with buttons aligned. */
+.todo .t { flex-wrap: nowrap; min-width: 0; }
+.todo .t .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.todo .t .pill { flex: none; white-space: nowrap; }
+.todo .acts { align-self: center; display: flex; align-items: center; gap: 6px; }
+.ts-free { text-overflow: ellipsis; padding: 0 4px; }
+.pad-tabs { display: flex; width: 100%; }
+.pad-tabs button { flex: 1; justify-content: center; }
+.next-up .nu-acts .btn { height: 32px; padding: 0 12px; font-size: 12.5px; }
+.next-up b { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.3; }
+.todo .acts .act { min-width: 84px; justify-content: center; }
+.list-tools { display: flex; gap: 6px; align-items: center; }
+.list-tools .search-box { flex: 1; min-width: 0; }
+.list-tools select { flex: none; width: auto; height: 38px; font-size: 12.5px; padding: 0 26px 0 10px; }
+#tx-list .mid b.nm-line { display: flex; overflow: visible; align-items: center; gap: 6px; min-width: 0; }
+#tx-list .nm-line .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#tx-list .nm-line .rstat { flex: none; width: auto; margin-left: 2px; font-size: 10.5px; padding: 1px 7px; border-radius: 999px; line-height: 1.5; font-weight: 700; }
+/* Older email headers are buttons (keyboard can expand them). */
+button.em-mh { width: 100%; border: 0; background: none; padding: 0; font: inherit; color: inherit; text-align: left; cursor: default; }
+.em-msg.old button.em-mh { cursor: pointer; }
+.icon-btn.done.ticked svg { stroke-dashoffset: 0; }
+.icon-btn.done.ticked:not(.x) svg { stroke-dashoffset: 24; }
+@media (prefers-reduced-motion: reduce) {
+  .btn:active:not(:disabled), .icon-btn:active:not(:disabled) { transform: none; }
+  .icon-btn.done.ticked:not(.x) svg { stroke-dashoffset: 0; }
+}

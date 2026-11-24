@@ -49,7 +49,9 @@ function list() {
     .map(({ payload, ...x }) => ({ ...x, preview: payload && (payload.subject || (payload.items && payload.items[0] && payload.items[0].message) || '') }))
     .sort((a, b) => (a.status === 'scheduled') - (b.status === 'scheduled') || new Date(a.sendAt) - new Date(b.sendAt));
 }
-const pending = () => all().filter((x) => x.status === 'scheduled').length;
+// Counts messages, not jobs: a batch of three scheduled texts counts as 3.
+const size = (x) => (x.kind !== 'email' && x.payload && Array.isArray(x.payload.items) && x.payload.items.length) || 1;
+const pending = (kind) => all().filter((x) => x.status === 'scheduled' && (!kind || (kind === 'email' ? x.kind === 'email' : x.kind !== 'email'))).reduce((n, x) => n + size(x), 0);
 
 async function tick() {
   if (busy) return; busy = true;

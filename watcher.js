@@ -154,6 +154,12 @@ async function check({ silent = false } = {}) {
         old.handled = true; e.quiet = false; e.kind = 'backon'; e.text = `Back on the schedule: ${name(e.appt)}, ${when(e.appt.start)}`;
       }
     });
+    // The same news about the same appointment is never listed twice (e.g. a visit that dropped out of one read
+    // and came back): an earlier alert of that kind for that appointment from the last week wins.
+    const weekAgo = Date.now() - 7 * 864e5;
+    const seenNews = new Set((state.alerts || []).filter((o) => o.appt && o.appt.appointmentId && new Date(o.at || 0) > weekAgo).map((o) => `${o.kind}|${o.appt.appointmentId}`));
+    for (const e of stamped) if (e.appt && e.appt.appointmentId && ['new', 'cancelled', 'noshow', 'rescheduled'].includes(e.kind) && seenNews.has(`${e.kind}|${e.appt.appointmentId}`)) e.dup = true;
+    for (let i = stamped.length - 1; i >= 0; i--) if (stamped[i].dup) stamped.splice(i, 1);
     store.watchState.set({ lastOkAt: new Date().toISOString(), snapshot: cur, range, pending, suspect: Object.fromEntries(Object.entries(strikes).filter(([d]) => suspect.has(d))), alerts: [...stamped, ...(state.alerts || [])].slice(0, 500), unread: (state.unread || 0) + stamped.filter((e) => !e.quiet).length });
     lastRun = new Date().toISOString(); lastError = null;
     if (stamped.length) { onEvent({ type: 'alerts', events: stamped }); if (!silent) deliver(stamped); }

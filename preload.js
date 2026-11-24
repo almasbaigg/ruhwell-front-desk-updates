@@ -60,6 +60,7 @@ contextBridge.exposeInMainWorld('api', {
   faxList: () => ipcRenderer.invoke('fax:list'),
   faxSort: (id, pages) => ipcRenderer.invoke('fax:sort', id, pages),
   faxPdf: (id) => ipcRenderer.invoke('fax:pdf', id),
+  diagSave: () => ipcRenderer.invoke('diag:save'),
   faxRead: (id, read) => ipcRenderer.invoke('fax:read', id, read),
   faxSave: (id) => ipcRenderer.invoke('fax:save', id),
   faxMark: (id, st) => ipcRenderer.invoke('fax:mark', id, st),

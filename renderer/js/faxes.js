@@ -34,20 +34,34 @@ async function sortPending() {
     }
   } finally { fxSorting = false; }
 }
+let fxShown = null, fxPane = 0;   // which fax the pane is showing, and a token that changes each time the pane is rebuilt
 async function loadFaxes() {
   fxData = await window.api.faxList();
   if (!patients.length) { patients = await window.api.patients(); indexPatients(patients); }
   filterCounts('fx-filter', { needs: fxData.filter((f) => f.status === 'new').length, unread: fxData.filter((f) => f.status === 'new' && !f.readAt).length });
   renderFaxList();
-  if (fxOpen && fxData.find((f) => f.id === fxOpen)) openFax(fxOpen, true); else if (!fxOpen) fxEmpty();
+  // A background refresh only redraws the open fax if it actually changed, so a patient pick or
+  // confirmation in progress isn't thrown away.
+  const cur = fxOpen && fxData.find((f) => f.id === fxOpen);
+  if (cur) { if (!fxShown || fxShown.id !== cur.id || fxShown.status !== cur.status || fxShown.download !== cur.download) openFax(fxOpen, true); }
+  else if (!fxOpen) fxEmpty();
 }
 function fxEmpty() {
+  fxShown = null; fxPane++;
   const st = (window.__lastSync || {}).accounts || {};
   const dx = st.doximity || {}, needSign = dx.why === 'not set up' || dx.level === 'red';
   $('fx-pane').innerHTML = needSign
     ? `<div class="empty-state"><h3>Doximity isn't signed in on this computer</h3><p>The app has its own Doximity sign-in. Sign in once and new faxes come in here by themselves.</p><button class="btn primary" id="fx-signin">Sign in to Doximity</button></div>`
     : `<div class="empty-state">${I.check}<h3>${fxData.some((f) => f.status === 'new') ? 'Pick a fax' : 'No faxes waiting'}</h3><p>New faxes from Doximity show up here. Pick one to file it into a patient's chart.</p></div>`;
   if ($('fx-signin')) $('fx-signin').onclick = async () => { if (await window.api.faxSignIn()) { toast('Doximity connected'); await syncEverything(['faxes']); loadFaxes(); } };
+}
+// Read / Done times under each fax, like Calls.
+const fxShort = (iso) => { const d = new Date(iso); return d.toDateString() === new Date().toDateString() ? fmtTime(d) : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${fmtTime(d)}`; };
+function fxTimes(f) {
+  const bits = [];
+  if (f.readAt) bits.push(`Read ${fxShort(f.readAt)}`);
+  if (f.doneAt && f.status !== 'new') bits.push(`${f.status === 'filed' ? 'Filed' : f.status === 'spam' ? 'Spam' : 'Done'} ${fxShort(f.doneAt)}`);
+  return bits.length ? `<span class="fx-times">${esc(bits.join(' · '))}</span>` : '';
 }
 function renderFaxList() {
   // Needs you = still to deal with · Unread = never opened · Done = filed or handled here (Not patient-related, Done) · Spam.
@@ -64,7 +78,7 @@ function renderFaxList() {
     const h = hoursSince(f.at), tag = f.status === 'new' && f.download === 'failed' ? '<span class="rstat wait">Download failed</span>' : f.status === 'new' && f.download === 'pending' ? '<span class="rstat">Downloading…</span>' : f.status === 'filed' ? '<span class="rstat ok">Filed to chart ✓</span>' : f.status === 'done' ? '<span class="rstat ok">Done</span>' : f.status === 'notpatient' ? '<span class="rstat">Not patient-related</span>' : f.status === 'spam' ? '<span class="rstat">Spam</span>' : `<span class="wait u-${h >= 24 ? 'red' : h >= 4 ? 'amber' : 'green'}">${esc(waitLabel(f.at))}</span>`;
     return `${sep}<button class="trow-btn ${fxOpen === f.id ? 'active' : ''} ${f.status === 'new' && !f.readAt ? 'unread' : ''}" data-id="${esc(f.id)}">
       <span class="avatar unk">${I.fax || '<svg viewBox="0 0 24 24"><path d="M7 9V4h10v5"/><rect x="3" y="9" width="18" height="9" rx="2"/><path d="M7 14h10v6H7z"/></svg>'}</span>
-      <span class="mid"><b>${esc(fxFrom(f))}${f.status === 'new' && !f.readAt ? '<i class="dot-new"></i>' : ''}</b><span class="prev">${f.category ? `<i class="fx-cat-tag c-${esc(f.category.toLowerCase().replace(/[^a-z]/g, ''))}">${esc(f.category)}</i>` : ''}${f.pages ? `${f.pages} page${f.pages > 1 ? 's' : ''} · ` : ''}${esc(f.dateUnknown ? 'time unknown' : fmtTime(new Date(f.at)))}</span>${(f.suggest || []).length && f.status === 'new' ? `<span class="fx-sug">Possibly ${esc(sugName(f.suggest[0]))}</span>` : ''}</span>${tag}</button>`;
+      <span class="mid"><b>${esc(fxFrom(f))}${f.status === 'new' && !f.readAt ? '<i class="dot-new"></i>' : ''}</b><span class="prev">${f.category ? `<i class="fx-cat-tag c-${esc(f.category.toLowerCase().replace(/[^a-z]/g, ''))}">${esc(f.category)}</i>` : ''}${f.pages ? `${f.pages} page${f.pages > 1 ? 's' : ''} · ` : ''}${esc(f.dateUnknown ? 'time unknown' : fmtTime(new Date(f.at)))}</span>${(f.suggest || []).length && f.status === 'new' ? `<span class="fx-sug">Possibly ${esc(sugName(f.suggest[0]))}</span>` : ''}${fxTimes(f)}</span>${tag}</button>`;
   }).join('') : `<div class="all-clear small-clear">${I.check}<b>${{ needs: 'No faxes waiting', unread: 'Nothing unread', done: 'Nothing done yet', spam: 'No spam faxes' }[fxFilter] || 'No faxes'}</b></div>`;
   if (chips) $('fx-list').insertAdjacentHTML('afterbegin', chips);
   $('fx-list').querySelectorAll('.fx-chips button').forEach((b) => (b.onclick = () => { fxCat = b.dataset.c; renderFaxList(); }));
@@ -107,16 +121,26 @@ async function openFax(id, keep) {
   fxOpen = id; renderFaxList();
   const f = fxData.find((x) => x.id === id); if (!f) return fxEmpty();
   // Opening a fax marks it read (with the time), like texts and emails.
-  if (!f.readAt && !keep) { f.readAt = new Date().toISOString(); window.api.faxRead(f.id, true); renderFaxList(); filterCounts('fx-filter', { needs: fxData.filter((x) => x.status === 'new').length, unread: fxData.filter((x) => x.status === 'new' && !x.readAt).length }); }
+  if (!f.readAt && !keep) { const was = f.readAt; f.readAt = new Date().toISOString(); window.api.faxRead(f.id, true).then((ok) => { if (ok === false) { f.readAt = was; renderFaxList(); toast("Couldn't save that this fax was read."); } }); renderFaxList(); filterCounts('fx-filter', { needs: fxData.filter((x) => x.status === 'new').length, unread: fxData.filter((x) => x.status === 'new' && !x.readAt).length }); }
   const prev = await previewHTML(f);
   if (seq !== fxSeq || fxOpen !== id) return;
   const done = f.status !== 'new';
+  // Header: who sent it and when; one primary action (Add to chart), Done, and the rest under ⋯.
+  // The patient picker opens as a side sheet over the document, so the fax gets the full width.
+  const meta = [f.number, f.pages ? `${f.pages} page${f.pages > 1 ? 's' : ''}` : '', `received ${fxWhen(f.at, f)}`].filter(Boolean).join(' · ');
+  const filedNote = f.status === 'filed' ? `<span class="fx-filed">${I.check}Filed to chart ${esc((f.filed || {}).chart || '')}</span>` : '';
+  fxShown = { id: f.id, status: f.status, download: f.download }; const pane = ++fxPane;
   $('fx-pane').innerHTML = `
-    <div class="convo-head"><span class="avatar unk"><svg viewBox="0 0 24 24"><path d="M7 9V4h10v5"/><rect x="3" y="9" width="18" height="9" rx="2"/><path d="M7 14h10v6H7z"/></svg></span>
-      <div><h2>${esc(fxFrom(f))}</h2><p class="muted small">${esc(f.number || '')}${f.pages ? ` · ${f.pages} page${f.pages > 1 ? 's' : ''}` : ''} · received ${esc(fxWhen(f.at, f))}</p></div>
-      <div class="row-gap"><div class="more-wrap"><button class="btn small" id="fx-more">More ▾</button><div class="more-menu hidden" id="fx-menu">${!['pending', 'failed'].includes(f.download) ? '<button id="fx-save">Download PDF</button>' : ''}<button id="fx-dox2">Open in Doximity</button>${done ? '' : '<button id="fx-unread">Mark unread</button><button id="fx-np">Not patient-related</button><button id="fx-spam">Spam</button>'}</div></div>${done ? (f.status !== 'filed' ? '<button class="btn small" id="fx-back">Move back to To do</button>' : '') : `<button class="btn small primary-soft" id="fx-done">${I.check}Done</button>`}</div></div>
-    <div class="receipt-line">${f.readAt ? stamp('Read', f.readAt) : '<b>New</b>'}${f.doneAt && done ? ' · ' + stamp(f.status === 'filed' ? 'Filed' : f.status === 'spam' ? 'Spam' : 'Done', f.doneAt) : ''}<span class="muted"> · Done and Spam stay in this app (Doximity unchanged)</span></div>
-    <div class="fx-body"><div class="fx-prev">${prev}</div><div class="fx-side" id="fx-side"></div></div>`;
+    <div class="fx-head"><div class="fx-title"><h2>${esc(fxFrom(f))}</h2><p class="muted small">${esc(meta)}</p></div>
+      <div class="row-gap">${filedNote}${done ? '' : `<button class="btn primary small" id="fx-add">Add to chart</button><button class="icon-btn" id="fx-done" title="Done">${I.check}</button>`}<div class="more-wrap"><button class="icon-btn row-more" id="fx-more" title="More">⋯</button><div class="more-menu hidden" id="fx-menu">${!['pending', 'failed'].includes(f.download) ? '<button id="fx-save">Download PDF</button>' : ''}<button id="fx-dox2">Open in Doximity</button>${done ? (f.status !== 'filed' ? '<button id="fx-back">Move back to To do</button>' : '') : '<button id="fx-unread">Mark unread</button><button id="fx-np">Not patient-related</button><button id="fx-spam">Spam</button>'}</div></div></div></div>
+    <div class="fx-body"><div class="fx-prev">${prev}</div>
+      <aside class="fx-sheet" id="fx-sheet" inert><button class="icon-btn fx-sheet-x" id="fx-sheet-x" title="Close">${I.x}</button><div class="fx-side" id="fx-side"></div></aside></div>`;
+  // Closed sheet is inert (no keyboard focus inside it); closing returns focus to Add to chart.
+  let focusT = null;
+  const sheet = (open) => { const sh = $('fx-sheet'); if (!sh) return; sh.classList.toggle('open', open); sh.inert = !open; clearTimeout(focusT);
+    if (open) focusT = setTimeout(() => { if (sh.classList.contains('open') && $('fx-q')) $('fx-q').focus(); }, 260); else if ($('fx-add')) $('fx-add').focus(); };
+  $('fx-sheet-x').onclick = () => sheet(false);
+  if ($('fx-add')) $('fx-add').onclick = () => sheet(true);
   drawPages(seq);
   if ($('fx-zo')) { const cur = () => (fxView.zoom === 'fit' ? (parseInt($('fx-zv').textContent, 10) || 100) / 100 : fxView.zoom);
     $('fx-zo').onclick = () => { fxView.zoom = Math.max(0.4, cur() - 0.15); drawPages(++fxSeq); }; $('fx-zi').onclick = () => { fxView.zoom = Math.min(3, cur() + 0.15); drawPages(++fxSeq); }; $('fx-fit').onclick = () => { fxView.zoom = 'fit'; drawPages(++fxSeq); }; $('fx-rot').onclick = () => { fxView.rot = (fxView.rot + 90) % 360; drawPages(++fxSeq); }; }
@@ -128,16 +152,17 @@ async function openFax(id, keep) {
   const mark = async (st, msg) => { const prev = f.status; if (!(await window.api.faxMark(f.id, st))) return toast("Couldn't save that. The fax stays where it was."); toast(msg, async () => { await window.api.faxMark(f.id, prev); loadFaxes(); }); fxOpen = null; loadFaxes(); };
   if ($('fx-done')) $('fx-done').onclick = () => mark('done', 'Marked done');
   if ($('fx-more')) $('fx-more').onclick = (e) => { e.stopPropagation(); $('fx-menu').classList.toggle('hidden'); };
-  if ($('fx-unread')) $('fx-unread').onclick = async () => { await window.api.faxRead(f.id, false); f.readAt = null; fxOpen = null; toast('Marked unread'); loadFaxes(); };
+  if ($('fx-unread')) $('fx-unread').onclick = async () => { const ok = await window.api.faxRead(f.id, false); if (ok === false) return toast("Couldn't mark it unread. It stays as it was."); f.readAt = null; fxOpen = null; toast('Marked unread'); loadFaxes(); };
   if ($('fx-np')) $('fx-np').onclick = () => mark('notpatient', 'Marked not patient-related');
   if ($('fx-spam')) $('fx-spam').onclick = () => mark('spam', 'Marked as spam');
   if ($('fx-back')) $('fx-back').onclick = async () => { await window.api.faxMark(f.id, 'new'); loadFaxes(); };
-  if (f.status === 'filed') { $('fx-side').innerHTML = `<div class="fx-done">${I.check}<b>Filed to chart</b><p>${esc((f.filed || {}).title || '')}</p><p class="muted small">Chart ${esc((f.filed || {}).chart || '')} · ${esc(fxWhen((f.filed || {}).at || f.doneAt))}</p></div>`; return; }
-  if (done) { $('fx-side').innerHTML = '<p class="muted small">Not filed to a chart.</p>'; return; }
-  pickPatientStep(f);
+  if (done) return;
+  pickPatientStep(f, pane);
+  // A fax with a likely patient opens the sheet straight away (only when Maria opens it, not on a refresh).
+  if ((f.suggest || []).length && !keep) sheet(true);
 }
 // Step 1: Maria picks the patient. Nothing is pre-selected or guessed.
-function pickPatientStep(f) {
+function pickPatientStep(f, pane = fxPane) {
   const weekAgo = Date.now() - 7 * 864e5, weekOut = Date.now() + 7 * 864e5;
   // Patients seen in the last week or booked in the next week come first (from the schedule the app has read).
   const recent = (p) => [p.lastVisit, p.nextVisit].some((v) => { const t = v ? new Date(v).getTime() : 0; return t > weekAgo && t < weekOut; });
@@ -153,22 +178,25 @@ function pickPatientStep(f) {
     if (q) hits = hits.filter((p) => `${p.first || ''} ${p.last || ''}`.toLowerCase().includes(q) || `${p.last || ''}, ${p.first || ''}`.toLowerCase().includes(q) || (qd.length >= 4 && dobText(p.dob).replace(/\D/g, '').includes(qd)));
     else hits = hits.filter(recent);
     hits = hits.sort((a, b) => (recent(b) - recent(a)) || String(a.last).localeCompare(String(b.last))).slice(0, 40);
-    $('fx-results').innerHTML = (q ? '' : '<p class="muted small">This week\'s patients. Type to search everyone.</p>') + (hits.map((p) => `<button class="fx-pt" data-k="${esc(p.key)}"><b>${esc(fullName(p))}</b><span>DOB ${esc(dobText(p.dob) || '—')}${when(p) ? ` · ${esc(when(p))}` : ''}</span></button>`).join('') || `<p class="muted small">${q ? 'No matches. Try the last name or the date of birth (MM/DD/YYYY).' : 'No visits this week yet. Type a name or date of birth to search everyone.'}</p>`);
-    $('fx-results').querySelectorAll('.fx-pt').forEach((b) => (b.onclick = () => confirmStep(f, patients.find((p) => p.key === b.dataset.k))));
+    $('fx-results').innerHTML = (q || !hits.length ? '' : '<p class="muted small">This week\'s patients. Type to search everyone.</p>') + (hits.map((p) => `<button class="fx-pt" data-k="${esc(p.key)}"><b>${esc(fullName(p))}</b><span>DOB ${esc(dobText(p.dob) || '—')}${when(p) ? ` · ${esc(when(p))}` : ''}</span></button>`).join('') || `<p class="muted small">${q ? 'No matches. Try the last name or the date of birth (MM/DD/YYYY).' : 'No visits this week yet. Type a name or date of birth to search everyone.'}</p>`);
+    $('fx-results').querySelectorAll('.fx-pt').forEach((b) => (b.onclick = () => confirmStep(f, patients.find((p) => p.key === b.dataset.k), pane)));
   };
-  $('fx-side').querySelectorAll('.fx-sugs .fx-pt').forEach((b) => (b.onclick = () => confirmStep(f, patients.find((p) => p.key === b.dataset.k))));
-  $('fx-q').oninput = draw; draw(); setTimeout(() => $('fx-q') && $('fx-q').focus(), 50);
+  $('fx-side').querySelectorAll('.fx-sugs .fx-pt').forEach((b) => (b.onclick = () => confirmStep(f, patients.find((p) => p.key === b.dataset.k), pane)));
+  $('fx-q').oninput = draw; draw();
 }
 // Step 2: read that patient's chart fresh from RxNT and show it next to the fax. She must confirm.
-async function confirmStep(f, p) {
+async function confirmStep(f, p, pane = fxPane) {
   if (!p) return;
+  // Only the fax still on screen (same pane) may be touched by a late answer from RxNT.
+  const live = () => fxOpen === f.id && fxPane === pane;
+  if (!live()) return;
   $('fx-side').innerHTML = `<div class="fx-loading"><span class="spin"></span>Opening ${esc(fullName(p))}'s chart in RxNT…</div>`;
   const r = await window.api.faxFindChart(p.key, f.id);
-  if (fxOpen !== f.id) return;
+  if (!live()) return;
   if (!r || !r.patient) {
     const why = { signin: 'RxNT needs you to sign in (Settings → Connections).', several: 'RxNT has more than one chart that matches. Open RxNT to add this fax.', notfound: "Couldn't find this patient's chart in RxNT.", mismatch: "The chart RxNT opened didn't match this patient (name, date of birth or chart number), so nothing will be added." }[(r || {}).error] || "Couldn't open the chart in RxNT.";
     $('fx-side').innerHTML = `<div class="fx-warn">${esc(why)}</div><div class="row-gap"><button class="btn" id="fx-again">Pick a different patient</button></div>`;
-    $('fx-again').onclick = () => pickPatientStep(f); return;
+    $('fx-again').onclick = () => pickPatientStep(f, pane); return;
   }
   const c = r.patient;
   $('fx-side').innerHTML = `<h3 class="fx-q">Is this the right patient?</h3>
@@ -178,22 +206,25 @@ async function confirmStep(f, p) {
     <div class="row-gap"><button class="btn" id="fx-no">No, pick again</button><button class="btn primary" id="fx-yes" disabled>${I.check}Yes, add to this chart</button></div>`;
   if (!c.chart) { $('fx-ack').closest('label').insertAdjacentHTML('beforebegin', '<div class="fx-warn">RxNT didn\'t return a chart number. Open the chart in RxNT to check it; this fax can\'t be filed from here until it does.</div>'); $('fx-ack').disabled = true; }
   $('fx-ack').onchange = (e) => { $('fx-yes').disabled = !e.target.checked || !c.chart; };
-  $('fx-no').onclick = () => pickPatientStep(f);
+  $('fx-no').onclick = () => pickPatientStep(f, pane);
   $('fx-yes').onclick = async () => {
     const cat = $('fx-cat').value;
     $('fx-side').innerHTML = `<div class="fx-loading"><span class="spin"></span>Adding the fax to ${esc(`${c.first} ${c.last}`)}'s chart, then checking it's there…</div>`;
     let res = await window.api.faxFile({ id: f.id, internalId: c.internalId, chart: c.chart, category: cat, confirmed: true });
-    if (res && res.error === 'notfound-after' && fxOpen === f.id) {   // an earlier try didn't show up in the chart: ask before uploading again
+    if (res && res.ok) { toast(`Filed to ${c.first} ${c.last}'s chart ✓`); loadFaxes(); return; }   // a background filing just updates the list
+    if (!live()) { if (res && res.error) toast("A fax you started filing wasn't filed. Open it to try again."); return; }
+    if (res && res.error === 'notfound-after') {   // an earlier try didn't show up in the chart: ask before uploading again
       const again = await new Promise((done) => { $('fx-side').innerHTML = `<div class="fx-warn">An earlier try didn't show up in this chart. Look in RxNT first. Upload it again only if it's really not there.</div><div class="row-gap"><button class="btn" id="fx-look">Open in RxNT</button><button class="btn" id="fx-cancel">Cancel</button><button class="btn primary" id="fx-again2">It's not there. Upload again</button></div>`; $('fx-look').onclick = () => window.api.openRxnt('todo'); $('fx-cancel').onclick = () => done(false); $('fx-again2').onclick = () => done(true); });
-      if (!again) return openFax(f.id);
+      if (!again || !live()) return live() && openFax(f.id);
       $('fx-side').innerHTML = `<div class="fx-loading"><span class="spin"></span>Adding the fax, then checking it's there…</div>`;
       res = await window.api.faxFile({ id: f.id, internalId: c.internalId, chart: c.chart, category: cat, confirmed: true, again: true });
+      if (res && res.ok) { toast(`Filed to ${c.first} ${c.last}'s chart ✓`); loadFaxes(); return; }
+      if (!live()) { toast("A fax you started filing wasn't filed. Open it to try again."); return; }
     }
-    if (res && res.ok) { toast(`Filed to ${c.first} ${c.last}'s chart ✓`); fxOpen = f.id; loadFaxes(); return; }
     const why = { signin: 'RxNT needs you to sign in.', uncertain: "RxNT didn't confirm it yet. Pressing the button again will only check the chart, not upload a second copy.", chart: 'RxNT opened a different chart, so nothing was uploaded.', already: 'This fax is already filed.', busy: 'Another fax is being filed. Try again in a moment.', confirm: 'Please pick the patient and confirm again.', nochart: "RxNT didn't return a chart number, so nothing was filed.", notready: "RxNT's form didn't take the file, so nothing was saved." }[(res || {}).error] || "Didn't upload. Nothing was added.";
     $('fx-side').innerHTML = `<div class="fx-warn">${esc(why)}</div><div class="row-gap"><button class="btn" id="fx-retry">Try again</button><button class="btn" id="fx-rx">Open in RxNT</button></div>`;
     $('fx-retry').textContent = (res || {}).error === 'uncertain' ? 'Check the chart' : 'Try again';
-    $('fx-retry').onclick = () => confirmStep(f, p);   // after an uncertain result the next confirm only checks the chart (main.js)
+    $('fx-retry').onclick = () => confirmStep(f, p, pane);   // after an uncertain result the next confirm only checks the chart (main.js)
     $('fx-rx').onclick = () => window.api.openRxnt('todo');
   };
 }

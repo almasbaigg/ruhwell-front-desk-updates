@@ -1,3 +1,13 @@
+const FAX_IC = '<svg viewBox="0 0 24 24"><path d="M7 9V4h10v5"/><rect x="3" y="9" width="18" height="9" rx="2"/><path d="M7 14h10v6H7z"/></svg>';
+let todayHadItems = false;
+// Done on Today: one click counts once; if saving fails the row comes back and says so.
+async function markTodayDone(it, btn, row) {
+  if (btn.disabled) return; btn.disabled = true; btn.classList.add('ticked'); row.classList.add('leaving');
+  let ok = true; try { const r = await it.done(); if (r === false || (r && r.error)) ok = false; } catch { ok = false; }
+  if (!ok) { btn.disabled = false; btn.classList.remove('ticked'); row.classList.remove('leaving'); toast("Couldn't mark that done. It's still on your list."); return; }
+  bumpDone(); setTimeout(loadToday, 320);
+  if (it.key) toast('Marked done', async () => { await window.api.undoDone(it.key); bumpDone(-1); loadToday(); });
+}   // so clearing the last item gets a small celebration, but opening to an empty list doesn't
 /* Today: the home screen. The day at a glance, what needs attention, today's visits, checklist and notes. */
 const ALERT = {
   new: { label: 'New booking', icon: '<path d="M12 5v14M5 12h14"/>', action: ['welcome', 'Send welcome'] },
@@ -26,7 +36,7 @@ function urgency(i) {
 async function gatherToday() {
   const today = ymd(), tomorrow = addDays(today, 1);
   const [texts, calls, alerts, hist, pats, range, rx, st, snoozed, portal] = await Promise.all([
-    window.api.textThreads(14), window.api.callList(14), window.api.watchAlerts(), window.api.history(), window.api.patients(),
+    window.api.textThreads(30), window.api.callList(30), window.api.watchAlerts(), window.api.history(), window.api.patients(),
     window.api.rxntRange(today, 8), window.api.rxList(), window.api.syncStatus(), window.api.snoozes(), window.api.portalList(),
   ]);
   history = hist; patients = pats; indexPatients(patients); Object.assign(dayStore, range);
@@ -66,7 +76,7 @@ async function gatherToday() {
   }
   // New faxes waiting to be filed into a chart.
   const fx = (st && st.faxes) || {};
-  if (fx.count) items.push({ key: 'faxes', urg: 'amber', sec: 'rx', at: fx.lastNewAt || new Date().toISOString(), kind: 'rx', icon: I.edit, title: `${fx.count} new fax${fx.count > 1 ? 'es' : ''}`, tag: 'Doximity', sub: 'Pick the patient and add it to their chart', action: ['Open faxes', () => go('faxes')] });
+  if (fx.count) items.push({ key: 'faxes', urg: 'amber', sec: 'faxes', at: fx.lastNewAt || new Date().toISOString(), kind: 'fax', icon: FAX_IC, title: `${fx.count} new fax${fx.count > 1 ? 'es' : ''}`, tag: 'Doximity', sub: 'Pick the patient and add it to their chart', action: ['Open faxes', () => go('faxes')] });
   for (const [k, one, many, lvl, tag] of TODO) {
     if (k === 'unsigned' && unsigned.length) continue;   // listed one by one above
     if (rc[k] > 0) items.push({ key: 'todo:' + k, urg: lvl, sec: 'rx', at: new Date().toISOString(), kind: 'rx', icon: I.check, title: `${rc[k]} ${rc[k] > 1 ? many : one}`, tag,
@@ -74,7 +84,10 @@ async function gatherToday() {
   }
   // Schedule changes that call for a message
   // A cancellation and a new booking for the same patient at the same time is RxNT moving the visit: not news.
-  const open = alerts.filter((x) => !x.handled && !x.quiet && ALERT[x.kind] && ALERT[x.kind].action && Date.now() - new Date(x.at) < WEEK);
+  // One card per kind of news per appointment (older duplicates are folded in and marked done together).
+  const openAll = alerts.filter((x) => !x.handled && !x.quiet && ALERT[x.kind] && ALERT[x.kind].action && Date.now() - new Date(x.at) < WEEK), dupIds = {};
+  const open = openAll.filter((x) => { const k = x.appt && x.appt.appointmentId ? `${x.kind}|${x.appt.appointmentId}` : x.id; if (dupIds[k]) { dupIds[k].push(x.id); return false; } dupIds[k] = [x.id]; return true; });
+  const handleAll = (a) => Promise.all((dupIds[a.appt && a.appt.appointmentId ? `${a.kind}|${a.appt.appointmentId}` : a.id] || [a.id]).map((id) => window.api.watchHandle(id)));
   const slot = (x) => `${(x.appt || {}).patientId}|${(x.appt || {}).start}`;
   const newSlots = new Set(open.filter((x) => x.kind === 'new').map(slot)), cxSlots = new Set(open.filter((x) => x.kind === 'cancelled').map(slot));
   const pool = Object.values(range || {}).flatMap((x) => x.items || []);
@@ -85,7 +98,7 @@ async function gatherToday() {
     const appt = a.appt || {}, rec = recordFor(appt);
     if (rec && rec.dnt) continue;
     items.push({ key: 'a:' + a.id, apptStart: appt.start, sec: 'schedule', at: a.at, kind: 'change', icon: `<svg viewBox="0 0 24 24">${A.icon}</svg>`, title: `${A.label}: ${fullName(appt)}`, sub: `${appt.start ? fmtDateShort(appt.start) + ', ' + fmtTime(appt.start) : ''} · ${ago(a.at)}`,
-      action: digits(appt.phone).length === 10 ? [A.action[1], () => messageModal({ ...appt, rec, cat: a.kind === 'new' ? 'pending' : 'cancelled' }, A.action[0])] : null, done: () => window.api.watchHandle(a.id) });
+      action: digits(appt.phone).length === 10 ? [A.action[1], () => messageModal({ ...appt, rec, cat: a.kind === 'new' ? 'pending' : 'cancelled' }, A.action[0])] : null, done: () => handleAll(a) });
   }
   // Batches: tomorrow's reminders, today's review requests
   const sentSinceDay = (phone, day) => history.some((h) => h.ok && digits(h.phone) === digits(phone) && new Date(h.at) >= parseYmd(day).getTime() - 864e5);
@@ -158,9 +171,9 @@ function paintTiles(d) {
   const rxN = d.rx.total || 0, rc = d.rx.counts || {};
   const tiles = [
     { key: 'visits', icon: I.cal, n: td.length, label: td.length === 1 ? 'visit today' : 'visits today', sub: td.length ? `${seen} checked in · ${left} to go` : 'Nothing booked', go: () => { go('visits'); loadDay(ymd()); } },
-    { key: 'texts', icon: I.msg, n: d.texts.filter((x) => x.needs).length, label: 'texts to answer', sub: `${d.texts.length} conversation${d.texts.length === 1 ? '' : 's'} this week`, go: () => go('texts') },
+    { key: 'texts', icon: I.msg, n: d.texts.filter((x) => x.needs).length, label: 'texts to answer', sub: (() => { const w = d.texts.filter((x) => x.last && Date.now() - new Date(x.last.at || x.lastAt || 0) < 7 * 864e5).length; return `${w} conversation${w === 1 ? '' : 's'} this week`; })(), go: () => go('texts') },
     { key: 'calls', icon: I.phone, n: d.calls.filter((x) => x.due).length, label: 'calls to return', sub: (() => { const n = d.calls.filter((c) => new Date(c.at).toDateString() === new Date().toDateString()).length; return `${n} call${n === 1 ? '' : 's'} today`; })(), go: () => go('calls') },
-    { key: 'email', icon: I.mail, n: G.connected ? G.unread : '—', label: 'unread emails', sub: G.connected ? ((G.items || [])[0] ? `Latest: ${G.items[0].from}` : (G.account || 'admin@ruhwellmed.com')) : 'Sign in to Gmail', go: () => (G.connected && G.hasKey ? go('emails') : G.connected ? window.api.openGmail() : go('settings')) },
+    { key: 'email', icon: I.mail, n: G.connected && G.unread != null ? G.unread : '—', label: 'unread emails', sub: G.connected ? ((G.items || [])[0] ? `Latest: ${G.items[0].from}` : (G.account || 'admin@ruhwellmed.com')) : 'Sign in to Gmail', go: () => (G.connected && G.hasKey ? go('emails') : G.connected ? window.api.openGmail() : go('settings')) },
     { key: 'rx', icon: I.pill, n: d.rx.available ? rxN : '—', label: 'prescriptions', sub: d.rx.available ? (rxN ? [rc.pending && `${rc.pending} pending`, rc.refill && `${rc.refill} refill${rc.refill > 1 ? 's' : ''}`, rc.failed && `${rc.failed} failed`].filter(Boolean).join(' · ') : `Nothing waiting${rc.sent ? ` · ${rc.sent} sent` : ''}`) : rxProblem(d.rx), go: () => go('rx') },
   ];
   $('today-tiles').innerHTML = tiles.map((t) => `<button class="tile t-${t.key} ${t.n && t.n !== '—' && t.key !== 'visits' ? 'hot' : ''}" data-k="${t.key}"><span class="ic">${t.icon}</span><b>${esc(t.n)}</b><span class="l">${esc(t.label)}</span><span class="s">${esc(t.sub)}</span></button>`).join('');
@@ -168,10 +181,10 @@ function paintTiles(d) {
 }
 
 // Needs attention, in groups (most important first). Each group shows 3, with the rest one click away.
-const SECTIONS = [['rx', 'Prescriptions & RxNT'], ['patients', 'Patients waiting'], ['schedule', 'Schedule changes'], ['send', 'Ready to send'], ['callers', 'New callers'], ['fix', 'Patient info to fix']];
+const SECTIONS = [['rx', 'Prescriptions & RxNT'], ['faxes', 'Faxes'], ['patients', 'Patients waiting'], ['schedule', 'Schedule changes'], ['send', 'Ready to send'], ['callers', 'New callers'], ['fix', 'Patient info to fix']];
 const openSecs = new Set();
 function paintTodo(items) {
-  navBadge('nb-today', items.filter((i) => i.urg === 'red').length);   // only what's urgent, so the number means something
+  navBadge('nb-today', items.length);   // the same number as Needs attention
   $('todo-count').textContent = items.length || '';
   const L = $('today-list'); L.innerHTML = '';
   // Next up: the single most urgent thing, so there's one clear place to start.
@@ -181,13 +194,14 @@ function paintTodo(items) {
     n.innerHTML = `<span class="lbl">Next up</span><b>${esc(top.title)}</b><span class="d">${esc(top.sub)}</span><div class="nu-acts">${top.action ? `<button class="btn primary act">${esc(top.action[0])}</button>` : ''}${top.key ? `<button class="icon-btn later" title="Later">${I.clock || I.bell}</button>` : ''}${top.done ? `<button class="icon-btn done" title="Done">${I.check}</button>` : ''}</div>`;
     if (top.action) n.querySelector('.act').onclick = top.action[1];
     if (top.key) n.querySelector('.later').onclick = (e) => laterMenu(e.currentTarget, top);
-    if (top.done) n.querySelector('.done').onclick = async () => { await top.done(); bumpDone(); loadToday(); if (top.key) toast('Marked done', async () => { await window.api.undoDone(top.key); bumpDone(-1); loadToday(); }); };
+    if (top.done) n.querySelector('.done').onclick = (e) => markTodayDone(top, e.currentTarget, n);
     L.appendChild(n);
   }
   // "All caught up" only when every source actually loaded; otherwise say what couldn't be checked.
   const stale = staleSources(todaySync);
   if (stale.length) { const w = document.createElement('div'); w.className = 'stale-line'; w.innerHTML = `${I.bell}<span>Couldn't check ${esc(stale.map((x) => x.name + (x.since ? ` (since ${fmtTime(new Date(x.since))})` : '')).join(', '))}. Check ${stale.some((x) => x.rxnt) ? 'RxNT' : 'it'} directly if it's urgent.</span>`; L.prepend(w); }
-  if (!items.length) { L.insertAdjacentHTML('beforeend', stale.length ? `<div class="all-clear partial">${I.check}<b>Nothing waiting from what loaded</b><span>The app keeps retrying the rest.</span></div>` : `<div class="all-clear">${I.check}<b>All caught up</b><span>Texts, calls, schedule changes and prescriptions that need you show up here.</span></div>`); return; }
+  const hadItems = todayHadItems; todayHadItems = items.length > 0;
+  if (!items.length) { L.insertAdjacentHTML('beforeend', stale.length ? `<div class="all-clear partial">${I.check}<b>Nothing waiting from what loaded</b><span>The app keeps retrying the rest.</span></div>` : `<div class="all-clear ${hadItems ? 'cheer' : ''}">${I.check}<b>All caught up</b><span>Texts, calls, schedule changes and prescriptions that need you show up here.</span></div>`); return; }
   for (const [key, label] of SECTIONS) {
     const list = items.filter((i) => i.sec === key && !(nextShown && i === top)); if (!list.length) continue;   // Next up isn't repeated below
     const head = document.createElement('div'); head.className = 'todo-sec'; head.innerHTML = `<span>${esc(label)}</span><b>${list.length}</b>`; L.appendChild(head);
@@ -198,7 +212,7 @@ function paintTodo(items) {
         <div class="acts">${it.action ? `<button class="btn soft act">${esc(it.action[0])}</button>` : ''}${it.key ? `<button class="icon-btn later" title="Later">${I.clock || I.bell}</button>` : ''}${it.done ? `<button class="icon-btn done" title="Mark as done">${I.check}</button>` : ''}</div>`;
       if (it.key) el.querySelector('.later').onclick = (e) => laterMenu(e.currentTarget, it);
       if (it.action) el.querySelector('.act').onclick = it.action[1];
-      if (it.done) el.querySelector('.done').onclick = async () => { el.classList.add('leaving'); await it.done(); bumpDone(); setTimeout(loadToday, 180); if (it.key) toast('Marked done', async () => { await window.api.undoDone(it.key); bumpDone(-1); loadToday(); }); };
+      if (it.done) el.querySelector('.done').onclick = (e) => markTodayDone(it, e.currentTarget, el);
       L.appendChild(el);
     }
     if (list.length > 3) {
@@ -289,7 +303,7 @@ function timeStrip(td) {
     cursor = Math.max(cursor, e);
   }
   if (to - cursor >= 30 * 60000) gaps.push([cursor, to]);
-  const labels = gaps.filter(([a, b]) => pct(b) - pct(a) >= 16 && b > now).map(([a, b]) => `<span class="ts-free" style="left:${pct(a)}%;width:${pct(b) - pct(a)}%">${now >= a ? 'Free now' : 'Free'} until ${esc(fmtTime(new Date(b)).replace(':00', ''))}</span>`).join('');
+  const labels = gaps.filter(([a, b]) => pct(b) - pct(a) >= 22 && b > now).map(([a, b]) => `<span class="ts-free" style="left:${pct(a)}%;width:${pct(b) - pct(a)}%">${now >= a ? 'Free now' : 'Free'} until ${esc(fmtTime(new Date(b)).replace(':00', ''))}</span>`).join('');
   const ticks = []; for (let t = Math.ceil(from / 3600e3) * 3600e3; t <= to; t += 3600e3) { const h = new Date(t).getHours(); ticks.push(`<i class="ts-tick" style="left:${pct(t)}%"><em>${h % 12 || 12}</em></i>`); }
   const marker = now > from && now < to ? `<i class="ts-now" style="left:${pct(now)}%"></i>` : '';
   return `<div class="timestrip2"><div class="ts-track">${html}${labels}${marker}</div><div class="ts-ticks">${ticks.join('')}</div></div>`;
@@ -325,7 +339,7 @@ $('today-refresh').onclick = async () => {
   await Promise.all([loading(() => window.api.watchCheck()), window.api.commsSync(), window.api.rxRefresh(), window.api.accounts()]);
   $('today-refresh').classList.remove('spin'); loadToday();
 };
-async function refreshTodayBadge() { try { const d = await gatherToday(); navBadge('nb-today', d.items.filter((i) => i.urg === 'red').length); } catch {} }
+async function refreshTodayBadge() { try { const d = await gatherToday(); navBadge('nb-today', d.items.length); } catch {} }
 setInterval(() => { if (view === 'today') loadToday(); else if (!$('shell').classList.contains('hidden')) refreshTodayBadge(); }, 3 * 60000);
 window.api.onWatch((ev) => {
   if (ev.type === 'alerts') {

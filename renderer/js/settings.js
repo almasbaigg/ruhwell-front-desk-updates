@@ -254,3 +254,5 @@ $('s-spam').onclick = async () => {
 
 // Account rows: Check now and Sign out live in a small ⋯ menu.
 document.querySelectorAll('#view-settings .row-more').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); const m = b.nextElementSibling; const open = m.classList.contains('hidden'); document.querySelectorAll('.more-menu').forEach((x) => x.classList.add('hidden')); if (open) m.classList.remove('hidden'); }));
+
+$('s-diag').onclick = async () => { const r = await window.api.diagSave(); if (r && r.ok) toast('Saved to ' + r.path.split(/[\\/]/).pop()); };

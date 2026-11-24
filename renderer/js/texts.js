@@ -45,7 +45,7 @@ function renderTextList() {
     return `${sep}
     <button class="trow-btn ${txOpen === t.phone ? 'active' : ''} ${t.unread ? 'unread' : ''}" data-p="${t.phone}">
       <span class="avatar ${t.who.kind === 'unknown' ? 'unk' : ''}">${whoInitials(t.who)}</span>
-      <span class="mid"><b>${esc(whoName(t.who, t.phone))}${t.unread ? '<i class="dot-new"></i>' : ''}</b>${t.lastIn && !t.spam ? (t.needs ? '<span class="rstat wait">Needs reply</span>' : t.answer ? `<span class="rstat ok">${esc(answerLabel(t.answer))}</span>` : '') : ''}<span class="prev">${txFilter === 'sent' || (txFilter === 'needs' && !t.last.inbound) ? 'You: ' : ''}${esc(String(m.body || '').slice(0, 60))}</span></span>
+      <span class="mid"><b class="nm-line"><span class="nm">${esc(whoName(t.who, t.phone))}</span>${t.unread ? '<i class="dot-new"></i>' : ''}${t.lastIn && !t.spam ? (t.needs ? '<span class="rstat wait">Needs reply</span>' : t.answer ? `<span class="rstat ok">${esc(answerLabel(t.answer))}</span>` : '') : ''}</b><span class="prev">${txFilter === 'sent' || (txFilter === 'needs' && !t.last.inbound) ? 'You: ' : ''}${esc(String(m.body || '').slice(0, 60))}</span></span>
       ${wait}
     </button>`; }).join('') : `<div class="all-clear small-clear">${I.check}<b>${{ needs: 'Nothing waiting for a reply', all: 'No texts in this range', sent: 'Nothing sent in this range', unread: 'Nothing unread', spam: 'No spam numbers' }[txFilter]}</b></div>`;
   $('tx-list').querySelectorAll('.trow-btn').forEach((b) => (b.onclick = () => openThread(b.dataset.p)));

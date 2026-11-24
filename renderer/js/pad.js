@@ -18,6 +18,7 @@ async function loadChecklist(list) {
   clItems = list || await window.api.checklist();
   const open = clItems.filter((i) => !i.done);
   $('cl-left').textContent = clItems.length ? `${open.length} left` : '';
+  if ($('pad-cl-count')) { $('pad-cl-count').textContent = open.length || ''; $('pad-cl-count').classList.toggle('hidden', !open.length); }
   if (!clItems.length) {
     $('cl-list').innerHTML = `<div class="cl-empty-state">${I.check}<b>Nothing on your list</b><span>Type a task above. Add a time like “at 3” or “tomorrow” and you'll get a reminder.</span></div>`;
     return;
@@ -37,7 +38,7 @@ async function loadChecklist(list) {
   }).join('');
   $('cl-list').querySelectorAll('.cl-item').forEach((el) => {
     const it = clItems.find((x) => x.id === el.dataset.id);
-    el.querySelector('input').onchange = async () => { const was = it.done; loadChecklist(await window.api.checklistToggle(it.id)); if (!was) { bumpDone(); toast('Done', async () => { loadChecklist(await window.api.checklistToggle(it.id)); bumpDone(-1); }); } };
+    el.querySelector('input').onchange = async () => { const was = it.done; loadChecklist(await window.api.checklistToggle(it.id)); if (!was) { bumpDone(); toast('Done', async () => { loadChecklist(await window.api.checklistToggle(it.id)); bumpDone(-1); }); } else bumpDone(-1); };   // unchecking takes it back off the Done count
     el.querySelector('.x').onclick = async () => { loadChecklist(await window.api.checklistRemove(it.id)); toast('Task deleted', async () => loadChecklist(await window.api.checklistRestore(it))); };
     const st = el.querySelector('.star'); if (st) st.onclick = async () => { const r = await window.api.checklistStar(it.id); if (r && r.error === 'top3') { toast('Top 3 is full. Unstar one first.'); return; } loadChecklist(r); };
     const bl = el.querySelector('.bell'); if (bl) bl.onclick = (e) => whenMenu(e.currentTarget, async (due) => loadChecklist(await window.api.checklistDue(it.id, due)), !!it.due);
@@ -190,3 +191,12 @@ $('nt-find').onclick = () => {
   }, 200); };
   $('ns-close').onclick = closeModal; setTimeout(() => $('ns-q').focus(), 50);
 };
+
+// Checklist and Notes share one card on Today: two tabs, the last one used is remembered.
+function showPad(which) {
+  which = which === 'notes' ? 'notes' : 'checklist'; remember('pad-tab', which);
+  document.querySelectorAll('#pad-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.p === which));
+  document.querySelectorAll('.board-col .panel.pad').forEach((p) => p.classList.toggle('on', p.classList.contains(which)));
+}
+document.querySelectorAll('#pad-tabs button').forEach((b) => (b.onclick = () => showPad(b.dataset.p)));
+showPad(recall('pad-tab', 'checklist'));

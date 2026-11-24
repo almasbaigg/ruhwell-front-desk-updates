@@ -36,7 +36,7 @@ const watcher = require('./watcher');
 const comms = require('./comms');
 const activity = require('./activity');
 // Safety net: a background failure (OCR, a site reader) should never put an error box in front of Maria.
-process.on('uncaughtException', (e) => { try { console.error(e); activity.add('app', 'error', { msg: String(e && e.message || e).slice(0, 200) }, false); } catch {} });
+process.on('uncaughtException', (e) => { try { diag('app', 'error', { msg: String(e && e.message || e).slice(0, 200) }); console.error(e); activity.add('app', 'error', { msg: String(e && e.message || e).slice(0, 200) }, false); } catch {} });
 process.on('unhandledRejection', (e) => { try { console.error(e); } catch {} });
 const faxes = require('./faxes');
 const inapp = require('./inapp');
@@ -44,6 +44,7 @@ const ocr = require('./ocr');
 const gmail = require('./gmail');
 const gapi = require('./gmailapi');
 const outbox = require('./outbox');
+const { diag, prune: pruneDiag, bundle: diagBundle } = require('./diag');
 // Email: Google's own sign-in once the key file is loaded (read, reply, send from hello@); before that, the old inbox count.
 const mail = {
   check: () => (gapi.hasKey() ? gapi.check() : gmail.check()),
@@ -258,7 +259,13 @@ setInterval(() => {
 ipcMain.handle('rxnt:signin', async () => {
   const ok = await rxnt.signIn(pid(), win);
   activity.add('RxNT', 'sign-in', {}, !!ok);
-  if (ok) { setRxntFlag(pid(), true); rxnt.keepSignedIn(pid()); if (rx.win && !rx.win.isDestroyed()) rx.win.destroy(); rx.win = null; watcher.reschedule(); setTimeout(() => preload(), 1500); setTimeout(syncPatientsNow, 8000); }
+  diag('rxnt', ok ? 'signed in' : 'sign-in not finished');
+  if (ok) {
+    setRxntFlag(pid(), true); rxnt.keepSignedIn(pid()); if (rx.win && !rx.win.isDestroyed()) rx.win.destroy(); rx.win = null; watcher.reschedule();
+    // Fresh start for RxNT: old failures cleared, schedule + prescriptions + portal read once the session settles.
+    for (const k of ['schedule', 'rx', 'portal']) { fails[k] = 0; lastErr[k] = ''; lastSync[k] = 0; }
+    setTimeout(() => preload(), 1500); setTimeout(() => syncDue(0), 5000); setTimeout(syncPatientsNow, 8000);
+  }
   return ok;
 });
 ipcMain.handle('rxnt:logout', async () => { await rxnt.logout(pid()); setRxntFlag(pid(), false); return true; });
@@ -497,6 +504,12 @@ ipcMain.handle('fax:save', async (_e, id) => {
   activity.add('Doximity', 'fax-saved', { fax: String(id).slice(0, 12) }, true);
   return { ok: true, path: r.filePath };
 });
+ipcMain.handle('diag:save', async () => {
+  const r = await dialog.showSaveDialog(win, { defaultPath: path.join(app.getPath('downloads'), `Ruhwell Front Desk diagnostics ${ymd(new Date())}.txt`), filters: [{ name: 'Text', extensions: ['txt'] }] });
+  if (r.canceled || !r.filePath) return { canceled: true };
+  const head = `Ruhwell Front Desk ${app.getVersion()} · ${process.platform} ${process.arch} · saved ${new Date().toISOString()}\nAccounts: ${JSON.stringify(accountHealth())}\n\n`;
+  fs.writeFileSync(r.filePath, head + diagBundle(7)); return { ok: true, path: r.filePath };
+});
 ipcMain.handle('fax:read', (_e, id, read) => { try { const f = faxes.update(String(id), { readAt: read === false ? null : new Date().toISOString() }); send('sync', syncStatus()); return !!f; } catch { return false; } });
 ipcMain.handle('fax:mark', (_e, id, st) => { if (!['new', 'notpatient', 'spam', 'done'].includes(st)) return false; let f = null; try { f = faxes.update(String(id), { status: st, doneAt: st === 'new' ? null : new Date().toISOString() }); } catch { return false; } activity.add('Doximity', 'fax-marked', { fax: String(id).slice(0, 12), as: st }); send('sync', syncStatus()); return !!f; });
 ipcMain.handle('fax:signin', async () => {
@@ -618,7 +631,7 @@ function syncStatus() {
     schedule: st.schedule || null,
     alerts: watcher.status(),
     gmail: mail.status(),
-    outbox: outbox.pending(),
+    outbox: outbox.pending(), outboxEmail: outbox.pending('email'), outboxText: outbox.pending('text'),
     // What each part last read and whether it's reading right now (Today shows "Updated 9:42" / "Updating…").
     fresh: { schedule: (dayCache[ymd(new Date())] || {}).at || null, comms: Date.parse(store.ringrxHistory.get().at || '') || null, rx: lastOk.rx || null, gmail: lastOk.gmail || null, faxes: lastOk.faxes || null, portal: lastOk.portal || null },
     running: { ...syncRunning },
@@ -644,10 +657,13 @@ async function syncPatientsNow() {
   const byChart = {}; Object.values(db).forEach((p) => { if (p.chart) byChart[p.chart] = p; });
   const knownCharts = new Set(Object.keys(byChart));
   const FRESH = 14 * 864e5;
-  const needsDetail = (row) => { const c = byChart[row.chart]; return !c || !c.detailAt || Date.now() - c.detailAt > FRESH || (row.listedPhone && row.listedPhone !== c.listedPhone); };
+  // Details are re-read every 14 days, and once for anyone whose email hasn't been looked for yet.
+  const needsDetail = (row) => { const c = byChart[row.chart]; return !c || !c.detailAt || !c.emailChecked || Date.now() - c.detailAt > FRESH || (row.listedPhone && row.listedPhone !== c.listedPhone); };
   let count = 0, error = null;
   try {
+    const started = Date.now();
     for (const [i, L] of [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].entries()) {
+      if (Date.now() - started > 30 * 60000) { error = 'took too long; continues next time'; diag('patients', 'time limit', { letter: L }); break; }
       const list = await rxQueue((w) => rxnt.listLetter(w, L));
       if (list.needsLogin) { if (await rxntSignedOut(id)) { error = 'RxNT signed out'; break; } continue; }
       const quick = [];
@@ -703,7 +719,16 @@ const RUN = {
 // The user can switch a source off in Settings → Connections (Faxes only for now).
 const sourceOn = (k) => { if (k !== 'faxes') return true; const f = store.settings.get().faxes || {}; return f.enabled !== false && (!!f.signedIn || !!faxes.savedLogin()); };
 // Did a run work? A failure is retried within minutes (3, then 6, 12…) instead of waiting the full interval.
-const lastOk = {}, fails = {}, syncRunning = {};
+const lastOk = {}, fails = {}, syncRunning = {}, lastErr = {};
+// A short, plain reason for a failed run (shown in Accounts and the sync card, and written to the diagnostics log).
+function whyFailed(k, r) {
+  if (r && r.needsLogin) return 'sign-in needed';
+  if (r && r.error) return String(r.error).slice(0, 120);
+  if (r === false) return 'no answer';
+  if (k === 'rx' && rxtasks.list().available === false) return (rxtasks.list().error || 'prescriptions page did not load');
+  if (k === 'gmail' && mail.status().error) return mail.status().error;
+  return '';
+}
 const worked = (k, r) => {
   if (r === false || (r && (r.error || r.needsLogin))) return false;
   if (k === 'rx') return rxtasks.list().available !== false;
@@ -717,18 +742,21 @@ function syncDue(maxAgeMin) {
     const every = maxAgeMin != null && (k === 'schedule' || k === 'comms' || k === 'portal') ? Math.min(maxAgeMin, b) : busy ? b : q;
     if (now - lastSync[k] < every * 60000) continue;
     lastSync[k] = now; syncRunning[k] = true;
-    Promise.resolve().then(RUN[k]).then((r) => worked(k, r), () => false).then((ok) => {
+    const t0 = Date.now();
+    Promise.resolve().then(RUN[k]).then((r) => { lastErr[k] = whyFailed(k, r); return worked(k, r); }, (e) => { lastErr[k] = String((e && e.message) || e || 'error'); return false; }).then((ok) => {
       syncRunning[k] = false;
       activity.add(SOURCE_OF[k], 'sync', { part: k }, ok);
-      if (ok) { lastOk[k] = Date.now(); fails[k] = 0; send('sync', syncStatus()); return; }
+      diag(k, ok ? 'ok' : 'failed', { ms: Date.now() - t0, ...(ok ? {} : { why: lastErr[k], tries: (fails[k] || 0) + 1 }) });
+      if (ok) { lastOk[k] = Date.now(); fails[k] = 0; lastErr[k] = ''; send('sync', syncStatus()); return; }
       fails[k] = (fails[k] || 0) + 1;
-      const retry = Math.min(3 * 2 ** (fails[k] - 1), every) * 60000;
+      // Quick first retry (most failures are a slow page or a session settling), then backing off.
+      const retry = Math.min([0.67, 2, 5, 10][Math.min(fails[k], 4) - 1], every) * 60000;
       lastSync[k] = Date.now() - every * 60000 + retry;   // due again after `retry`
       send('sync', syncStatus());
     });
   }
 }
-setInterval(() => syncDue(), 60000);
+setInterval(() => syncDue(), 20000);
 const SOURCE_OF = { schedule: 'RxNT', rx: 'RxNT', portal: 'RxNT', patients: 'RxNT', comms: 'RingRx', gmail: 'Gmail', faxes: 'Doximity' };
 // Why a part didn't work, in plain words.
 function partReason(k) {
@@ -739,7 +767,7 @@ function partReason(k) {
   if (k === 'faxes' && faxes.status().error === 'signin') return 'sign-in needed';
   if (k === 'faxes' && faxes.status().error === 'code') return 'needs a code';
   if (!net.isOnline()) return 'no internet';
-  return "couldn't load";
+  return lastErr[k] ? `couldn't load: ${lastErr[k]}` : "couldn't load";
 }
 // Manual "Sync" / "Check everything": runs one part now and reports how it went (the sync card shows each).
 ipcMain.handle('sync:part', async (_e, k) => {
@@ -749,8 +777,11 @@ ipcMain.handle('sync:part', async (_e, k) => {
   if (syncRunning[k]) { const t0 = Date.now(); while (syncRunning[k] && Date.now() - t0 < 120000) await new Promise((r) => setTimeout(r, 500)); return { ok: !fails[k], reason: fails[k] ? partReason(k) : '' }; }
   syncRunning[k] = true; lastSync[k] = Date.now();
   let ok = false;
-  try { ok = worked(k, await RUN[k]()); } catch { ok = false; }
+  const t0 = Date.now();
+  try { const r = await RUN[k](); lastErr[k] = whyFailed(k, r); ok = worked(k, r); } catch (e) { lastErr[k] = String((e && e.message) || e); ok = false; }
   syncRunning[k] = false;
+  diag(k, ok ? 'ok (manual)' : 'failed (manual)', { ms: Date.now() - t0, ...(ok ? {} : { why: lastErr[k] }) });
+  if (ok) lastErr[k] = '';
   activity.add(SOURCE_OF[k], 'sync', { part: k, manual: true }, ok);
   if (ok) { lastOk[k] = Date.now(); fails[k] = 0; } else fails[k] = (fails[k] || 0) + 1;
   send('sync', syncStatus());
@@ -763,11 +794,13 @@ function accountHealth() {
   const lvl = (keys, signedIn) => {
     if (!signedIn) return { level: 'red', why: 'sign-in needed' };
     // Every part has to be fresh: a fresh schedule can't hide prescriptions that never loaded.
-    const oks = keys.map((k) => lastOk[k] || 0), last = Math.min(...oks), failing = keys.some((k) => (fails[k] || 0) > 0);
     const NAMES = { schedule: 'schedule', rx: 'prescriptions', comms: 'texts and calls', gmail: 'email', faxes: 'faxes' };
-    if (!last) { const wait = keys.filter((k) => !lastOk[k]).map((k) => NAMES[k] || k).join(', '); return { level: failing ? 'amber' : 'grey', why: failing ? "couldn't load" : `checking ${wait}…`, at: Math.max(...oks) ? new Date(Math.max(...oks)).toISOString() : null }; }
+    // One failed read is usually a slow page: say "retrying" (still green/grey); amber after two in a row.
+    const oks = keys.map((k) => lastOk[k] || 0), last = Math.min(...oks), failing = keys.some((k) => (fails[k] || 0) >= 2), retrying = !failing && keys.some((k) => (fails[k] || 0) === 1);
+    const bad = keys.filter((k) => (fails[k] || 0) >= 2), why = bad.length ? `${bad.map((k) => NAMES[k] || k).join(' and ')} couldn't load${lastErr[bad[0]] ? ' · ' + lastErr[bad[0]] : ''}` : '';
+    if (!last) { const wait = keys.filter((k) => !lastOk[k]).map((k) => NAMES[k] || k).join(', '); return { level: failing ? 'amber' : 'grey', why: failing ? why : retrying ? 'retrying…' : `checking ${wait}…`, at: Math.max(...oks) ? new Date(Math.max(...oks)).toISOString() : null }; }
     const fresh = now - last < staleMs;
-    return { level: fresh && !failing ? 'green' : 'amber', why: failing ? "couldn't load" : fresh ? '' : 'not checked lately', at: new Date(last).toISOString() };
+    return { level: fresh && !failing ? 'green' : 'amber', why: failing ? why : retrying ? 'retrying…' : fresh ? '' : 'not checked lately', at: new Date(last).toISOString() };
   };
   const g = mail.status(), fx = faxes.status();
   return {
@@ -783,7 +816,13 @@ const appStarted = Date.now();
 
 // Waking from sleep or getting the internet back: catch up right away (schedule, texts and portal first).
 let wasOnline = true;
-function catchUp() { setTimeout(() => syncDue(0), 4000); }
+// After waking or Wi-Fi coming back, wait until the internet actually answers (up to a minute) before syncing.
+function catchUp() {
+  diag('app', 'wake/online: catching up');
+  const t0 = Date.now();
+  const tryNow = () => { if (net.isOnline() || Date.now() - t0 > 60000) setTimeout(() => syncDue(0), 3000); else setTimeout(tryNow, 3000); };
+  setTimeout(tryNow, 4000);
+}
 app.whenReady().then(() => {
   powerMonitor.on('resume', catchUp);
   powerMonitor.on('unlock-screen', () => syncDue(15));
@@ -1077,7 +1116,7 @@ ipcMain.handle('email:packetOpen', () => { const p = packet(); const f = path.jo
 ipcMain.handle('email:templates', () => store.emailTemplates.get());
 ipcMain.handle('email:templatesSave', (_e, list) => { store.emailTemplates.set(list); return true; });
 // Outbox
-const outboxEvent = () => { send('outbox', { pending: outbox.pending() }); send('sync', syncStatus()); };
+const outboxEvent = () => { send('outbox', { pending: outbox.pending(), email: outbox.pending('email'), text: outbox.pending('text') }); send('sync', syncStatus()); };
 async function sendEmailNow(p) {
   const files = [...(p.files || [])];
   if (p.packet) files.unshift(packet());
@@ -1233,7 +1272,7 @@ app.whenReady().then(() => {
   store.log.migrate();
   store.log.prune(store.settings.get().historyKeep);
   activity.prune();
-  try { faxes.cleanTmp(); faxes.repairOnce(); } catch {}
+  try { faxes.cleanTmp(); pruneDiag(); diag('app', `start ${app.getVersion()}`, { os: process.platform }); faxes.repairOnce(); } catch {}
   migrations.run();
   if (process.platform === 'win32') {
     // Windows names notifications after a Start-menu shortcut with the same app ID; without one it shows

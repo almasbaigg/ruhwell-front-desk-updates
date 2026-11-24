@@ -212,7 +212,8 @@ function unmarkDone(kind, id) { const k = `${kind}:${id}@`; const c = store.call
 const doneSince = (key, iso) => (doneMap()[key] || 0) > new Date(iso).getTime();
 function markDone(kind, phone) { const k = `${kind}:${phone}`; const c = store.callbacks.get(); c.done = [...(c.done || []).filter((d) => !String(d).startsWith(k + '@')), `${k}@${Date.now()}`].slice(-3000); store.callbacks.set(c); }
 // Texts badge = conversations with something unread that still needs a reply (drops as soon as you open one).
-const counts = () => ({ texts: textThreads(14).filter((t) => t.needs && t.unread).length, calls: callList(14).filter((c) => c.due || (c.voicemail && !c.heardAt && !c.spam && Date.now() - new Date(c.at) < 3 * DAY)).length });
+// One definition everywhere (sidebar, Today tiles, To do filters): texts needing a reply, calls needing a callback, last 30 days.
+const counts = () => ({ texts: textThreads(30).filter((t) => t.needs).length, calls: callList(30).filter((c) => c.due).length });
 
 // Numbers that replied STOP. The number itself is blocked, for everyone who uses it (siblings, a parent's phone).
 const optedOut = (phone) => !!((store.inbound.get().optOut || {})[String(phone || '').replace(/\D/g, '').slice(-10)]);

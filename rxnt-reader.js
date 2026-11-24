@@ -74,7 +74,7 @@ function readSchedule(target, view) {
         last: (parts[0] || '').trim(), first: (parts.slice(1).join(',') || '').trim(),
         age: ageFrom(per.DOB || pi.DOB),
         cell: pi.CellPhone || '', home: pi.HomePhone || '', preferred: pi.PreferedNumber || '',
-        email: Object.entries({ ...per, ...pi }).map(([k, v]) => (/^e-?mail(address)?$/i.test(k) && typeof v === 'string' && v.includes('@') ? v.trim() : '')).find(Boolean) || '',
+        email: ((roots) => { const seen = new Set(), ok = (v) => typeof v === 'string' && /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(v.trim()) && !/@ruhwellmed\.com$/i.test(v.trim()); let out = ''; const skip = /guarant|responsib|guardian|parent|emergency|relation|provider|doctor|physician|practice|staff|user|employer|pharmac|insur|referr/i; const go = (o, d) => { if (out || !o || typeof o !== 'object' || d > 4 || seen.has(o)) return; seen.add(o); for (const [k, v] of Object.entries(o)) if (!out && /mail/i.test(k) && ok(v)) out = v.trim(); for (const [k, v] of Object.entries(o)) if (!out && v && typeof v === 'object' && !skip.test(k)) go(v, d + 1); }; roots.forEach((r) => go(r, 0)); return out; })([pi, per, typeof P !== 'undefined' ? P : null, typeof p !== 'undefined' ? p : null]),
         statusCode: st.Code || '', statusText: st.Description || '',
         start, end: local(e.EndDateTime || e.End),
         visitType: (A.CompanyAppointmentTemplate || {}).Name || '',
@@ -245,8 +245,8 @@ function readDash(expectChart) {
     guardianFirst: guardian ? guardian.first : '', guardianLast: guardian ? guardian.last : '', guardianRel: guardian ? String(guardian.rel).slice(0, 40) : '',
     patientId: p.PatientId, chart, first, last, age: typeof per.Age === 'number' && per.Age > 0 ? per.Age : null,
     dob: String(pi.DOB || per.DOB || '').replace(/Z$/, '').slice(0, 10),
-    cell: pi.CellPhone || '', home: pi.HomePhone || '', preferred: pi.PreferedNumber || '',
-    email: Object.entries({ ...per, ...pi }).map(([k, v]) => (/^e-?mail(address)?$/i.test(k) && typeof v === 'string' && v.includes('@') ? v.trim() : '')).find(Boolean) || '',
+    cell: pi.CellPhone || '', home: pi.HomePhone || '', preferred: pi.PreferedNumber || '', emailChecked: true,
+    email: ((roots) => { const seen = new Set(), ok = (v) => typeof v === 'string' && /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(v.trim()) && !/@ruhwellmed\.com$/i.test(v.trim()); let out = ''; const skip = /guarant|responsib|guardian|parent|emergency|relation|provider|doctor|physician|practice|staff|user|employer|pharmac|insur|referr/i; const go = (o, d) => { if (out || !o || typeof o !== 'object' || d > 4 || seen.has(o)) return; seen.add(o); for (const [k, v] of Object.entries(o)) if (!out && /mail/i.test(k) && ok(v)) out = v.trim(); for (const [k, v] of Object.entries(o)) if (!out && v && typeof v === 'object' && !skip.test(k)) go(v, d + 1); }; roots.forEach((r) => go(r, 0)); return out; })([pi, per, typeof P !== 'undefined' ? P : null, typeof p !== 'undefined' ? p : null]),
   } };
 }
 // Runs a function inside the RxNT page. Arguments are written out as code, so an empty (undefined) one must be

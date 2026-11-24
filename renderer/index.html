@@ -52,7 +52,7 @@
           <div class="timer-btns"><button class="tbtn" id="tm-pause" title="Pause"></button><button class="tbtn" id="tm-add" title="Add 5 minutes">+5</button><button class="tbtn" id="tm-stop" title="Stop the timer"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button></div></div>
       </div>
     </div>
-    <button class="btn primary block" id="new-msg"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New message</button>
+    <div class="new-split"><button class="btn primary" id="new-msg"><svg viewBox="0 0 24 24"><path d="M4 6h16v10H8l-4 4z"/></svg>New text</button><button class="btn primary" id="new-email-side"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>New email</button></div>
     <nav>
       <button class="nav" data-view="today"><svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></svg>Today<span class="badge hidden" id="nb-today"></span></button>
       <p class="nav-label">Inbox</p>
@@ -154,9 +154,10 @@
           <details class="changes-today" id="today-changes"></details>
         </section>
         <div class="board-col">
-          <section class="panel pad checklist">
+          <div class="seg-toggle pad-tabs" id="pad-tabs"><button data-p="checklist" class="on">Checklist<b id="pad-cl-count" class="hidden"></b></button><button data-p="notes">Notes</button></div>
+          <section class="panel pad checklist on">
             <div class="panel-head"><h2 class="ph"><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1.2 1.2L7 5M3.5 12l1.2 1.2L7 11M3.5 18l1.2 1.2L7 17"/></svg>Checklist</h2><span class="count" id="cl-left"></span></div>
-            <form id="cl-form"><span class="cl-plus"><svg viewBox="0 0 24 24"><path d="M12 6v12M6 12h12"/></svg></span><input id="cl-input" placeholder="Add a task, e.g. call pharmacy at 3" maxlength="300" autocomplete="off"><button type="button" class="icon-btn cl-when" id="cl-when" title="Remind me"><svg viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg></button></form>
+            <form id="cl-form"><span class="cl-plus"><svg viewBox="0 0 24 24"><path d="M12 6v12M6 12h12"/></svg></span><input id="cl-input" placeholder="Add a task…" maxlength="300" autocomplete="off"><button type="button" class="icon-btn cl-when" id="cl-when" title="Remind me"><svg viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg></button></form>
             <p class="cl-hint hidden" id="cl-hint"></p>
             <div id="cl-list" class="scroll"></div>
           </section>
@@ -177,13 +178,14 @@
         <div><p class="eyebrow" id="tx-range-label"></p><h1>Texts</h1></div>
         <div class="head-actions">
           <div class="seg-toggle comm-filter" id="tx-filter"><button data-f="needs" class="on">To do</button><button data-f="all">All</button><button data-f="sent">Sent</button><button data-f="spam">Spam</button></div>
-          <button class="btn sched-count">Scheduled</button>
-          <select id="tx-range"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option></select>
+          <button class="btn sched-count" data-kind="text">Scheduled texts</button>
+          <button class="icon-btn tpl-open" data-tab="messages" title="Templates &amp; settings"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
+          <button class="btn primary" id="tx-new"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New text</button>
         </div>
       </header>
       <div class="split comms">
         <div class="pane list-pane">
-          <label class="search-box"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><input id="tx-search" placeholder="Search name or number"></label>
+          <div class="list-tools"><label class="search-box"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><input id="tx-search" placeholder="Search name or number"></label><select id="tx-range"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option></select></div>
           <div id="tx-list" class="tlist"></div>
         </div>
         <div class="pane convo" id="tx-pane"></div>
@@ -196,7 +198,8 @@
         <div><p class="eyebrow" id="em-sub">Gmail</p><h1>Emails</h1></div>
         <div class="head-actions">
           <div class="seg-toggle comm-filter" id="em-filter"><button data-f="needs" class="on">To do</button><button data-f="all">All</button><button data-f="sent">Sent</button><button data-f="spam">Spam</button></div>
-          <button class="btn sched-count">Scheduled</button>
+          <button class="btn sched-count" data-kind="email">Scheduled emails</button>
+          <button class="icon-btn tpl-open" data-tab="messages" title="Templates &amp; settings"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
           <button class="btn primary" id="em-new"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New email</button>
         </div>
       </header>
@@ -247,7 +250,7 @@
 
     <!-- Settings -->
     <section class="view hidden" id="view-settings">
-      <header class="head"><div><p class="eyebrow">Preferences</p><h1>Settings</h1></div><div class="head-actions"><div class="seg-toggle" id="set-tabs"><button data-t="connections">Accounts</button><button data-t="alerts">You &amp; alerts</button><button data-t="messages">Messages</button><button data-t="app">App</button></div><span class="muted small" id="s-saved"></span><button class="btn primary" id="s-save">Save</button></div></header>
+      <header class="head"><div><p class="eyebrow">Preferences</p><h1>Settings</h1></div><div class="head-actions"><div class="seg-toggle" id="set-tabs"><button data-t="connections">Accounts</button><button data-t="alerts">You &amp; alerts</button><button data-t="messages">Communication</button><button data-t="app">App</button></div><span class="muted small" id="s-saved"></span><button class="btn primary" id="s-save">Save</button></div></header>
 
       <div class="card conn-card" data-tab="connections">
         <div class="card-head"><h3>Accounts <i class="info" tabindex="0" data-tip="Each account is checked every 5 minutes during office hours and every 10 minutes after. A green dot means the last check worked. Sign-ins are saved, encrypted, on this computer only.">i</i></h3><button class="btn hidden" id="sy-now">Check everything now</button></div>
@@ -296,7 +299,7 @@
         <div class="row-line first"><div><strong>Sender name <i class="info" tabindex="0" data-tip="What patients see next to hello@ruhwellmed.com.">i</i></strong></div><input id="es-name" placeholder="Ruhwell Med" style="width:240px" maxlength="60"></div>
         <div class="row-line"><div><strong>Welcome packet <i class="info" tabindex="0" data-tip="Attached to the Welcome email.">i</i></strong><span class="muted small" id="es-packet-sub"></span><span class="hidden" id="es-packet-name"></span></div><div class="row-gap"><button class="btn small" id="es-packet-open">Open</button><button class="btn small" id="es-packet-replace">Replace</button><button class="btn ghost small hidden" id="es-packet-reset">Use original</button></div></div>
         <h4 class="sub-h">Signature</h4>
-        <div class="ec-body small-body" id="es-sig" contenteditable="true"></div>
+        <div class="ec-body small-body" id="es-sig" contenteditable="true" data-placeholder="Your sign-off for emails, e.g. Warm regards, Ruhwell Med · (979) 000-0000"></div>
         <h4 class="sub-h">Templates</h4>
         <div id="es-tpls"></div>
       </div>
@@ -327,6 +330,7 @@
         <div class="row-line"><div><strong>Keep sent history</strong></div><select id="s-keep"><option value="forever">Forever</option><option value="2y">2 years</option><option value="1y">1 year</option></select></div>
         <div class="row-line"><div><strong>Activity log <i class="info" tabindex="0" data-tip="What the app did with RxNT, Doximity and RingRx. 90 days, no patient names.">i</i></strong></div><button class="btn small" id="s-activity">View</button></div>
         <div class="row-line"><div><strong>Spam numbers</strong><span class="muted small" id="s-spam-line"></span></div><button class="btn small" id="s-spam">Manage</button></div>
+        <div class="row-line"><div><strong>Diagnostics <i class="info" tabindex="0" data-tip="A technical log of syncs, sign-ins and errors (no patient details). Save it to send when something isn&#39;t working.">i</i></strong></div><button class="btn small" id="s-diag">Save diagnostics</button></div>
         <div class="row-line"><div><strong>Data folder</strong><span class="muted small mono" id="data-path"></span></div><button class="btn small" id="open-data">Open</button></div>
       </div>
     </section>
@@ -336,6 +340,7 @@
 <div class="overlay hidden" id="overlay"><div class="modal" id="modal"></div></div>
 <div class="popover hidden" id="popover"></div>
 <div class="toast hidden" id="toast"></div>
+<div class="sync-veil" id="sync-veil"></div>
 <div class="sync-card" id="sync-card" role="status" aria-live="polite"></div>
 <script src="js/core.js"></script>
 <script src="js/send.js"></script>

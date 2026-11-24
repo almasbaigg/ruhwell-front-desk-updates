@@ -108,12 +108,14 @@ $('add-patient').onclick = () => patientForm(async (p) => {
   if (rec) { activePatient = { ...rec, text: '', templateId: null }; renderPatients(); renderCompose(); }
 });
 
-/* ---------- New message ---------- */
-$('new-msg').onclick = async () => {
+/* ---------- New text ---------- */
+$('new-email-side').onclick = () => emailCompose();
+document.querySelectorAll('.tpl-open').forEach((b) => (b.onclick = () => { go('settings'); setTimeout(() => typeof showSettingsTab === 'function' && showSettingsTab(b.dataset.tab), 50); }));
+const newText = async () => {
   [patients, history] = await Promise.all([window.api.patients(), window.api.history()]); indexPatients(patients);
   const p = { first: '', last: '', phone: '', text: '', templateId: null };
   let picked = null;
-  openModal(`<h2>New message</h2>
+  openModal(`<h2>New text</h2>
     <label class="field"><span>To</span><input id="q-to" placeholder="Search a patient or type a phone number" autocomplete="off"></label>
     <div id="q-suggest"></div>
     <div class="field-grid" id="q-names"><label class="field"><span>First name</span><input id="q-first"></label><label class="field"><span>Last name</span><input id="q-last"></label></div>
@@ -147,6 +149,7 @@ $('new-msg').onclick = async () => {
   };
   setTimeout(() => $('q-to').focus(), 50);
 };
+$('new-msg').onclick = newText; $('tx-new').onclick = newText;
 
 
 // Open a patient's page from anywhere (Today, Texts, Calls).

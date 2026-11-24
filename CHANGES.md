@@ -175,6 +175,123 @@
 ### Deferred
 - Splitting main.js into smaller files (no behavior change): saved for a quiet release, so it can't mix with these fixes.
 
+## 2.3.0 (built into the code, not released yet; waiting on the ChatGPT test pass)
+Everything listed below is done, except the RxNT/Doximity "extra page" detection (still to do). Summary of how:
+- Today: wider page; two main columns plus a Checklist | Notes card with tabs; visit status pill on the name line; faxes are their own group with the fax icon; Next up wraps cleanly; one action-button width; shorter checklist placeholder; unread-emails tile shows "—" until Gmail is read.
+- Emails: one reading surface (no box in a box, natural height, system font); header is the subject + Done icon + ⋯ + Reply; read time on hover; list newest first, grouped by day, initials, unread dot at the left edge, HTML codes decoded, patient names for known addresses; both sides scroll on their own.
+- "Scheduled emails" / "Scheduled texts" show only their own kind, with the count.
+- Composer: borderless To/Subject fields; the app's own recipient list (name, email, next visit or DOB; starts-with matches first; top 6; arrow keys).
+- Texts: New text button; compact Needs reply pill on the name line; range picker moved next to search. Sidebar: New text | New email.
+- Faxes: list + full-width document; "Add to chart" opens as a side sheet (opens by itself when a likely patient was found); Read/Done/Filed times under each fax; chips in one scrolling row; simpler header.
+- Sync: checks centered; Sync now (and opening with old information) shows a big centered card over a soft blur, with Keep working; it tucks into the corner when done or when clicked away.
+- Clock: next visit on two lines. Settings: "Communication" tab (also reachable from Texts/Emails), drawn (i) icon, aligned template rows, signature placeholder, wider cards.
+- Motion: view fade, sheet-style windows, Done check drawn + row slides out, badge roll, button press, gentle blur on panels still updating, a small celebration when To do reaches zero. All off with the system's Reduce motion.
+- Focus rings show only when using the keyboard.
+
+### 2.3.0 fixes from ChatGPT's test pass (each checked against the code)
+- Email: the patient picked in To stays picked; typing a different address clears it; an address shared by two patients is never matched to one of them (composer, list names, replies, outgoing record).
+- Email: switching threads clears the old one first, and a late answer for the previous thread can't take over the pane. Opening an email no longer cancels "Load older emails" (separate request counters).
+- Email: read time is per newest message, so a new reply in an old thread gets its own time. Older messages expand with the keyboard. Long emails re-measure on expand and window resize.
+- Scheduled: Cancel / Send now / Change time say what really happened ("Too late: it's already being sent") and refresh only that window, never over a composer. Scheduled texts count messages, not batches.
+- Faxes: a late RxNT answer for a fax you've left can't change the fax on screen (a background success just updates the list). A refresh keeps the patient pick/confirmation and doesn't reopen a closed sheet. Read/unread failures are shown and undone. Closed sheet can't take keyboard focus.
+- Sync card: a new run cancels the previous run's timers and click action.
+- Today: Done counts once, and if saving fails the row comes back. Checklist: unchecking takes it off the Done count.
+- Reduce motion: no button scaling, check mark still shows. Headings in Emails/Faxes use the serif font (wrong variable name before).
+
+### Logged items (for reference)
+**Cosmetic issues from Almas's Today screenshot (2.2.0, wide Windows screen)**
+- On a wide window the page sits in a narrow centered column with large empty space beside the sidebar; use the width (or align left with a sensible max).
+- Today's visits header is crowded: the title wraps to two lines next to "Updating…" and "Schedule". Keep the title on one line; move the freshness label under it or make it a small dot.
+- While updating, Today's visits shows "No visits today" and the tile "0 visits today", which reads as fact. Show the saved schedule, or "Checking…", until RxNT has answered.
+- Next up card: a long title wraps and the "· 12h ago" falls onto its own line.
+- "New faxes" sits under "Prescriptions & RxNT" with the prescription icon; faxes should be their own group with the fax icon.
+- Counts disagree: Today badge vs Needs attention count, and Texts nav badge vs the "texts to answer" tile. One definition per count, everywhere.
+- Patient rows: the "RxNT portal" tag sometimes drops to its own line; keep tags on the name line or truncate the name.
+- Row action buttons vary in width ("Open in RxNT", "Reply", "Send welcome"); align them in one column with a consistent width.
+- Unread emails tile icon is a filled teal square, unlike the other tiles' soft icons.
+- Checklist placeholder is cut off; use a shorter one.
+- Notes header controls look off-center; the last Needs attention row is cut at the panel's bottom edge.
+- General spacing and button alignment pass across all screens.
+**Emails screen looks weird/cheap (Almas's screenshot)**
+- Reading pane: the message sits in a box inside a box, on a white iframe block with a fixed height and empty space below; the email text uses Arial while the app uses its own font. Make it one clean reading surface (like Apple Mail): sender row with avatar, subject as the title, the body flowing naturally with comfortable margins and height that fits the content.
+- Header is heavy: four buttons (Mark unread, More, Done, Reply) plus "1 message" and a letter avatar. Keep Reply as the one primary action, Done as a quiet icon button, the rest in a ⋯ menu.
+- "Read 6:22 AM · Done archives it in Gmail" line looks like debug text; show the read time subtly (or on hover), drop the explanation.
+- List rows: snippets show raw HTML codes (e.g. &#39;); decode them. The unread dot sits inside the subject line; move it to the left edge with a bold sender. Add small avatars/initials, tidy the date column, and keep long sender names from crowding.
+- Selected row looks like a plain box; give it a clear but soft selected state.
+- The eyebrow line in capitals with two email addresses is long and loud; shorten (e.g. "hello@ruhwellmed.com").
+
+- Emails: both sides should be the same height and scroll on their own (the list runs past the window while the reading side is short). The message itself should scroll inside the reading side, not in a small inner box with its own scrollbar.
+- Emails list sorting: newest first everywhere (Sent included), grouped by day like Faxes (Today, Yesterday, Nov 21…), with a clear count; "Load older emails" at the bottom.
+- Sent list: show the recipient's name when known instead of "To: email@address"; decode HTML codes in snippets (&#39;).
+
+- The "Scheduled" button says what it holds: "Scheduled emails" on Emails (shows only emails) and "Scheduled texts" on Texts (only texts), with the count.
+
+- Composer fields: the Subject field shows a boxed input with a focus ring that overflows the right edge and doesn't match the borderless To line; the To field shows a dark ▼ (browser datalist arrow). Make To and Subject the same: borderless lines, soft focus underline, no browser arrow (own suggestion list for patients).
+
+- Recipient suggestions use the browser's black dropdown (email first, name tiny and grey). Replace with the app's own list: light card under the field, patient name first in bold with initials, email underneath, next visit or DOB on the right; matches the start of first/last name or email (typing "a" shouldn't list everyone with an "a" anywhere); arrow keys + Enter; top 6 only. Practice addresses (@ruhwellmed.com) are never suggested as a patient's email (one patient record carries admin@ as its email).
+
+- Texts gets its own **New text** button (like New email). The sidebar's "New message" becomes a split choice: **New text** and **New email** (two compact buttons, or one button with a small menu), both opening the same Message window on the right tab.
+- Texts list polish: the "Needs reply" pill stretches across the row; make it a compact pill. The selected sidebar item shows a heavy dark focus outline after clicking; keep the outline for keyboard focus only.
+
+**Faxes screen (Almas's screenshots)**
+- Read/Done time belongs under each fax in the list (like Calls: "Done 6:23 AM"), not only in the header line.
+- Three columns feel unbalanced: the document is small (53%) with empty space around it, the patient column is a long plain list, and in Done view the right column only says "Not filed to a chart." Plan: list (about 300 px) + the document filling the rest; the patient picker opens as a side sheet only when you choose "Add to chart" (search on top, this week's patients as compact cards, the chosen one shows name/DOB/chart with the confirm step). Done/filed faxes show their status as a pill in the header and no right column.
+- Category chips take three rows at the top of the list; make them one compact scrolling row (or a dropdown).
+- Header extras: drop the repeated "Done and Spam stay in this app" line (keep it in the (i) of More); shorten "received Thursday · 11:46 AM".
+- List rows: the time gets cut off ("1:…"); give time its own spot next to the age badge, and keep the "Possibly <patient>" suggestion as a small second line.
+
+**Sync card (loved, keep it)**
+- The check marks sit off-center inside their filled circles (nudged left/down); center them exactly. Also check the spinner rings line up with the checks.
+
+- Make syncing more visible without stopping work. Plan: (1) When it matters (app start with nothing fresh, or Sync now): the sync card appears larger in the middle over a soft blur of the page, with a "Keep working" button that shrinks it into the sidebar; it never blocks clicks for long and closes itself when done. (2) Background syncs: only the small sidebar status, no blur. (3) A panel whose information is old and being replaced gets a gentle blur with "Updating…" on it, while everything else stays usable.
+
+**Settings → Messages**
+- Rename the tab **Communication** (texts, emails, templates, sending hours belong together). Also reachable from where they're used: a small "Templates & settings" button in the Texts and Emails headers opens this same tab.
+- Polish seen in the screenshot: template rows' chevrons don't line up (long previews push them); the empty Signature box is large and unlabeled (add a placeholder such as "Add your email signature"); cards stop at 860 px leaving empty space on wide screens.
+
+**To investigate**
+- Patient emails from RxNT aren't showing. The reader only looks for fields named Email/EmailAddress on the person record; RxNT may use another name (e.g. PatientEmail, PrimaryEmail) or another place. Next build: search the whole patient record for any field with "mail" in its name holding a valid address, and confirm the real field on a sanitized record.
+- Record the actual error for each part (schedule, prescriptions, portal) and show it in Accounts and the sync card, so "couldn't load" always says what failed and why.
+- RxNT shows "Needs a look · couldn't load" right after signing in (2.2.0, Windows), with Today's visits stuck on Updating and prescriptions "Checking RxNT…". Need which part failed (schedule or prescriptions) and why; the Accounts row should name the part and the reason instead of "couldn't load", and a successful sign-in should clear old failure counts and re-run both parts at once.
+
+**Connection stability plan** (RxNT fixed itself a few minutes after sign-in: the first read failed, the retry worked)
+- Right after a successful sign-in or Reconnect: clear old failures and read schedule, prescriptions and portal straight away (after a short pause so the new session settles).
+- First failure retries in about 40 seconds (then 2, 5, 10 minutes) and shows "Retrying…", not "Needs a look". Amber only after two failures in a row; red only when sign-in is really needed.
+- After sleep/wake or Wi-Fi coming back: wait until the internet is actually reachable and a few seconds have passed before syncing, so it doesn't fail on the first try.
+- Keep one signed-in hidden RxNT window warm (light keep-alive every ~10 minutes, rebuilt if it misbehaves or grows), instead of starting fresh windows that each have to sign in.
+- Recognize RxNT/Doximity extra pages (security check, notice, "continue") and say so with a one-click "Open RxNT to finish", instead of a vague failure.
+- Save what was read even if one part times out, and record the exact reason for each failure (shown in Accounts and the sync card).
+
+**Diagnostics log** (asked by Almas)
+- A technical log kept on the computer for troubleshooting: each sync part (start, finish, how long, exact error), sign-ins and reconnects, sleep/wake and network changes, updates, crashes and background errors.
+- No patient names, phone numbers, emails, message text or passwords/tokens: only part names, counts, timings and error reasons (scrubbed before writing).
+- In the data folder under Logs/, one file per day, kept 30 days.
+- Settings → App → "Save diagnostics" makes one file to send to Claude (or ChatGPT) when something goes wrong.
+
+**Notes card (Almas's screenshot)**
+- The day controls (‹ Today › search pin) drop to a second row, floating right and not lined up with the "Notes" title. Put them on the title row (compact) or as one tidy row under it aligned to the left edge.
+- The writing doesn't sit on the ruled lines: the placeholder and text float between lines, and the first ruled lines are spaced unevenly. Match the line height to the ruling exactly so every line of text sits on a line.
+- The margin line and the bottom rule use different colors from the other lines; make them consistent and lighter.
+
+**Today feels crammed (Almas's screenshot)**
+- Bug: the same new booking shows twice in Schedule changes (one "2m ago", one "12h ago"); one alert per patient + appointment.
+- Four columns fight for space: Today's visits is narrow (title wraps, "Schedule" link cut off, time-strip hours squeezed), while Checklist sits mostly empty. Plan: Needs attention (wide) + Today's visits (wider) side by side; Checklist and Notes become one card with two tabs (Checklist | Notes) so they take one column, or move under on smaller windows.
+- Visit rows are tall: time, name, type, note, then the status pill on its own line. Put the status pill on the right of the name line; keep the note line short.
+- Needs attention rows: more breathing room between groups, quieter group headers, and one action column so buttons line up; show at most 3 per group with "Show more" (already) but keep the counts visible in the group header.
+- Header row of each panel: title on one line, freshness as a small dot + time, actions right.
+
+**Clock card**
+- "Next visit in 8 h 25 min · Fi…" is cut off. Show it on two lines: "Next visit 3:00 PM" (bold) and "in 8 h 25 min · patient name" underneath; far-off visits (over 2 hours) can show just the time.
+
+**"Syncing…" stuck in the sidebar**
+- Cause: the patient-list refresh (every 4 hours) reads RxNT letter by letter, A to Z, plus patient details, which takes many minutes, and the sidebar counts it as "Syncing…" the whole time. Keep the sidebar on "Synced · 2 min ago" during that background refresh; show its progress ("Patient list 12 of 26") only in Settings → Accounts. Add a time limit so a stuck letter can't hold it forever.
+- Also why patient emails are missing: patient details are only re-read every 14 days, so records read before email support haven't been re-read. Re-read details once for every patient that has never had its email checked (then back to every 14 days).
+
+**Settings (i) buttons look off**
+- The italic serif "i" in a thin ring sits slightly high/off-center and doesn't match the app's icons. Replace with a proper info icon (circle + dot + stem, same stroke as other icons), sized and vertically centered with the label text; tooltip opens on hover/focus with a short delay.
+
+**Planned with it**: subtle macOS-style motion (view transitions, Done slide-out with a drawn check, count roll, sheet-style windows, list collapse, button press, Today panels fading from Updating to fresh, small celebration at To do = 0), short and quiet, honoring "Reduce motion". Then a ChatGPT test-and-debug pass on that version before release.
+
 ## 2.2.0 (Windows + Mac, Nov 24)
 **Asked for**
 - **No more 5-second auto-send.** The confirm window waits for you: Send, Send later, or Cancel (outside sending hours: "Send today at 8:00 AM" or "Send now anyway").

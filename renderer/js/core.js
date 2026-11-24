@@ -73,7 +73,7 @@ function closeModal() { $('overlay').classList.add('hidden'); }
 const modalLocked = () => !!$('modal').querySelector('.ring.counting, .send-list.live, .em-compose') || !!document.querySelector('.sub-overlay, .ec-prev-wrap');
 $('overlay').addEventListener('mousedown', (e) => { if (e.target === $('overlay') && !modalLocked()) closeModal(); });
 function paintTopbar() { $('topbar').classList.toggle('on', busy.high > 0 || localLoading > 0); }
-window.api.onBusy((b) => { busy = b; paintTopbar(); paintSync(); });
+window.api.onBusy((b) => { busy = b; if (typeof paintTopbar === 'function') paintTopbar(); if (typeof paintSync === 'function') paintSync(); });
 const loading = async (fn) => { localLoading++; paintTopbar(); try { return await fn(); } finally { localLoading--; paintTopbar(); } };
 
 /* ---------- Templates & messages ---------- */
@@ -295,3 +295,6 @@ function itemFor(p) {
 let callsCache = { at: 0, items: [] };
 async function refreshCallsCache() { if (Date.now() - callsCache.at < 60000) return; callsCache = { at: Date.now(), items: await window.api.callList(30) }; }
 function lastCall(phone) { const d = digits(phone); return callsCache.items.find((c) => c.phone === d) || null; }
+
+// "Scheduled emails" in Emails, "Scheduled texts" in Texts; each opens only its own kind.
+function paintSchedCount(d) { document.querySelectorAll('.sched-count').forEach((b) => { const k = b.dataset.kind, n = (d && d[k]) || 0, w = k === 'email' ? 'Scheduled emails' : 'Scheduled texts'; b.textContent = n ? `${w} · ${n}` : w; }); }

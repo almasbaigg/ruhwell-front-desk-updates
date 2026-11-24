@@ -13,6 +13,8 @@ async function boot() {
   const verify = window.api.verifyAccounts().catch(() => null);
   if (accounts.rxnt.connected && accounts.ringrx.connected) {
     showShell();
+    // Opening with old information (computer was off, or the app was closed for a while): show the big sync card.
+    window.api.syncStatus().then((st) => { const f = (st && st.fresh) || {}; if (!f.schedule || Date.now() - f.schedule > 30 * 60000) syncEverything(null, { big: true }); }).catch(() => {});
     const v = await verify;
     if (v && (!v.rxnt || !v.ringrx)) { accounts.rxnt.connected = v.rxnt; accounts.ringrx.connected = v.ringrx; showOnboarding(); }
     return;
@@ -90,17 +92,18 @@ document.addEventListener('keydown', (e) => {
     const box = { texts: 'tx-search', calls: 'ca-search', emails: 'em-search' }[view];
     if (box) $(box).focus(); else { if (view !== 'patients') go('patients'); setTimeout(() => $('p-search').focus(), 30); }
   }
-  if (e.key === 'Escape') { hidePopover(); if (!$('overlay').classList.contains('hidden') && !modalLocked()) closeModal(); }
+  if (e.key === 'Escape') { if ($('sync-veil').classList.contains('show')) syncSmall(); hidePopover(); if (!$('overlay').classList.contains('hidden') && !modalLocked()) closeModal(); }
 });
 
 /* ---------- Status: one quiet line; details on click ---------- */
 const minsAgo = (iso) => { if (!iso) return ''; const m = Math.round((Date.now() - new Date(iso)) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} hr ago` : `${Math.round(m / 1440)} d ago`; };
-function navBadge(id, n) { $(id).textContent = n || ''; $(id).classList.toggle('hidden', !n); }
+// Badges: a small roll when the number changes (not on first paint).
+function navBadge(id, n) { const el = $(id), was = el.textContent; el.textContent = n || ''; el.classList.toggle('hidden', !n); if (was && String(n || '') !== was) { el.classList.remove('roll'); void el.offsetWidth; el.classList.add('roll'); } }
 function paintSync(st) {
   if (st) lastSync = st; st = lastSync; if (!st) return;
   const N = st.needs || {};
   navBadge('nb-texts', N.texts); navBadge('nb-calls', N.calls); navBadge('nb-rx', ((st.rx || {}).count || 0) + ((st.rx || {}).work || 0)); navBadge('nb-faxes', (st.faxes || {}).count || 0); navBadge('nb-emails', st.gmail && st.gmail.connected && st.gmail.hasKey ? st.gmail.unread || 0 : 0);
-  document.querySelectorAll('.sched-count').forEach((b) => { b.textContent = st.outbox ? `Scheduled (${st.outbox})` : 'Scheduled'; });
+  paintSchedCount({ email: st.outboxEmail, text: st.outboxText });
   window.__lastSync = st;
   const G = st.gmail || {}, P = st.patients || {};
   // The one line: green when all is well, otherwise the first thing that needs you.
@@ -111,7 +114,8 @@ function paintSync(st) {
   const red = Object.keys(NAMES).find((k) => (A[k] || {}).level === 'red'), amber = Object.keys(NAMES).find((k) => (A[k] || {}).level === 'amber');
   const accProblem = st.locked ? '' : red ? `${NAMES[red]} sign-in needed` : amber ? `${NAMES[amber]}: ${(A[amber].why || 'needs a look')}` : '';
   const notSetUp = Object.keys(NAMES).filter((k) => (A[k] || {}).why === 'not set up').map((k) => NAMES[k]);
-  const working = busy.high || busy.low || P.running || (st.messages || {}).running;
+  // The long patient-list refresh runs quietly (its progress is in Settings → Accounts), so it never holds "Syncing…".
+  const working = busy.high || (busy.low && !P.running) || (st.messages || {}).running;
   const issue = (st.locked && problem) || accProblem || problem;
   $('status-line').className = 'status-line ' + (issue ? 'warn' : working ? 'busy' : 'on');
   $('status-text').textContent = issue || (working ? 'Syncing…' : `${notSetUp.length ? 'Synced · ' + notSetUp.join(', ') + ' not set up' : 'Synced'} · ${minsAgo((st.alerts || {}).lastRun || (st.schedule || {}).at) || 'just now'}`);
@@ -124,18 +128,26 @@ setInterval(() => paintSync(), 30000);
 // and a checklist beside it. Progress is real (parts done), not a guessed percentage. Never blocks the app.
 const MARK = '<rect y="43.34" width="43.16" height="43.16" rx="2.88"/><rect x="47.48" y="87.31" width="43.16" height="43.16" rx="2.88"/><path d="m131.62,43.56h-34.99s-2.43,0-2.43,0c-.04,0-.08,0-.13.01h-3.15v-3.17s.01-.07.01-.11v-.99s0-36.43,0-36.43C90.93,1.28,89.65,0,88.06,0h-37.42c-.92,0-1.73.43-2.24,1.1v.02c-.35.41-.61.93-.61,1.51,0,25.41,2.98,43.69,21.68,62.39s37.39,21.67,62.44,21.67c.56,0,1.06-.26,1.45-.6h.02c.67-.51,1.1-1.32,1.1-2.24v-37.41c.01-1.59-1.28-2.88-2.87-2.88Z"/>';
 const SYNC_PARTS = [['schedule', 'RxNT schedule'], ['rx', 'Prescriptions & To-Do'], ['portal', 'Portal messages'], ['comms', 'Texts & calls'], ['gmail', 'Email'], ['faxes', 'Faxes']];
-let syncCardBusy = null;
-$('side-sync').onclick = async () => { const b = $('side-sync'); if (b.classList.contains('spin')) return; b.classList.add('spin'); try { await syncEverything(); } finally { b.classList.remove('spin'); } };
+let syncCardBusy = null, syncTimers = [];
+$('side-sync').onclick = async () => { const b = $('side-sync'); if (b.classList.contains('spin')) return; b.classList.add('spin'); try { await syncEverything(null, { big: true }); } finally { b.classList.remove('spin'); } };
+// Big sync card: centered over a soft blur so it's obvious something is happening. "Keep working" (or a click
+// anywhere outside it, or Escape) tucks it into the corner; it never stops you from working.
+function syncSmall() { $('sync-card').classList.remove('big'); $('sync-veil').classList.remove('show'); }
+$('sync-veil').onclick = syncSmall;
 // The status line opens the connection details (Settings → Connections).
 $('status-line').onclick = () => { go('settings'); setTimeout(() => typeof showSettingsTab === 'function' && showSettingsTab('connections'), 50); };
-async function syncEverything(only) {
-  if (syncCardBusy) return syncCardBusy;
+async function syncEverything(only, opts = {}) {
+  if (syncCardBusy) { if (opts.big) { $('sync-card').classList.add('big'); $('sync-veil').classList.add('show'); } return syncCardBusy; }
   const parts = SYNC_PARTS.filter(([k]) => !only || only.includes(k));
   const card = $('sync-card');
+  // A new run cancels the previous run's hide timers and its click action.
+  syncTimers.forEach(clearTimeout); syncTimers = []; card.onclick = null;
   card.innerHTML = `<div class="sc-mark"><svg viewBox="-4 -4 142.5 138.5" aria-hidden="true"><defs><clipPath id="sc-clip">${MARK}</clipPath></defs>
       <g class="sc-base">${MARK}</g><g clip-path="url(#sc-clip)"><g class="sc-fill" style="transform:translateY(131px)"><path class="sc-wave" d="M-140 0 q17.5 -7 35 0 t35 0 t35 0 t35 0 t35 0 t35 0 t35 0 t35 0 V140 H-140Z"/></g></g></svg></div>
-    <div class="sc-body"><b class="sc-title">Syncing…</b><ul>${parts.map(([k, l]) => `<li data-k="${k}"><i></i><span>${l}</span><em></em></li>`).join('')}</ul></div>`;
-  card.className = 'sync-card show';
+    <div class="sc-body"><b class="sc-title">Syncing…</b><ul>${parts.map(([k, l]) => `<li data-k="${k}"><i></i><span>${l}</span><em></em></li>`).join('')}</ul><button class="btn small sc-keep" type="button">Keep working</button></div>`;
+  card.className = 'sync-card show' + (opts.big ? ' big' : '');
+  $('sync-veil').classList.toggle('show', !!opts.big);
+  card.querySelector('.sc-keep').onclick = (e) => { e.stopPropagation(); syncSmall(); };
   const fill = card.querySelector('.sc-fill');
   let done = 0; const total = parts.length, bad = [];
   const level = () => { fill.style.transform = `translateY(${131 - (131 + 8) * (done / total)}px)`; };
@@ -153,8 +165,8 @@ async function syncEverything(only) {
     t.textContent = bad.length ? `${bad.length} need${bad.length === 1 ? 's' : ''} attention` : 'All up to date';
     card.classList.add(bad.length ? 'warn' : 'done');
     paintConnections(); if (view === 'today') loadToday();
-    setTimeout(() => card.classList.remove('show'), bad.length ? 9000 : 3200);
-    card.onclick = () => { card.classList.remove('show'); if (bad.length) go('settings'); };
+    syncTimers.push(setTimeout(syncSmall, bad.length ? 2500 : 1400), setTimeout(() => card.classList.remove('show'), bad.length ? 9000 : 3200));
+    card.onclick = () => { syncSmall(); card.classList.remove('show'); if (bad.length) { go('settings'); setTimeout(() => typeof showSettingsTab === 'function' && showSettingsTab('connections'), 50); } };
   }).finally(() => { syncCardBusy = null; });
   return syncCardBusy;
 }
@@ -223,7 +235,9 @@ function paintClock() {
   const el = $('clock-next');
   if (!next) { el.textContent = ''; el.className = ''; return; }
   const mins = Math.round((new Date(next.start) - now) / 60000);
-  el.textContent = mins <= 0 ? `Visit now · ${fullName(next)}` : `Next visit in ${mins < 60 ? mins + ' min' : Math.floor(mins / 60) + ' h ' + (mins % 60) + ' min'} · ${fullName(next)}`;
+  // Two short lines so nothing is cut off: when (bold), then how long and who.
+  const left = mins < 60 ? `${mins} min` : `${Math.floor(mins / 60)} h ${mins % 60} min`;
+  el.innerHTML = mins <= 0 ? `<b>Visit now</b><span>${esc(fullName(next))}</span>` : `<b>Next visit ${esc(fmtTime(next.start))}</b><span>in ${esc(left)} · ${esc(fullName(next))}</span>`;
   el.className = mins <= 5 ? 'u-red' : mins <= 10 ? 'u-amber' : '';
   el.title = typeof visitBrief === 'function' ? visitBrief(next) : '';
 }
