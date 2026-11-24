@@ -175,6 +175,18 @@
 ### Deferred
 - Splitting main.js into smaller files (no behavior change): saved for a quiet release, so it can't mix with these fixes.
 
+## 2.0.0 (Windows + Mac, Nov 23)
+- **Emails section**: the practice Gmail in the app. Read, reply, write, archive, mark unread; reading here marks it read in Gmail (and the other way round). Attachments can be saved.
+- **Email composer**: formatting (bold, brand colors, headings, lists, links), templates, attachments, preview, signature. The Welcome template matches the practice's Gmail welcome, with the New Patient Welcome Packet attached by default (replaceable in Settings → Email).
+- **Patients get email only from hello@ruhwellmed.com** ("Name patients see" in Settings). Sending is refused if Gmail doesn't list hello@ as a Send-as address.
+- **Welcome email with the welcome text**: when RxNT has the patient's email, the welcome text window offers "Also email the welcome packet". Patient pages show the email (from RxNT, editable) with Email and Welcome email buttons.
+- **Send later** for texts and emails (quick picks or a custom time) and **Sending hours** (default 8 AM–8 PM Mon–Sat): outside them the app offers "Send tomorrow at 8 AM" first; "Send now anyway" is still there. **Scheduled** list (Texts and Emails) to send now, change the time or cancel. Nothing is sent twice.
+- **Read sync with RingRx**: a voicemail played or a text read in the app is marked read in RingRx; anything read in RingRx shows as read here.
+- Google sign-in: Google Cloud project "Ruhwell Front Desk" (internal app, Gmail only). Load the key .json once per computer in Settings → Email, then Sign in with Google.
+- Faxes: Download button saves a copy of the PDF (Downloads by default, named with the date and sender). The app's own copy stays encrypted; each save is in the activity log.
+- Calls, calmer layout: time | name with one status chip ("Not called back", "Called back 4:54 PM", "New voicemail") | one short detail line | buttons on the right that never wrap (Text always last). Back-and-forth with the same number within an hour (missed → voicemail → call back) is one card with a small timeline. Voicemail text is one line; tap to read it all. The phone number no longer shows twice for unknown callers.
+- Fix: voicemail length showed "268:48". RingRx gives it in milliseconds; it now reads "0:16".
+
 ## 1.6.4 (Windows + Mac, Nov 23)
 - Fix: the app crashed with "Only absolute URLs are supported" when it started reading faxes. Inside Electron the reading library treated its language file as a web address. The file is now placed where the library always looks first, so it never goes online. Tested in a packaged build.
 - Safety net: a background error is now written to the activity log instead of showing an error box.

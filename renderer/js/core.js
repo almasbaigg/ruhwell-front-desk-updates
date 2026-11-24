@@ -61,7 +61,7 @@ function toast(msg, undo) {
 }
 function openModal(html) { $('modal').innerHTML = html; $('overlay').classList.remove('hidden'); }
 function closeModal() { $('overlay').classList.add('hidden'); }
-const modalLocked = () => !!$('modal').querySelector('.ring.counting, .send-list.live');
+const modalLocked = () => !!$('modal').querySelector('.ring.counting, .send-list.live, .em-compose') || !!document.querySelector('.sub-overlay, .ec-prev-wrap');
 $('overlay').addEventListener('mousedown', (e) => { if (e.target === $('overlay') && !modalLocked()) closeModal(); });
 function paintTopbar() { $('topbar').classList.toggle('on', busy.high > 0 || localLoading > 0); }
 window.api.onBusy((b) => { busy = b; paintTopbar(); paintSync(); });

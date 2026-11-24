@@ -189,7 +189,7 @@ async function messages(pid, sinceISO) {
       const kind = r.message_type === 'voicemail' ? 'voicemail' : 'text';
       // Any link RingRx gives for the recording (field name isn't documented; keep the first URL-looking one).
       const media = kind === 'voicemail' ? ['file', 'url', 'recording', 'recording_url', 'audio', 'audio_url', 'media_url', 'attachment', 'file_url', 'download_url'].map((k) => r[k]).find((v) => typeof v === 'string' && /^(https?:)?\/\//.test(v) || (typeof v === 'string' && v.startsWith('/'))) || '' : '';
-      out.push({ id: String(r.id), kind, inbound, phone, at, body: String(r.message || '').trim(), transcription: r.transcription ? String(r.transcription) : '', unread: r.status === 'new', media, secs: kind === 'voicemail' ? Math.round(Number(r.duration) || 0) : 0 });
+      out.push({ id: String(r.id), kind, inbound, phone, at, body: String(r.message || '').trim(), transcription: r.transcription ? String(r.transcription) : '', unread: r.status === 'new', media, secs: kind === 'voicemail' ? vmSeconds(r.duration) : 0 });
     }
   }
   return out;
@@ -243,4 +243,19 @@ async function voicemailAudio(pid, id, media) {
 
 function logout(pid) { delete cache[pid]; store.ringrx.clear(pid); }
 
-module.exports = { keepFresh, voicemailAudio, login, sendSms, status, logout, normalize, sendingNumber, alertNumber, me, contacts, messages, calls, RingRxError };
+// RingRx gives voicemail length in milliseconds (a 16 s message comes back as 16128).
+function vmSeconds(d) { const n = Number(d) || 0; return Math.round(n >= 1000 ? n / 1000 : n); }
+// Mark texts/voicemails read in RingRx, the same call RingRx's own website makes when you open one
+// (PATCH /voicemails/<id> with status "read"). Only the read status is sent; nothing else can change.
+async function markRead(pid, ids) {
+  const done = [];
+  for (const id of [...new Set(ids || [])].filter((x) => /^[\w-]{6,64}$/.test(String(x))).slice(0, 50)) {
+    try {
+      const res = await fetch(`${BASE}/voicemails/${encodeURIComponent(id)}`, { method: 'PATCH', signal: AbortSignal.timeout(15000),
+        headers: { Authorization: `Bearer ${await token(pid)}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ voicemail: { status: 'read' } }) });
+      if (res.ok) done.push(id);
+    } catch {}
+  }
+  return done;
+}
+module.exports = { markRead, keepFresh, voicemailAudio, login, sendSms, status, logout, normalize, sendingNumber, alertNumber, me, contacts, messages, calls, RingRxError };

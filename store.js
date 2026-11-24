@@ -117,6 +117,18 @@ const DEFAULT_SETTINGS = {
   templates: DEFAULT_TEMPLATES,
 };
 
+const WELCOME_EMAIL_HTML = `<p>Hello {first},</p>
+<p>Welcome to <b><span style="color:#93c47d">Ruhwell Med!</span></b> We're glad you've chosen us for your care and look forward to meeting you.</p>
+<p>Attached is your <b><u><span style="color:#45818e">New Patient Welcome Packet</span></u></b>, which walks you through everything you need to know before your first appointment.</p>
+<p><b><span style="color:#45818e">Before your visit, please:</span></b></p>
+<ol>
+<li><span style="color:#45818e">Look for an email from RXNT to activate your patient portal.</span></li>
+<li><span style="color:#45818e">Complete your intake and consent forms.</span></li>
+<li><span style="color:#45818e">Upload your photo ID and insurance card through the portal.</span></li>
+</ol>
+<p>Please review the attached packet for additional details about your appointment, telehealth instructions, and office policies.</p>
+<p>If you have any questions or need assistance, feel free to reply to this email or text us at <a href="tel:+19792055460">(979) 205-5460</a>.</p>`;
+const DEFAULT_EMAIL_TEMPLATES = [{ id: 'welcome-email', name: 'Welcome', subject: 'Welcome to Ruhwell Med | Next Steps Before Your Appointment', html: WELCOME_EMAIL_HTML, packet: true }];
 module.exports = {
   dataDir: dir,
   settings: {
@@ -128,6 +140,11 @@ module.exports = {
       return out;
     },
     set: (s) => writePlain('settings.json', s),
+  },
+  // Email templates (HTML). The Welcome one matches the practice's Gmail welcome email.
+  emailTemplates: {
+    get: () => { const t = readSecure('email-templates.bin', null); return Array.isArray(t) && t.length ? t : DEFAULT_EMAIL_TEMPLATES; },
+    set: (v) => writeSecure('email-templates.bin', (v || []).slice(0, 50).map((t) => ({ id: String(t.id || ''), name: String(t.name || '').slice(0, 60), subject: String(t.subject || '').slice(0, 200), html: String(t.html || '').slice(0, 100000), packet: !!t.packet }))),
   },
   ringrx: {
     get: (pid) => readSecure(`ringrx-${pid}.bin`, null),

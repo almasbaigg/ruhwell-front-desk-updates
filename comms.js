@@ -29,9 +29,9 @@ function attachVoicemails(list, vms) {
     const closerForVm = cands.some((y) => y.v === x.v && y.c !== x.c && !usedC.has(y.c.id) && y.d < x.d);
     if (closerForCall || closerForVm) continue;
     usedV.add(x.v.id); usedC.add(x.c.id);
-    Object.assign(x.c, { voicemail: true, missed: true, transcription: x.v.transcription, vmId: x.v.id, media: x.v.media, vmSecs: x.v.secs || 0, vmAt: x.v.at });
+    Object.assign(x.c, { voicemail: true, missed: true, transcription: x.v.transcription, vmId: x.v.id, media: x.v.media, vmSecs: x.v.secs || 0, vmAt: x.v.at, vmUnread: x.v.unread !== false });
   }
-  for (const v of vms) if (!usedV.has(v.id)) list.push({ id: 'vm-' + v.id, inbound: true, phone: v.phone, at: v.at, secs: 0, answered: false, voicemail: true, missed: true, transcription: v.transcription, vmId: v.id, media: v.media, vmSecs: v.secs || 0, vmAt: v.at });
+  for (const v of vms) if (!usedV.has(v.id)) list.push({ id: 'vm-' + v.id, inbound: true, phone: v.phone, at: v.at, secs: 0, answered: false, voicemail: true, missed: true, transcription: v.transcription, vmId: v.id, media: v.media, vmSecs: v.secs || 0, vmAt: v.at, vmUnread: v.unread !== false });
   for (const c of list) if (c.toMailbox && !c.voicemail) c.noMessage = true;   // went to voicemail, no message left
   return list;
 }
@@ -57,7 +57,7 @@ async function sync(pid) {
     if (calls === null) { ok = false; store.calls.set({ ...prevCalls, error: 'unavailable', failedAt: new Date().toISOString() }); }
     else {
       const list = calls.filter(keep);
-      const vms = msgs === null ? (prevCalls.vms || []) : (msgs || []).filter((m) => m.kind === 'voicemail' && keep(m)).map((m) => ({ id: m.id, phone: m.phone, at: m.at, transcription: m.transcription || '', media: m.media || '', secs: m.secs || 0 }));
+      const vms = msgs === null ? (prevCalls.vms || []) : (msgs || []).filter((m) => m.kind === 'voicemail' && keep(m)).map((m) => ({ id: m.id, phone: m.phone, at: m.at, transcription: m.transcription || '', media: m.media || '', secs: m.secs || 0, unread: !!m.unread }));
       attachVoicemails(list, vms);
       store.calls.set({ items: list, vms, at: new Date().toISOString(), error: null, v: 2 });
     }
@@ -129,7 +129,7 @@ function textThreads(days = 30) {
     const answer = lastIn && last.inbound ? answerOf(lastIn, list, done['t:' + phone]) : lastIn ? answerOf(lastIn, list, done['t:' + phone]) : null;
     out.push({ phone, who: w, spam, answer, last: { inbound: last.inbound, at: last.at, body: last.body },
       lastIn: lastIn ? { at: lastIn.at, body: lastIn.body } : null,
-      lastSent: lastOut ? { at: lastOut.at, body: lastOut.body } : null, needs: open.length && !w.dnt && !skip.has(phone) && !spam ? 'reply' : null, ignored: skip.has(phone), needsAt: open.length ? open[open.length - 1].at : null, unread: spam ? 0 : list.filter((e) => e.inbound && new Date(e.at) > (seen[phone] || 0)).length, readAt: seen[phone] || null, count: list.length });
+      lastSent: lastOut ? { at: lastOut.at, body: lastOut.body } : null, needs: open.length && !w.dnt && !skip.has(phone) && !spam ? 'reply' : null, ignored: skip.has(phone), needsAt: open.length ? open[open.length - 1].at : null, unread: spam ? 0 : list.filter((e) => e.inbound && e.unread !== false && new Date(e.at) > (seen[phone] || 0)).length, readAt: seen[phone] || null, count: list.length });
   }
   return out.sort((a, b) => new Date(b.last.at) - new Date(a.last.at));
 }
@@ -149,7 +149,7 @@ function callList(days = 30) {
       if (!answered) { due = true; dueSeen.add(c.phone); }
     }
     const answer = c.inbound && (c.missed || c.voicemail) ? answerOf(c, all, done['c:' + c.phone]) : null;
-    return { ...c, who: w, due, spam, answer, heardAt: c.voicemail ? heard[c.id] || null : null };
+    return { ...c, who: w, due, spam, answer, heardAt: c.voicemail ? heard[c.id] || (c.vmUnread === false ? 'ringrx' : null) : null };
   });
 }
 
@@ -186,6 +186,13 @@ function answerOf(e, all, handledAt) {
   return null;
 }
 // Read marks: opening a conversation clears its dot (it can still need a reply).
+// RingRx ids still marked new, so reading in the app can mark them read in RingRx too.
+function unreadRingrxTexts(phone) { return (store.ringrxHistory.get().items || []).filter((m) => m.inbound && m.unread && m.phone === phone).map((m) => m.id); }
+function setRingrxRead(ids) {
+  const set = new Set(ids); if (!set.size) return;
+  const h = store.ringrxHistory.get(); h.items = (h.items || []).map((m) => (set.has(m.id) ? { ...m, unread: false } : m)); store.ringrxHistory.set(h);
+  const c = store.calls.get(); c.vms = (c.vms || []).map((v) => (set.has(v.id) ? { ...v, unread: false } : v)); c.items = (c.items || []).map((x) => (set.has(x.vmId) ? { ...x, vmUnread: false } : x)); store.calls.set(c);
+}
 function markSeen(phone) { const c = store.callbacks.get(); c.seen = { ...(c.seen || {}), [phone]: Date.now() }; store.callbacks.set(c); }
 // True when an item was marked done after the given time (used for RxNT portal conversations too).
 // Undo a "done" (the last few seconds' click): forget when it was marked.
@@ -243,4 +250,4 @@ function handleReplies(fresh, addEvents) {
 
 const status = () => { const h = store.ringrxHistory.get(), c = store.calls.get(); return { running, at: h.at, error: h.error || c.error, texts: (h.items || []).length, calls: (c.items || []).length }; };
 
-module.exports = { attachVoicemails, markSpam, spamList, spamCleanup, spamMap, markHeard, unmarkHeard, unmarkSeen, answerOf, unmarkDone, optedOut, clearOptOut, sync, textThreads, callList, thread, markDone, doneSince, markSeen, snooze, snoozes, ignore, counts, handleReplies, status, events, directory, d10 };
+module.exports = { unreadRingrxTexts, setRingrxRead, attachVoicemails, markSpam, spamList, spamCleanup, spamMap, markHeard, unmarkHeard, unmarkSeen, answerOf, unmarkDone, optedOut, clearOptOut, sync, textThreads, callList, thread, markDone, doneSince, markSeen, snooze, snoozes, ignore, counts, handleReplies, status, events, directory, d10 };

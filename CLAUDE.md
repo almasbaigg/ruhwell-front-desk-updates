@@ -5,7 +5,9 @@ MacBook; Almas Baig MD develops and tests it on Windows. It reads RxNT (schedule
 RingRx (texts and calls) and Gmail, and puts the day's work in one calm, color-coded place.
 
 ## Rules that never change
-- **Patient data stays on the computer.** Nothing patient-related is sent anywhere except texts the user sends on purpose.
+- **Patient data stays on the computer.** Nothing patient-related is sent anywhere except texts and emails the user sends on purpose.
+- **Patient email only from hello@ruhwellmed.com.** The app checks Gmail lists it as a verified Send-as address and refuses to send otherwise (never falls back to admin@).
+- **Sending hours.** Texts/emails to patients go out only in Settings → Sending hours (default 8 AM–8 PM Mon–Sat) unless the user picks "Send now anyway". Scheduled items are never sent twice; one caught mid-send is shown as "Check this one".
 - **RxNT is read-only, with one exception.** The app never writes prescriptions, charts, payments or anything else into RxNT. Every item has "Open in RxNT". The only write allowed (Almas, 2026-11-20): uploading a received fax PDF to a patient's Documents, one at a time, after Maria confirms the patient name and DOB shown from RxNT.
 - **Alert texts never include patient names** (or drug names).
 - **No passwords handled by Claude.** The user signs in to RxNT, RingRx, Gmail and Doximity themselves (the app may save them encrypted, as asked).
@@ -41,6 +43,8 @@ Don't change app code from the Mac build chat. Code changes happen in Almas's ch
 - `store.js`: encrypted, crash-safe saving; data that can't be unlocked is never overwritten.
 - `faxes.js`: Doximity fax inbox (hidden signed-in window, PDFs encrypted on disk). Filing into a chart: `rxnt-reader.findChart` + `uploadToChart` (the only RxNT write; needs Maria's pick + confirmation, then verifies).
 - `activity.js`: 90-day activity log (no names, no secrets). Settings → Records.
+- `gmailapi.js`: Gmail through Google's sign-in (internal OAuth app in Google Cloud project `ruhwell-front-desk`; key .json loaded once per computer in Settings, kept encrypted, never in the repo). Inbox, threads, mark read, archive, send with attachments. `outbox.js`: Send later + sending hours for texts and emails. `renderer/js/emails.js`: Emails view, composer, schedule picker, Scheduled list; `emailsettings.js`: Settings → Email + Sending hours.
+- RingRx read sync: reading in the app PATCHes `/voicemails/<id>` `{voicemail:{status:'read'}}` (what RingRx's site does); RingRx "read" shows as read/listened in the app. RingRx voicemail `duration` is milliseconds.
 - `comms.js`, `ringrx.js`, `gmail.js`: texts, calls (spam list, listened/answered marks, voicemail audio via `/voicemails/<id>/voice_payload`), email. `checklist.js`: checklist (plain-language times, repeats, Top 3) and day-page notes.
 - `renderer/`: one page app. `js/today.js` (home), `js/pad.js` (checklist + notes), `js/rx.js` (RxNT), `js/faxes.js` (Faxes), `js/texts.js`, `js/calls.js`, `js/settings.js`.
 - Tests: `npm test` (must pass before any release).

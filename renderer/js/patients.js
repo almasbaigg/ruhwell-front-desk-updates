@@ -47,6 +47,7 @@ function renderCompose() {
     <div class="field-grid">
       <label class="field"><span>Phone${p.phoneSource ? ' · ' + esc(p.phoneSource === 'Typed' ? 'edited in app' : p.phoneSource) : ''}</span><input id="c-phone" value="${esc(fmtPhone(p.phone))}" placeholder="No phone in RxNT"></label>
       <label class="field"><span>Texts go to</span><select id="c-to"><option value="patient">Patient</option><option value="parent" ${p.contactType === 'parent' ? 'selected' : ''}>Parent / guardian</option></select></label>
+      <label class="field" style="grid-column:1/-1"><span>Email${p.emailTyped ? ' · edited in app' : p.email ? ' · from RxNT' : ''}</span><div class="row-gap"><input id="c-email" value="${esc(p.emailTyped || p.email || '')}" placeholder="No email in RxNT" style="flex:1"><button class="btn small" id="c-mail" ${p.emailTyped || p.email ? '' : 'disabled'}>${I.mail}Email</button><button class="btn small" id="c-welcome" ${p.emailTyped || p.email ? '' : 'disabled'}>Welcome email</button></div></label>
       ${p.contactType === 'parent' ? `<label class="field" style="grid-column:1/-1"><span>Parent / guardian name${p.contactSource === 'RxNT' ? ' · from RxNT' : ''}</span><input id="c-cname" value="${esc(p.contactName || '')}" placeholder="Used in the greeting"></label>` : ''}
     </div>
     ${p.phoneSource === 'Typed' && p.rxPhone && p.rxPhone !== p.phone ? `<p class="small muted">RxNT has ${esc(fmtPhone(p.rxPhone))} · <button class="link-btn" id="c-revert">Use RxNT number</button></p>` : ''}
@@ -55,6 +56,10 @@ function renderCompose() {
     <div id="c-timeline"></div>`;
   paintTimeline(p);
   const save = async (f) => { Object.assign(p, f); await window.api.updatePatient(p.key, f); const i = patients.findIndex((x) => x.key === p.key); if (i >= 0) Object.assign(patients[i], f); };
+  // Email: RxNT's address, unless one is typed here (that one wins and survives RxNT refreshes).
+  $('c-email').onchange = async () => { const v = $('c-email').value.trim(); if (v && !/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(v)) return toast('That email looks off.'); await save({ emailTyped: v && v !== p.email ? v : '' }); renderCompose(); };
+  $('c-mail').onclick = () => emailCompose({ to: (p.emailTyped || p.email || '').trim(), who: { ...p, email: (p.emailTyped || p.email || '').trim() } });
+  $('c-welcome').onclick = () => welcomeEmail(p);
   $('c-dnt').onchange = async (e) => {
     const on = e.target.checked, stop = !on && await window.api.optOutStatus(p.phone);
     if (stop) {   // the number itself said STOP: turning texts back on needs a clear yes from them

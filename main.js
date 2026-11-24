@@ -42,6 +42,15 @@ const faxes = require('./faxes');
 const inapp = require('./inapp');
 const ocr = require('./ocr');
 const gmail = require('./gmail');
+const gapi = require('./gmailapi');
+const outbox = require('./outbox');
+// Email: Google's own sign-in once the key file is loaded (read, reply, send from hello@); before that, the old inbox count.
+const mail = {
+  check: () => (gapi.hasKey() ? gapi.check() : gmail.check()),
+  status: () => (gapi.hasKey() ? gapi.status() : gmail.status()),
+  signIn: async () => (gapi.hasKey() ? !!(await gapi.signIn()).ok : gmail.signIn(win)),
+  signOut: async () => { if (gapi.hasKey()) gapi.signOut(); await mail.signOut(); },
+};
 const checklist = require('./checklist');
 const rxtasks = require('./rxtasks');
 const backups = require('./backups');
@@ -179,12 +188,12 @@ ipcMain.handle('accounts:verify', () => {
 });
 ipcMain.handle('accounts:status', async () => {
   const id = pid();
-  const g = gmail.status().at ? gmail.status() : await gmail.check();
+  const g = mail.status().at ? mail.status() : await mail.check();
   return { profile: id, rxnt: { connected: !!store.settings.get().rxntConnected?.[id] }, ringrx: id ? ringrx.status(id) : { connected: false }, gmail: g };
 });
 // ---------- Gmail, checklist, prescriptions ----------
-ipcMain.handle('gmail:signin', async () => { const ok = await gmail.signIn(win); send('sync', syncStatus()); return ok; });
-ipcMain.handle('gmail:signout', async () => { await gmail.signOut(); send('sync', syncStatus()); return true; });
+ipcMain.handle('gmail:signin', async () => { const ok = await mail.signIn(); send('sync', syncStatus()); return ok; });
+ipcMain.handle('gmail:signout', async () => { await mail.signOut(); send('sync', syncStatus()); return true; });
 ipcMain.handle('gmail:open', (_e, id) => shell.openExternal(gmail.url(id)));
 ipcMain.handle('checklist:list', () => checklist.list(pid()));
 ipcMain.handle('checklist:add', (_e, t, opts) => checklist.add(pid(), t, opts || {}));
@@ -193,7 +202,7 @@ ipcMain.handle('checklist:star', (_e, id) => checklist.star(pid(), id));
 ipcMain.handle('checklist:due', (_e, id, due) => checklist.setDue(pid(), id, due));
 ipcMain.handle('checklist:reorder', (_e, ids) => checklist.reorder(pid(), ids));
 ipcMain.handle('checklist:parse', (_e, t) => checklist.parse(t));
-ipcMain.handle('gmail:check', async () => { const g = await gmail.check(); send('sync', syncStatus()); return g; });
+ipcMain.handle('gmail:check', async () => { const g = await mail.check(); send('sync', syncStatus()); return g; });
 ipcMain.handle('notes:get', (_e, day) => checklist.notes.get(pid(), day || checklist.dayKey()));
 ipcMain.handle('notes:set', (_e, day, text) => checklist.notes.set(pid(), day, text));
 ipcMain.handle('notes:pin', (_e, day, on) => checklist.notes.pin(pid(), day, on));
@@ -305,7 +314,7 @@ async function loadDayNow(date, priority) {
     dayCache[date] = { ...r, at: Date.now() };
     store.patients.upsert(r.items.filter((i) => i.patientId).map((i) => ({
       patientId: i.patientId, chart: i.chart, first: i.first, last: i.last, dob: i.dob, age: i.age,
-      cell: i.cell, home: i.home, preferred: i.preferred, visitAt: i.start, visitType: i.visitType,
+      cell: i.cell, home: i.home, preferred: i.preferred, email: i.email, visitAt: i.start, visitType: i.visitType,
     })));
     store.syncState.set({ schedule: { at: new Date().toISOString() } });
     send('day', { date, ...dayCache[date] }); send('sync', syncStatus());
@@ -398,7 +407,12 @@ ipcMain.handle('comms:sync', () => syncComms(true));
 ipcMain.handle('comms:texts', (_e, days) => comms.textThreads(days || 30));
 ipcMain.handle('comms:calls', (_e, days) => comms.callList(days || 30));
 ipcMain.handle('comms:thread', (_e, phone) => comms.thread(phone));
-ipcMain.handle('comms:seen', (_e, phone) => { comms.markSeen(String(phone || '').replace(/\D/g, '').slice(-10)); send('sync', syncStatus()); return true; });
+ipcMain.handle('comms:seen', (_e, phone) => { const ph = String(phone || '').replace(/\D/g, '').slice(-10); comms.markSeen(ph); send('sync', syncStatus()); ringrxRead(comms.unreadRingrxTexts(ph)); return true; });
+// Read in the app → read in RingRx (in the background; if RingRx refuses, the app still shows it read).
+function ringrxRead(ids) {
+  const id = pid(); if (!id || !ids || !ids.length) return;
+  ringrx.markRead(id, ids).then((done) => { if (done.length) { comms.setRingrxRead(done); send('sync', syncStatus()); } if (done.length < ids.length) activity.add('RingRx', 'mark-read', { failed: ids.length - done.length }, false); }).catch(() => {});
+}
 // RxNT portal messages (sidebar chat): read-only, alert on new patient messages.
 let portal = { at: null, error: null, me: null, conversations: [] };
 async function refreshPortal() {
@@ -452,6 +466,19 @@ ipcMain.handle('fax:sort', async (_e, id, pages) => {
   } catch (e) { faxes.setMeta(String(id), { ocrAt: new Date().toISOString(), ocrError: String(e.message || e).slice(0, 80), category: 'Unreadable' }); return null; }
 });
 ipcMain.handle('fax:pdf', (_e, id) => faxes.pdf(String(id)));
+// Save a copy of a fax wherever Maria picks (the app's own copy stays encrypted). Logged for bookkeeping.
+ipcMain.handle('fax:save', async (_e, id) => {
+  const f = faxes.pdf(String(id)); if (!f) return { error: 'notdownloaded' };
+  const it = (faxes.list ? faxes.list() : []).find((x) => x.id === String(id)) || {};
+  const day = it.at ? new Date(it.at).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
+  const ext = f.mime === 'application/pdf' ? 'pdf' : 'tif';
+  const name = `Fax ${day} ${String(it.from || it.number || '').replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 40)}`.trim() + '.' + ext;
+  const r = await dialog.showSaveDialog(win, { defaultPath: path.join(app.getPath('downloads'), name), filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
+  if (r.canceled || !r.filePath) return { canceled: true };
+  fs.writeFileSync(r.filePath, Buffer.from(f.data, 'base64'));
+  activity.add('Doximity', 'fax-saved', { fax: String(id).slice(0, 12) }, true);
+  return { ok: true, path: r.filePath };
+});
 ipcMain.handle('fax:mark', (_e, id, st) => { if (!['new', 'notpatient', 'spam'].includes(st)) return false; const f = faxes.update(String(id), { status: st, doneAt: new Date().toISOString() }); activity.add('Doximity', 'fax-marked', { fax: String(id).slice(0, 12), as: st }); send('sync', syncStatus()); return !!f; });
 ipcMain.handle('fax:signin', async () => {
   const ok = await faxes.signIn(win);
@@ -535,7 +562,7 @@ ipcMain.handle('comms:vmAudio', async (_e, vmId, media) => {
 });
 ipcMain.handle('comms:vmPlayFailed', (_e, why) => { activity.add('RingRx', 'voicemail-play', { reason: 'player: ' + String(why || '').slice(0, 80) }, false); return true; });
 ipcMain.handle('comms:spamReview', () => { const c = store.callbacks.get(), r = c.spamReview || []; if (r.length) { c.spamReview = []; store.callbacks.set(c); } return r; });
-ipcMain.handle('comms:heard', (_e, id, on) => { on === false ? comms.unmarkHeard(String(id)) : comms.markHeard(String(id)); send('sync', syncStatus()); return true; });
+ipcMain.handle('comms:heard', (_e, id, on, vmId) => { on === false ? comms.unmarkHeard(String(id)) : comms.markHeard(String(id)); send('sync', syncStatus()); if (on !== false && vmId) ringrxRead([String(vmId)]); return true; });
 ipcMain.handle('comms:unseen', (_e, phone) => { comms.unmarkSeen(ph10(phone)); send('sync', syncStatus()); return true; });
 ipcMain.handle('activity:list', (_e, f) => activity.list(f || {}));
 ipcMain.handle('activity:export', async (_e, f) => {
@@ -571,7 +598,8 @@ function syncStatus() {
     patients: { ...(st.patients || {}), total: all.length, noPhone: all.filter((p) => !p.phone).length, running: patientSync.running, progress: patientSync.progress },
     schedule: st.schedule || null,
     alerts: watcher.status(),
-    gmail: gmail.status(),
+    gmail: mail.status(),
+    outbox: outbox.pending(),
     rx: rxtasks.status(),
     needs: (() => { try { return comms.counts(); } catch { return { texts: 0, calls: 0 }; } })(),
     messages: comms.status(),
@@ -645,7 +673,7 @@ const RUN = {
   schedule: () => watcher.check(),
   comms: () => syncComms(true),
   portal: () => refreshPortal(),
-  gmail: () => gmail.check().then(() => send('sync', syncStatus())),
+  gmail: () => mail.check().then(() => send('sync', syncStatus())),
   rx: () => refreshRx(),
   patients: () => syncPatientsNow(),
   faxes: () => syncFaxes(),
@@ -657,7 +685,7 @@ const lastOk = {}, fails = {}, syncRunning = {};
 const worked = (k, r) => {
   if (r === false || (r && (r.error || r.needsLogin))) return false;
   if (k === 'rx') return rxtasks.list().available !== false;
-  if (k === 'gmail') return !gmail.status().error;
+  if (k === 'gmail') return !mail.status().error;
   return true;
 };
 function syncDue(maxAgeMin) {
@@ -685,7 +713,7 @@ function partReason(k) {
   const id = pid();
   if (SOURCE_OF[k] === 'RxNT' && !store.settings.get().rxntConnected?.[id]) return 'sign-in needed';
   if (k === 'comms' && !(id && ringrx.status(id).connected)) return 'sign-in needed';
-  if (k === 'gmail' && gmail.status().error === 'signin') return 'sign-in needed';
+  if (k === 'gmail' && mail.status().error === 'signin') return 'sign-in needed';
   if (k === 'faxes' && faxes.status().error === 'signin') return 'sign-in needed';
   if (k === 'faxes' && faxes.status().error === 'code') return 'needs a code';
   if (!net.isOnline()) return 'no internet';
@@ -719,7 +747,7 @@ function accountHealth() {
     const fresh = now - last < staleMs;
     return { level: fresh && !failing ? 'green' : 'amber', why: failing ? "couldn't load" : fresh ? '' : 'not checked lately', at: new Date(last).toISOString() };
   };
-  const g = gmail.status(), fx = faxes.status();
+  const g = mail.status(), fx = faxes.status();
   return {
     rxnt: lvl(['schedule', 'rx'], !!store.settings.get().rxntConnected?.[id]),
     ringrx: lvl(['comms'], !!(id && ringrx.status(id).connected)),
@@ -974,11 +1002,103 @@ setInterval(() => { try { backups.autoDaily(); activity.prune(); } catch {} }, 6
 // Each confirmed send carries an operation id; a second request with the same id gets the first result
 // instead of sending again (double clicks, retries). A deliberately new message gets a new id.
 const sendOps = new Map();
+/* ---------- Email (Gmail through Google's sign-in) and the outbox (send later / quiet hours) ---------- */
+ipcMain.handle('email:loadKey', async () => {
+  const r = await dialog.showOpenDialog(win, { title: 'Pick the Google key file (.json)', properties: ['openFile'], filters: [{ name: 'Google key file', extensions: ['json'] }] });
+  if (r.canceled || !r.filePaths[0]) return { canceled: true };
+  const out = gapi.loadKeyFile(fs.readFileSync(r.filePaths[0], 'utf8'));
+  activity.add('Gmail', 'key-loaded', {}, !!out.ok); send('sync', syncStatus());
+  return out;
+});
+ipcMain.handle('email:connect', async () => { const r = await gapi.signIn(); activity.add('Gmail', 'sign-in', {}, !!r.ok); send('sync', syncStatus()); return r; });
+ipcMain.handle('email:status', () => gapi.status());
+const mailErr = (e) => ({ error: e.message, code: e.code });
+ipcMain.handle('email:list', async (_e, o) => { try { return await gapi.list(o || {}); } catch (e) { return mailErr(e); } });
+ipcMain.handle('email:thread', async (_e, id) => { try { return await gapi.thread(String(id)); } catch (e) { return mailErr(e); } });
+ipcMain.handle('email:read', async (_e, id, read) => { try { await gapi.markRead(String(id), read !== false); mail.check().then(() => send('sync', syncStatus())); return true; } catch (e) { return mailErr(e); } });
+ipcMain.handle('email:archive', async (_e, id, undo) => { try { await (undo ? gapi.unarchive(String(id)) : gapi.archive(String(id))); return true; } catch (e) { return mailErr(e); } });
+ipcMain.handle('email:saveAttachment', async (_e, msgId, att) => {
+  try {
+    const b64 = await gapi.attachment(String(msgId), String(att.id));
+    const r = await dialog.showSaveDialog(win, { defaultPath: path.join(app.getPath('downloads'), String(att.name || 'attachment').replace(/[\\/:*?"<>|]+/g, ' ')) });
+    if (r.canceled || !r.filePath) return { canceled: true };
+    fs.writeFileSync(r.filePath, Buffer.from(b64, 'base64')); return { ok: true, path: r.filePath };
+  } catch (e) { return mailErr(e); }
+});
+ipcMain.handle('email:pickFiles', async () => {
+  const r = await dialog.showOpenDialog(win, { title: 'Attach files', properties: ['openFile', 'multiSelections'] });
+  if (r.canceled) return [];
+  const MIME = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', txt: 'text/plain', csv: 'text/csv', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
+  return r.filePaths.map((f) => { const b = fs.readFileSync(f); return { name: path.basename(f), size: b.length, mime: MIME[path.extname(f).slice(1).toLowerCase()] || 'application/octet-stream', b64: b.toString('base64') }; });
+});
+// The welcome packet: the bundled PDF until a newer one is chosen in Settings.
+const PACKET = 'welcome-packet.bin';
+function packet() {
+  const own = store.raw.readSecure(PACKET, null);
+  if (own && own.b64) return { name: own.name, b64: own.b64, mime: 'application/pdf', custom: true, at: own.at };
+  const b = fs.readFileSync(path.join(__dirname, 'assets', 'welcome-packet.pdf'));
+  return { name: 'Ruhwell Med - New Patient Welcome Packet.pdf', b64: b.toString('base64'), mime: 'application/pdf', custom: false };
+}
+ipcMain.handle('email:packetInfo', () => { const p = packet(); return { name: p.name, size: Buffer.byteLength(p.b64, 'base64'), custom: p.custom, at: p.at || null }; });
+ipcMain.handle('email:packetReplace', async () => {
+  const r = await dialog.showOpenDialog(win, { title: 'Choose the new welcome packet (PDF)', properties: ['openFile'], filters: [{ name: 'PDF', extensions: ['pdf'] }] });
+  if (r.canceled || !r.filePaths[0]) return { canceled: true };
+  const b = fs.readFileSync(r.filePaths[0]);
+  if (b.slice(0, 4).toString() !== '%PDF') return { error: "That file isn't a PDF." };
+  store.raw.writeSecure(PACKET, { name: path.basename(r.filePaths[0]), b64: b.toString('base64'), at: new Date().toISOString() });
+  return { ok: true };
+});
+ipcMain.handle('email:packetReset', () => { store.raw.writeSecure(PACKET, null); return true; });
+ipcMain.handle('email:packetOpen', () => { const p = packet(); const f = path.join(app.getPath('temp'), 'Ruhwell welcome packet.pdf'); fs.writeFileSync(f, Buffer.from(p.b64, 'base64')); shell.openPath(f); return true; });
+// Email templates (HTML) and the signature.
+ipcMain.handle('email:templates', () => store.emailTemplates.get());
+ipcMain.handle('email:templatesSave', (_e, list) => { store.emailTemplates.set(list); return true; });
+// Outbox
+const outboxEvent = () => { send('outbox', { pending: outbox.pending() }); send('sync', syncStatus()); };
+async function sendEmailNow(p) {
+  const files = [...(p.files || [])];
+  if (p.packet) files.unshift(packet());
+  try {
+    const r = await gapi.send({ to: p.to, cc: p.cc, subject: p.subject, html: p.html, files, threadId: p.threadId, inReplyTo: p.inReplyTo, refs: p.refs });
+    activity.add('Gmail', 'email-sent', { files: files.length, reply: !!p.threadId }, true);
+    if (p.patientKey) store.log.add({ name: p.name || '', phone: p.phone || '', template: p.templateName || 'Email', templateId: p.templateId || null, ok: true, error: '', message: `Email: ${p.subject}`, channel: 'email' });
+    return { ok: true, id: r.id, threadId: r.threadId };
+  } catch (e) { activity.add('Gmail', 'email-sent', { code: e.code || '' }, false); return { ok: false, error: e.message, code: e.code }; }
+}
+ipcMain.handle('outbox:add', async (_e, item) => {
+  if (!item || !['text', 'email'].includes(item.kind)) return { error: 'bad' };
+  if (item.kind === 'text') item.payload = { items: (item.payload.items || []).slice(0, 200) };
+  const it = outbox.add(item);
+  activity.add(item.kind === 'email' ? 'Gmail' : 'RingRx', 'scheduled', { kind: item.kind, at: it.sendAt }, true);
+  // "Now": wait for it, so the window can say Sent or what went wrong.
+  if (new Date(it.sendAt) <= new Date(Date.now() + 1000)) { await outbox.tick(); const done = outbox.list().find((x) => x.id === it.id) || it; return done; }
+  return it;
+});
+ipcMain.handle('outbox:list', () => outbox.list());
+ipcMain.handle('outbox:cancel', (_e, id) => outbox.cancel(String(id)));
+ipcMain.handle('outbox:sendNow', (_e, id) => outbox.sendNow(String(id)));
+ipcMain.handle('outbox:reschedule', (_e, id, when) => outbox.reschedule(String(id), when));
+ipcMain.handle('outbox:dismiss', (_e, id) => outbox.dismiss(String(id)));
+ipcMain.handle('outbox:quiet', () => ({ ...outbox.quiet(), allowedNow: outbox.allowed(), next: outbox.nextAllowed().toISOString() }));
+ipcMain.handle('outbox:nextAllowed', (_e, when) => outbox.nextAllowed(new Date(when || Date.now())).toISOString());
+app.whenReady().then(() => {
+  outbox.start({
+    senders: {
+      text: async (p) => { const res = await sendTexts(p.items || []); const ok = res.filter((r) => r.ok).length; const out = res.find((r) => r.code === 'SIGNED_OUT');
+        return out && !ok ? { ok: false, code: 'SIGNED_OUT', error: 'RingRx sign-in needed' } : { ok: ok === res.length, error: ok === res.length ? '' : `${ok} of ${res.length} sent`, partial: ok < res.length ? res.map((r) => ({ name: r.name, ok: r.ok, error: r.error })) : undefined }; },
+      email: (p) => sendEmailNow(p),
+    },
+    onChange: () => { try { outboxEvent(); } catch {} },
+  });
+  powerMonitor.on('resume', () => setTimeout(() => outbox.tick().catch(() => {}), 8000));
+});
+
 ipcMain.handle('send:batch', async (e, items, opId) => {
   if (opId) { if (sendOps.has(opId)) return sendOps.get(opId); const p = sendBatch(e, items); sendOps.set(opId, p); setTimeout(() => sendOps.delete(opId), 10 * 60000); return p; }
   return sendBatch(e, items);
 });
-async function sendBatch(e, items) {
+const sendBatch = (e, items) => sendTexts(items, (d) => { try { e.sender.send('send:progress', d); } catch {} });
+async function sendTexts(items, progress = () => {}) {
   const id = pid();
   // Blocked numbers, read fresh before every single text (a STOP can arrive mid-batch): anyone marked
   // do-not-text (main or extra numbers) and every number that replied STOP. All compared as 10 digits.
@@ -1002,7 +1122,7 @@ async function sendBatch(e, items) {
     }
     store.log.add({ name: it.name, phone: it.phone, template: it.templateName, templateId: it.templateId, apptId: it.apptId || null, ok: res.ok, error: res.error || '', message: it.message });
     results.push(res);
-    e.sender.send('send:progress', { done: i + 1, total: items.length, last: res });
+    progress({ done: i + 1, total: items.length, last: res });
     if (res.code === 'SIGNED_OUT') break;
     if (i < items.length - 1) await new Promise((r) => setTimeout(r, 1500));
   }

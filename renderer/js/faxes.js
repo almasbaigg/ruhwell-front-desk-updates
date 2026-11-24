@@ -111,12 +111,13 @@ async function openFax(id, keep) {
   $('fx-pane').innerHTML = `
     <div class="convo-head"><span class="avatar unk"><svg viewBox="0 0 24 24"><path d="M7 9V4h10v5"/><rect x="3" y="9" width="18" height="9" rx="2"/><path d="M7 14h10v6H7z"/></svg></span>
       <div><h2>${esc(fxFrom(f))}</h2><p class="muted small">${esc(f.number || '')}${f.pages ? ` · ${f.pages} page${f.pages > 1 ? 's' : ''}` : ''} · received ${esc(fxWhen(f.at, f))}</p></div>
-      <div class="row-gap"><button class="btn small" id="fx-dox2">Open in Doximity</button>${done ? (f.status !== 'filed' ? '<button class="btn small" id="fx-back">Move back to To file</button>' : '') : '<button class="btn small" id="fx-np">Not patient-related</button><button class="btn small" id="fx-spam">Spam</button>'}</div></div>
+      <div class="row-gap">${!['pending', 'failed'].includes(f.download) ? '<button class="btn small" id="fx-save">Download</button>' : ''}<button class="btn small" id="fx-dox2">Open in Doximity</button>${done ? (f.status !== 'filed' ? '<button class="btn small" id="fx-back">Move back to To file</button>' : '') : '<button class="btn small" id="fx-np">Not patient-related</button><button class="btn small" id="fx-spam">Spam</button>'}</div></div>
     <div class="fx-body"><div class="fx-prev">${prev}</div><div class="fx-side" id="fx-side"></div></div>`;
   drawPages(seq);
   if ($('fx-zo')) { const cur = () => (fxView.zoom === 'fit' ? (parseInt($('fx-zv').textContent, 10) || 100) / 100 : fxView.zoom);
     $('fx-zo').onclick = () => { fxView.zoom = Math.max(0.4, cur() - 0.15); drawPages(++fxSeq); }; $('fx-zi').onclick = () => { fxView.zoom = Math.min(3, cur() + 0.15); drawPages(++fxSeq); }; $('fx-fit').onclick = () => { fxView.zoom = 'fit'; drawPages(++fxSeq); }; $('fx-rot').onclick = () => { fxView.rot = (fxView.rot + 90) % 360; drawPages(++fxSeq); }; }
   if ($('fx-retry-dl')) $('fx-retry-dl').onclick = async () => { $('fx-retry-dl').disabled = true; const ok = await window.api.faxRetry(f.id); toast(ok ? 'Downloaded' : "Still couldn't download it. Open it in Doximity."); loadFaxes(); };
+  if ($('fx-save')) $('fx-save').onclick = async () => { const r = await window.api.faxSave(f.id); if (r && r.ok) toast('Saved to ' + r.path.split(/[\\/]/).pop()); else if (r && r.error) toast("This fax isn't downloaded yet."); };
   const dox = () => window.api.faxOpen(f.id);
   if ($('fx-dox')) $('fx-dox').onclick = dox; $('fx-dox2').onclick = dox;
   const mark = async (st, msg) => { await window.api.faxMark(f.id, st); toast(msg, async () => { await window.api.faxMark(f.id, 'new'); loadFaxes(); }); fxOpen = null; loadFaxes(); };

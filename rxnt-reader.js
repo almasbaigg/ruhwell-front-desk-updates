@@ -74,6 +74,7 @@ function readSchedule(target, view) {
         last: (parts[0] || '').trim(), first: (parts.slice(1).join(',') || '').trim(),
         age: ageFrom(per.DOB || pi.DOB),
         cell: pi.CellPhone || '', home: pi.HomePhone || '', preferred: pi.PreferedNumber || '',
+        email: Object.entries({ ...per, ...pi }).map(([k, v]) => (/^e-?mail(address)?$/i.test(k) && typeof v === 'string' && v.includes('@') ? v.trim() : '')).find(Boolean) || '',
         statusCode: st.Code || '', statusText: st.Description || '',
         start, end: local(e.EndDateTime || e.End),
         visitType: (A.CompanyAppointmentTemplate || {}).Name || '',
@@ -245,6 +246,7 @@ function readDash(expectChart) {
     patientId: p.PatientId, chart, first, last, age: typeof per.Age === 'number' && per.Age > 0 ? per.Age : null,
     dob: String(pi.DOB || per.DOB || '').replace(/Z$/, '').slice(0, 10),
     cell: pi.CellPhone || '', home: pi.HomePhone || '', preferred: pi.PreferedNumber || '',
+    email: Object.entries({ ...per, ...pi }).map(([k, v]) => (/^e-?mail(address)?$/i.test(k) && typeof v === 'string' && v.includes('@') ? v.trim() : '')).find(Boolean) || '',
   } };
 }
 // Runs a function inside the RxNT page. Arguments are written out as code, so an empty (undefined) one must be

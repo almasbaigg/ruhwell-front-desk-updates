@@ -80,14 +80,14 @@ function go(v) {
   document.querySelectorAll('.view').forEach((x) => x.classList.toggle('hidden', x.id !== 'view-' + v));
   $('actionbar').style.display = v === 'visits' ? '' : 'none';
   $('content').scrollTop = 0;
-  ({ today: loadToday, visits: () => loadDay(currentDate), calendar: () => loadWeek(weekStart || mondayOf(currentDate)), patients: () => loadPatients(), texts: loadTexts, calls: loadCalls, rx: loadRx, faxes: loadFaxes, settings: loadSettings }[v] || (() => {}))();
+  ({ today: loadToday, visits: () => loadDay(currentDate), calendar: () => loadWeek(weekStart || mondayOf(currentDate)), patients: () => loadPatients(), texts: loadTexts, emails: () => loadEmails(), calls: loadCalls, rx: loadRx, faxes: loadFaxes, settings: loadSettings }[v] || (() => {}))();
 }
 window.api.onNav((v) => go(v));
 window.api.onNavDate((d) => { go('visits'); loadDay(d); });
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
     e.preventDefault();
-    const box = { texts: 'tx-search', calls: 'ca-search' }[view];
+    const box = { texts: 'tx-search', calls: 'ca-search', emails: 'em-search' }[view];
     if (box) $(box).focus(); else { if (view !== 'patients') go('patients'); setTimeout(() => $('p-search').focus(), 30); }
   }
   if (e.key === 'Escape') { hidePopover(); if (!$('overlay').classList.contains('hidden') && !modalLocked()) closeModal(); }
@@ -99,7 +99,8 @@ function navBadge(id, n) { $(id).textContent = n || ''; $(id).classList.toggle('
 function paintSync(st) {
   if (st) lastSync = st; st = lastSync; if (!st) return;
   const N = st.needs || {};
-  navBadge('nb-texts', N.texts); navBadge('nb-calls', N.calls); navBadge('nb-rx', ((st.rx || {}).count || 0) + ((st.rx || {}).work || 0)); navBadge('nb-faxes', (st.faxes || {}).count || 0);
+  navBadge('nb-texts', N.texts); navBadge('nb-calls', N.calls); navBadge('nb-rx', ((st.rx || {}).count || 0) + ((st.rx || {}).work || 0)); navBadge('nb-faxes', (st.faxes || {}).count || 0); navBadge('nb-emails', st.gmail && st.gmail.connected && st.gmail.hasKey ? st.gmail.unread || 0 : 0);
+  document.querySelectorAll('.sched-count').forEach((b) => { b.textContent = st.outbox ? `Scheduled (${st.outbox})` : 'Scheduled'; });
   window.__lastSync = st;
   const G = st.gmail || {}, P = st.patients || {};
   // The one line: green when all is well, otherwise the first thing that needs you.

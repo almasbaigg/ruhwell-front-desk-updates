@@ -9,6 +9,7 @@ function messageModal(src, preset) {
     openModal(`<div class="compose-top"><div class="avatar">${esc(initials(p))}</div><div><h2>${esc(fullName(p))}</h2><p class="muted small">${esc(fmtPhone(p.phone) || 'No phone')}${p.start ? ' · ' + esc(fmtDateShort(p.start)) + ', ' + esc(fmtTime(p.start)) : ''}${p.cat ? ' · ' + esc(CAT[p.cat]) : ''}</p></div></div>
       <div class="meta">${phoneBadge(p, p.rec)}${minorBadge(p, p.rec, false)}</div>
       <div id="mm-comp">${composerHTML(p)}</div>
+      ${welcomeRow(p)}
       <div class="actions"><span class="from-chip">${sendFrom ? `${I.phone}From ${esc(fmtPhone(sendFrom))}` : ''}</span><span style="flex:1"></span><button class="btn" id="mm-cancel">Cancel</button><button class="btn primary" id="mm-send">${I.send}Send</button></div>`);
     const rebind = () => { $('mm-comp').innerHTML = composerHTML(p); bindComposer($('mm-comp'), p, rebind); };
     bindComposer($('mm-comp'), p, rebind);
@@ -16,7 +17,9 @@ function messageModal(src, preset) {
     $('mm-send').onclick = () => {
       if (digits(p.phone).length !== 10) return toast('No valid phone number.');
       if (!finalMessage(p)) return toast('Write a message first.');
-      confirmAndSend([itemFor(p)], () => { if (view === 'visits') refreshAlready(); });
+      const it = itemFor(p);
+      if ($('mm-wemail') && $('mm-wemail').checked) it.welcomeEmail = { to: emailOf(p), who: { key: (p.rec || {}).key || '', first: (p.rec || p).first || p.first, last: (p.rec || p).last || p.last, phone: p.phone } };
+      confirmAndSend([it], () => { if (view === 'visits') refreshAlready(); });
     };
     setTimeout(() => $('mm-comp').querySelector('textarea')?.focus(), 50);
   };
@@ -26,21 +29,49 @@ function messageModal(src, preset) {
   } else show();
 }
 
+// Welcome texts can also email the welcome packet (from hello@ruhwellmed.com) when RxNT has the patient's email.
+const emailOf = (p) => { const r = p.rec || recordFor(p) || {}; return String(r.emailTyped || r.email || p.email || '').trim(); };
+function welcomeRow(p) {
+  if (!/welcome/i.test(p.templateId || '') && !/welcome/i.test(String(p.text || '').slice(0, 60))) return '';
+  const e = emailOf(p), ok = lastSync && lastSync.gmail && lastSync.gmail.connected && lastSync.gmail.hasKey;
+  if (!e) return `<p class="muted small welcome-row">${I.mail}No email for this patient in RxNT, so only the text will go.</p>`;
+  if (!ok) return `<p class="muted small welcome-row">${I.mail}Connect Gmail in Settings to also email the welcome packet.</p>`;
+  return `<label class="welcome-row on">${I.mail}<input type="checkbox" id="mm-wemail" checked><span>Also email the <b>welcome packet</b> to ${esc(e)}</span></label>`;
+}
+async function queueWelcomeEmail(we, when, respectQuiet) {
+  const tpls = await window.api.emailTemplates(), t = tpls.find((x) => x.id === 'welcome-email') || tpls.find((x) => /welcome/i.test(x.name));
+  if (!t || !we.to) return null;
+  const sig = settings.emailSignature || '';
+  const html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222">${cleanHtml(fillEmail(t.html, we.who) + (sig ? `<div><br>${sig}</div>` : ''))}</div>`;
+  const name = `${we.who.first || ''} ${we.who.last || ''}`.trim();
+  return window.api.outboxAdd({ kind: 'email', label: t.subject, to: name ? `${name} <${we.to}>` : we.to, sendAt: when ? new Date(when).toISOString() : undefined, respectQuiet,
+    payload: { to: we.to, subject: t.subject, html, files: [], packet: !!t.packet, patientKey: we.who.key || '', name, phone: we.who.phone || '', templateId: t.id, templateName: t.name } });
+}
+// Texts later: one outbox entry for the whole batch.
+async function scheduleTexts(items, when, respectQuiet = true) {
+  const clean = items.map(({ warn, blocked, welcomeEmail, ...x }) => x);
+  const r = await window.api.outboxAdd({ kind: 'text', label: [...new Set(items.map((i) => i.templateName))].join(', ') || 'Text', to: items.length === 1 ? items[0].name : `${items.length} patients`, payload: { items: clean }, sendAt: new Date(when).toISOString(), respectQuiet });
+  for (const i of items) if (i.welcomeEmail) await queueWelcomeEmail(i.welcomeEmail, when, respectQuiet);
+  return r;
+}
+
 /* ---------- Confirm → countdown ring → live progress → summary ---------- */
 const RING_C = 2 * Math.PI * 40;
 const ring = (offset, inner, cls = '', style = '') => `<div class="ring-wrap"><div class="ring ${cls}"><svg viewBox="0 0 92 92"><circle class="bg" cx="46" cy="46" r="40"/><circle class="fg" id="m-arc" cx="46" cy="46" r="40" stroke-dasharray="${RING_C}" stroke-dashoffset="${offset}" style="${style}"/></svg><b id="m-count">${inner}</b></div></div>`;
-function confirmAndSend(items, after) {
+async function confirmAndSend(items, after) {
   const blocked = items.find((i) => i.blocked);
   if (blocked) return toast(items.length > 1 ? `${blocked.name}: ${blocked.blocked}` : blocked.blocked);
-  const TOTAL = 5, flagged = items.filter((i) => i.warn.length), single = items.length === 1;
+  const q = await window.api.outboxQuiet();
+  const TOTAL = 5, flagged = items.filter((i) => i.warn.length), single = items.length === 1, quietNow = !q.allowedNow;
   let n = TOTAL, stop = false, t = null;
   openModal(`<div class="send-head"><h2>${single ? esc(items[0].name) : `Send ${items.length} messages`}</h2><button class="icon-btn" id="m-x" aria-label="Cancel">${I.x}</button></div>
     <p class="muted small">${single ? `${esc(fmtPhone(items[0].phone))} · ${esc(items[0].templateName)}` : esc([...new Set(items.map((i) => i.templateName))].join(', '))}${sendFrom ? ` · from ${esc(fmtPhone(sendFrom))}` : ''}</p>
     ${single ? `<div class="bubble">${esc(items[0].message)}</div>` : `<div class="lines">${items.map((i) => `<div class="line"><div><strong>${esc(i.name)}</strong>${i.warn.length ? `<div class="warnline">${esc(i.warn.join(' · '))}</div>` : ''}</div><span class="r">${esc(fmtPhone(i.phone))}</span></div>`).join('')}</div>`}
     ${flagged.length ? `<div class="warnbox">${I.bell}<span>${single ? esc(items[0].warn.join(' · ')) : `Check ${flagged.length === 1 ? 'the flagged patient' : `the ${flagged.length} flagged patients`} before sending.`}</span></div>` : ''}
     ${single ? `<label class="follow-row">${I.bell}<span>Remind me if no reply</span><select id="m-follow"><option value="">Off</option><option value="4">In 4 hours</option><option value="t">Tomorrow 9 AM</option><option value="48">In 2 days</option></select></label>` : ''}
-    <div class="send-foot">${flagged.length ? '<span class="muted small">Waiting for you</span>' : `<div class="ring sm counting"><svg viewBox="0 0 92 92"><circle class="bg" cx="46" cy="46" r="40"/><circle class="fg" id="m-arc" cx="46" cy="46" r="40" stroke-dasharray="${RING_C}" stroke-dashoffset="0"/></svg><b id="m-count">${TOTAL}</b></div><span class="muted small">Sending in <b id="m-sec">${TOTAL}</b> s · nothing sent yet</span>`}
-      <span style="flex:1"></span><button class="btn primary" id="m-now">${I.send}${flagged.length ? 'Send anyway' : 'Send now'}</button></div>`);
+    ${quietNow ? `<div class="warnbox quiet">${I.moon}<span>It's ${esc(fmtTime(new Date()))}, outside sending hours. It will go ${esc(fmtWhen(q.next))} unless you choose <b>Send now anyway</b>.</span></div>` : ''}
+    <div class="send-foot">${quietNow ? `<button class="btn primary" id="m-wait">${I.clock}Send ${esc(fmtWhen(q.next))}</button>` : flagged.length ? '<span class="muted small">Waiting for you</span>' : `<div class="ring sm counting"><svg viewBox="0 0 92 92"><circle class="bg" cx="46" cy="46" r="40"/><circle class="fg" id="m-arc" cx="46" cy="46" r="40" stroke-dasharray="${RING_C}" stroke-dashoffset="0"/></svg><b id="m-count">${TOTAL}</b></div><span class="muted small">Sending in <b id="m-sec">${TOTAL}</b> s · nothing sent yet</span>`}
+      ${quietNow ? '' : '<span style="flex:1"></span>'}<button class="btn" id="m-later">${I.clock}Send later</button><button class="btn ${quietNow ? '' : 'primary'}" id="m-now">${I.send}${quietNow ? 'Send now anyway' : flagged.length ? 'Send anyway' : 'Send now'}</button></div>`);
   const cancel = () => { stop = true; clearInterval(t); closeModal(); toast('Cancelled. Nothing was sent.'); };
   // Choosing a follow-up pauses the countdown so it can't send mid-choice; Send now carries on.
   if ($('m-follow')) $('m-follow').onchange = (e) => {
@@ -50,7 +81,10 @@ function confirmAndSend(items, after) {
   };
   $('m-x').onclick = cancel;
   $('m-now').onclick = () => { if (stop) return; stop = true; clearInterval(t); doSend(items, after); };
-  if (flagged.length) return;
+  const later = async (when, rq) => { stop = true; clearInterval(t); const r = await scheduleTexts(items, when, rq); closeModal(); toast(`Scheduled for ${fmtWhen(r.sendAt)}`); if (after) after([]); };
+  $('m-later').onclick = async () => { clearInterval(t); const r = document.querySelector('.send-foot .ring'); if (r) r.classList.remove('counting'); const foot = $('m-sec') && $('m-sec').parentElement; if (foot) foot.innerHTML = 'Paused'; const d = await pickSendTime(); if (d) later(d, true); };
+  if ($('m-wait')) $('m-wait').onclick = () => later(q.next, true);
+  if (flagged.length || quietNow) return;
   requestAnimationFrame(() => requestAnimationFrame(() => { const a = $('m-arc'); if (a) a.style.strokeDashoffset = String(RING_C / TOTAL); }));
   t = setInterval(() => {
     if (stop) return;
@@ -69,6 +103,10 @@ async function doSend(items, after) {
   for (const r of results) if (r.ok && r.follow) {
     const due = r.follow === 't' ? (() => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d.toISOString(); })() : new Date(Date.now() + Number(r.follow) * 36e5).toISOString();
     await window.api.checklistAdd(`Follow up: no reply from ${r.name}`, { raw: true, due, link: { phone: r.phone }, followUp: r.phone });
+  }
+  for (let k = 0; k < results.length; k++) if (results[k].ok && items[k] && items[k].welcomeEmail) {
+    const r = await queueWelcomeEmail(items[k].welcomeEmail, null, false);
+    if (r && r.status !== 'sent' && r.status !== 'scheduled') toast(`Text sent, but the welcome email didn't go: ${r.error || 'error'}`);
   }
   const ok = results.filter((r) => r.ok).length, out = results.find((r) => r.code === 'SIGNED_OUT'), all = ok === items.length;
   if (out) paintConnections();
