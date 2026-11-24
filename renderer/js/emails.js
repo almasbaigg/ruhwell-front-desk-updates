@@ -5,7 +5,7 @@
 const emReadAt = (() => { try { return JSON.parse(localStorage.getItem('rfd-em-read') || '{}'); } catch { return {}; } })();
 const saveReadAt = () => { try { const k = Object.keys(emReadAt); if (k.length > 2000) k.slice(0, k.length - 2000).forEach((x) => delete emReadAt[x]); localStorage.setItem('rfd-em-read', JSON.stringify(emReadAt)); } catch {} };
 const ours = (e) => /@ruhwellmed\.com$/i.test(String(e || ''));
-let emFolder = fixFilter(recall('em-folder', 'needs'), ['needs', 'unread', 'all', 'sent', 'spam']), emData = { items: [], next: '' }, emOpen = null, emSeq = 0, emTemplates = null;
+let emFolder = fixFilter(recall('em-folder', 'needs'), ['needs', 'all', 'sent', 'spam']), emData = { items: [], next: '' }, emOpen = null, emSeq = 0, emTemplates = null;
 
 /* ---------- Small helpers ---------- */
 const fmtWhen = (d) => { const x = new Date(d), t = new Date(), tm = new Date(); tm.setDate(t.getDate() + 1);
@@ -226,10 +226,11 @@ function renderEmailList() {
   filterCounts('em-filter', { needs: emFolder === 'needs' || emFolder === 'all' ? emData.items.filter((m) => !ours(m.from.email)).length : 0, unread: (lastSync && lastSync.gmail && lastSync.gmail.unread) || 0 });
   $('em-list').innerHTML = rows.length ? rows.map((m) => `<button class="em-row ${m.unread ? 'unread' : ''} ${emOpen === m.id ? 'on' : ''}" data-id="${esc(m.id)}">
       <div class="tr-top"><b>${esc(emFolder === 'sent' ? 'To: ' + (m.to.name || m.to.email) : m.from.name || m.from.email)}</b>${m.count > 1 ? `<em class="cnt">${m.count}</em>` : ''}<span class="t">${esc(shortWhen(m.at))}</span></div>
-      <div class="em-subj">${m.unread ? '<i class="dot-new"></i>' : ''}${esc(m.subject)}</div><div class="tr-snip">${esc(m.snippet)}</div></button>`).join('') + (emData.next ? '<button class="btn small em-more" id="em-more">Load more</button>' : '')
-    : `<div class="all-clear small-clear">${I.check}<b>${{ needs: 'Nothing waiting for you', unread: 'Nothing unread', sent: 'Nothing sent', spam: 'No spam' }[emFolder] || 'No emails'}</b></div>`;
+      <div class="em-subj">${m.unread ? '<i class="dot-new"></i>' : ''}${esc(m.subject)}</div><div class="tr-snip">${esc(m.snippet)}</div></button>`).join('') + ''
+    : `<div class="all-clear small-clear">${I.check}<b>${{ needs: emData.next ? 'Nothing waiting in these emails' : 'Nothing waiting for you', unread: 'Nothing unread', sent: 'Nothing sent', spam: 'No spam' }[emFolder] || 'No emails'}</b></div>`;
+  if (emData.next) $('em-list').insertAdjacentHTML('beforeend', '<button class="btn small em-more" id="em-loadmore">Load older emails</button>');
   $('em-list').querySelectorAll('.em-row').forEach((b) => (b.onclick = () => openEmail(b.dataset.id)));
-  if ($('em-more')) $('em-more').onclick = () => loadEmails(true);
+  if ($('em-loadmore')) $('em-loadmore').onclick = () => loadEmails(true);
 }
 async function openEmail(id) {
   emOpen = id; renderEmailList();

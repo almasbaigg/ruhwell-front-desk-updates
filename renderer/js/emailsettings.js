@@ -2,8 +2,9 @@
 async function loadEmailSettings() {
   if ($('em-pane') && $('em-pane').querySelector('#em-key')) $('em-pane').innerHTML = '';
   const st = await window.api.emailStatus();
+  // Gmail's own row above says Connected; this only shows the two setup steps, or a problem to fix.
   $('es-conn').innerHTML = st.connected
-    ? `<div class="conn-row"><span class="health h-green"></span><div class="conn-main"><strong>Connected</strong><span class="muted small">${esc(st.account || '')}${st.sendAs ? ` · sending as ${esc(st.sendAs.email)}${st.sendAs.ok ? '' : ' (not verified in Gmail)'}` : st.error ? ' · couldn’t reach Gmail just now' : ' · hello@ruhwellmed.com is not a "Send mail as" address in Gmail, so emails can’t be sent'}</span></div><div class="row-gap"><button class="btn small" id="es-reconnect">Sign in again</button><button class="btn ghost small" id="es-out">Disconnect</button></div></div>`
+    ? (st.error === 'failed' || (st.sendAs && st.sendAs.ok) ? '' : `<div class="conn-note">hello@ruhwellmed.com isn't set up as a "Send mail as" address in Gmail, so emails can't be sent.</div>`)
     : emConnectHTML(st);
   bindConnect();
   if ($('es-reconnect')) $('es-reconnect').onclick = async () => { const r = await window.api.emailConnect(); toast(r.ok ? 'Gmail connected' : 'Sign-in didn’t finish'); loadEmailSettings(); paintConnections(); };
@@ -13,7 +14,7 @@ async function loadEmailSettings() {
   $('es-sig').innerHTML = cleanHtml(settings.emailSignature || '');
   $('es-sig').onblur = async () => { const h = cleanHtml($('es-sig').innerHTML).trim(); if (h === (settings.emailSignature || '')) return; settings.emailSignature = $('es-sig').innerText.trim() ? h : ''; await window.api.setSettings({ emailSignature: settings.emailSignature }); toast('Signature saved'); };
   const pk = await window.api.emailPacketInfo();
-  $('es-packet-name').textContent = pk.name; $('es-packet-sub').textContent = `${fmtSize(pk.size)} · ${pk.custom ? 'replaced ' + (pk.at ? fmtDateShort(pk.at) : '') : 'original'} · attached to the Welcome email`;
+  $('es-packet-name').textContent = pk.name; $('es-packet-sub').textContent = `${pk.custom ? 'Replaced ' + (pk.at ? fmtDateShort(pk.at) : '') : 'Original'} · ${fmtSize(pk.size)}`;
   $('es-packet-reset').classList.toggle('hidden', !pk.custom);
   $('es-packet-open').onclick = () => window.api.emailPacketOpen();
   $('es-packet-replace').onclick = async () => { const r = await window.api.emailPacketReplace(); if (r.error) toast(r.error); else if (r.ok) toast('Welcome packet replaced'); loadEmailSettings(); };
@@ -67,9 +68,6 @@ function editEmailTemplate(i) {
     await window.api.emailTemplatesSave(emTemplates); closeModal(); toast('Template saved'); loadEmailSettings();
   };
 }
-// Runs with the rest of Settings.
-const _loadSettings = loadSettings;
-loadSettings = async function () { await _loadSettings(); loadEmailSettings().catch(() => {}); };
 // Settings in four tabs, one at a time: Connections · Messages · Alerts · App.
 function showSettingsTab(t) {
   t = ['connections', 'messages', 'alerts', 'app'].includes(t) ? t : 'connections'; remember('set-tab', t);

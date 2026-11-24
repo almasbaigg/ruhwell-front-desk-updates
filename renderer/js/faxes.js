@@ -1,7 +1,7 @@
 /* Faxes: received in Doximity, filed into the patient's RxNT chart.
    The app never guesses the patient: Maria picks one, sees that chart's name, DOB and chart number read
    fresh from RxNT, confirms, and only then is the fax uploaded (then checked in the chart). */
-let fxFilter = fixFilter(recall('fx-filter', 'needs'), ['needs', 'unread', 'all', 'done', 'spam']), fxData = [], fxOpen = null, fxUrl = null, fxSeq = 0, fxCat = '';
+let fxFilter = fixFilter(recall('fx-filter', 'needs'), ['needs', 'all', 'done', 'spam']), fxData = [], fxOpen = null, fxUrl = null, fxSeq = 0, fxCat = '';
 const FX_ORDER = ['Prior authorization', 'Pharmacy', 'Lab results', 'Records', 'Referral', 'Insurance', 'Other', 'Unreadable', 'Notice'];
 const FX_CATS = ['Other', 'Consults', 'Lab Results', 'Imaging', 'Patient Chart', 'Insurance Scan', 'External CCR/CCD Documents', 'Advanced Directives', 'Patient Consent'];
 const fxWhen = (iso, f) => { if (f && f.dateUnknown) return 'date unavailable'; const d = new Date(iso); return isNaN(d) ? '' : `${dayLabel(iso)} · ${fmtTime(d)}`; };
@@ -114,7 +114,7 @@ async function openFax(id, keep) {
   $('fx-pane').innerHTML = `
     <div class="convo-head"><span class="avatar unk"><svg viewBox="0 0 24 24"><path d="M7 9V4h10v5"/><rect x="3" y="9" width="18" height="9" rx="2"/><path d="M7 14h10v6H7z"/></svg></span>
       <div><h2>${esc(fxFrom(f))}</h2><p class="muted small">${esc(f.number || '')}${f.pages ? ` · ${f.pages} page${f.pages > 1 ? 's' : ''}` : ''} · received ${esc(fxWhen(f.at, f))}</p></div>
-      <div class="row-gap">${!['pending', 'failed'].includes(f.download) ? '<button class="btn small" id="fx-save">Download</button>' : ''}<button class="btn small" id="fx-dox2">Open in Doximity</button>${done ? (f.status !== 'filed' ? '<button class="btn small" id="fx-back">Move back to Needs you</button>' : '') : `<button class="btn small" id="fx-unread">Mark unread</button><div class="more-wrap"><button class="btn small" id="fx-more">More ▾</button><div class="more-menu hidden" id="fx-menu"><button id="fx-np">Not patient-related</button><button id="fx-spam">Spam</button></div></div><button class="btn small" id="fx-done">${I.check}Done</button>`}</div></div>
+      <div class="row-gap"><div class="more-wrap"><button class="btn small" id="fx-more">More ▾</button><div class="more-menu hidden" id="fx-menu">${!['pending', 'failed'].includes(f.download) ? '<button id="fx-save">Download PDF</button>' : ''}<button id="fx-dox2">Open in Doximity</button>${done ? '' : '<button id="fx-unread">Mark unread</button><button id="fx-np">Not patient-related</button><button id="fx-spam">Spam</button>'}</div></div>${done ? (f.status !== 'filed' ? '<button class="btn small" id="fx-back">Move back to To do</button>' : '') : `<button class="btn small primary-soft" id="fx-done">${I.check}Done</button>`}</div></div>
     <div class="receipt-line">${f.readAt ? stamp('Read', f.readAt) : '<b>New</b>'}${f.doneAt && done ? ' · ' + stamp(f.status === 'filed' ? 'Filed' : f.status === 'spam' ? 'Spam' : 'Done', f.doneAt) : ''}<span class="muted"> · Done and Spam stay in this app (Doximity unchanged)</span></div>
     <div class="fx-body"><div class="fx-prev">${prev}</div><div class="fx-side" id="fx-side"></div></div>`;
   drawPages(seq);

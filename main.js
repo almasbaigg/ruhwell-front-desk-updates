@@ -71,10 +71,13 @@ function createWindow() {
   const { screen } = require('electron');
   const wa = screen.getPrimaryDisplay().workArea, saved = store.settings.get().windowBounds;
   const onScreen = saved && screen.getAllDisplays().some((d) => saved.x >= d.workArea.x - 40 && saved.y >= d.workArea.y - 40 && saved.x + 200 < d.workArea.x + d.workArea.width && saved.y + 100 < d.workArea.y + d.workArea.height);
-  const w0 = Math.max(1040, Math.min(1680, Math.round(wa.width * 0.9))), h0 = Math.max(660, Math.min(1080, Math.round(wa.height * 0.9)));
-  const bounds = onScreen ? saved : { width: w0, height: h0, x: wa.x + Math.round((wa.width - w0) / 2), y: wa.y + Math.round((wa.height - h0) / 2) };
+  // Never bigger than the screen's usable area (high display scaling can make that smaller than our minimum).
+  const minW = Math.min(1040, wa.width), minH = Math.min(660, wa.height);
+  const w0 = Math.max(minW, Math.min(1680, Math.round(wa.width * 0.9), wa.width)), h0 = Math.max(minH, Math.min(1080, Math.round(wa.height * 0.9), wa.height));
+  const fit = (b) => ({ ...b, width: Math.min(b.width, wa.width), height: Math.min(b.height, wa.height) });
+  const bounds = onScreen ? fit(saved) : { width: w0, height: h0, x: wa.x + Math.round((wa.width - w0) / 2), y: wa.y + Math.round((wa.height - h0) / 2) };
   win = new BrowserWindow({
-    ...bounds, minWidth: 1040, minHeight: 660, show: !startHidden,
+    ...bounds, minWidth: minW, minHeight: minH, show: !startHidden,
     backgroundColor: '#f6f1eb', title: 'Ruhwell Front Desk', icon: icon(),
     titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
     titleBarOverlay: isMac ? undefined : { color: '#f6f1eb', symbolColor: '#005758', height: 40 },
@@ -153,7 +156,7 @@ ipcMain.handle('update:check', () => updater.checkNow());
 ipcMain.handle('update:restart', () => {
   const st = updater.status();
   if (st.status === 'ready') {
-    try { const f = `auto-${ymd(new Date())}.bin`, p2 = store.raw.file(path.join('Backups', f)); if (fs.existsSync(p2)) fs.unlinkSync(p2); backups.autoDaily(); } catch {}
+    try { backups.autoDaily(true); } catch {}
     activity.add('App', 'update', { to: st.version || '' }, true);
     quitting = true;
   }
@@ -418,9 +421,11 @@ ipcMain.handle('comms:seen', (_e, phone) => { const ph = String(phone || '').rep
 // Ones that don't go through (offline, RingRx busy) wait in a small list and are retried after each sync and restart.
 function ringrxRead(ids) {
   const id = pid(); if (!id || !ids || !ids.length) return;
-  const cb = store.callbacks.get(); cb.rrPending = [...new Set([...(cb.rrPending || []), ...ids.map(String)])].slice(-500); store.callbacks.set(cb);
+  const cb = store.callbacks.get(); cb.rrPending = [...new Set([...(cb.rrPending || []), ...ids.map(String)])].slice(-5000); store.callbacks.set(cb);
   ringrx.markRead(id, ids).then((done) => {
-    const c2 = store.callbacks.get(); c2.rrPending = (c2.rrPending || []).filter((x) => !done.includes(x)); store.callbacks.set(c2);
+    // Confirmed ones leave the list; the rest move to the back so one stubborn id can't block the others.
+    const c2 = store.callbacks.get(), left = (c2.rrPending || []).filter((x) => !done.includes(x)), failed = new Set(ids.map(String).filter((x) => !done.includes(x)));
+    c2.rrPending = [...left.filter((x) => !failed.has(x)), ...left.filter((x) => failed.has(x))]; store.callbacks.set(c2);
     if (done.length) { comms.setRingrxRead(done); send('sync', syncStatus()); }
     if (done.length < ids.length) activity.add('RingRx', 'mark-read', { waiting: ids.length - done.length }, false);
   }).catch(() => {});
@@ -1013,7 +1018,7 @@ ipcMain.handle('backup:contacts', async () => {
 });
 ipcMain.handle('backup:list', () => backups.list());
 ipcMain.handle('backup:restoreAuto', (_e, file) => { try { return { ok: true, ...backups.restoreAuto(file) }; } catch (e) { return { error: e.message }; } });
-ipcMain.handle('backup:now', () => { try { const f = `auto-${ymd(new Date())}.bin`; const p2 = store.raw.file(path.join('Backups', f)); if (fs.existsSync(p2)) fs.unlinkSync(p2); backups.autoDaily(); return { ok: true }; } catch (e) { return { error: e.message }; } });
+ipcMain.handle('backup:now', () => { try { return backups.autoDaily(true) ? { ok: true } : { error: backups.status().error || "The backup couldn't be made." }; } catch (e) { return { error: e.message }; } });
 setInterval(() => { try { backups.autoDaily(); activity.prune(); } catch {} }, 60 * 60 * 1000);
 
 // Each confirmed send carries an operation id; a second request with the same id gets the first result
@@ -1109,8 +1114,9 @@ app.whenReady().then(() => {
         const res = await sendTexts(todo, (d) => { if (d.last && d.last.ok) { const cur = outbox.get(item.id); if (cur) { const items = cur.payload.items.map((x) => (x.phone === d.last.phone && x.message === d.last.message && !x.sentAt ? { ...x, sentAt: new Date().toISOString() } : x)); outbox.setPayload(item.id, { ...cur.payload, items }); } } }, { respectQuiet: item.respectQuiet !== false });
         const ok = res.filter((r) => r.ok).length, out = res.find((r) => r.code === 'SIGNED_OUT' || r.code === 'LOCKED'), held = res.some((r) => r.held);
         if (held && !res.some((r) => !r.ok && !r.held)) return { ok: false, code: 'HELD', error: 'Waiting for sending hours' };
-        if (out && !ok) return { ok: false, code: out.code === 'LOCKED' ? 'LOCKED' : 'SIGNED_OUT', error: out.error };
-        return { ok: ok === res.length, error: ok === res.length ? '' : `${ok} of ${res.length} sent`, partial: ok < res.length ? res.map((r) => ({ name: r.name, ok: r.ok, error: r.error })) : undefined };
+        const total = (p.items || []).length, doneBefore = total - todo.length;
+        if (out) return { ok: false, code: out.code === 'LOCKED' ? 'LOCKED' : 'SIGNED_OUT', error: `${doneBefore + ok} of ${total} sent · ${out.error}` };   // tried again later; already-sent patients are skipped
+        return { ok: ok === res.length, error: ok === res.length ? '' : `${doneBefore + ok} of ${total} sent`, partial: ok < res.length ? res.map((r) => ({ name: r.name, ok: r.ok, error: r.error })) : undefined };
       },
       email: (p) => sendEmailNow(p),
     },
@@ -1146,14 +1152,15 @@ async function sendTexts(items, progress = () => {}, opts = {}) {
     const it = items[i];
     let res;
     try {
-      if (unreadable()) throw Object.assign(new Error("Saved data is locked, so the do-not-text list can't be checked. Nothing was sent."), { code: 'LOCKED' });
-      if (blocked().has(d10(it.phone))) throw Object.assign(new Error('Marked do-not-text'), { code: 'DNT' });
+      // Read both lists, then check that both reads worked: a read is what discovers a lock.
+      const may = () => { const b = blocked(); if (unreadable()) throw Object.assign(new Error("Saved data is locked, so the do-not-text list can't be checked. Nothing was sent."), { code: 'LOCKED' }); if (b.has(d10(it.phone))) throw Object.assign(new Error('Marked do-not-text'), { code: 'DNT' }); };
+      may();
       // Sending hours, checked for every patient (a batch can run into closing time): the rest wait for the morning.
       if (opts.respectQuiet && !outbox.allowed()) { res = { ...it, ok: false, held: true, error: 'Held for sending hours' }; results.push(res); progress({ done: i + 1, total: items.length, last: res }); continue; }
       try { await ringrx.sendSms(id, it.phone, it.message); }
       catch (err) {
         if (err.code !== 'RETRY') throw err;
-        if (blocked().has(d10(it.phone))) throw Object.assign(new Error('Marked do-not-text'), { code: 'DNT' });   // re-check before the retry too
+        may();   // re-check before the retry too
         await ringrx.sendSms(id, it.phone, it.message);
       }
       res = { ...it, ok: true };
@@ -1161,6 +1168,7 @@ async function sendTexts(items, progress = () => {}, opts = {}) {
       res = { ...it, ok: false, error: err.message, code: err.code };
     }
     store.log.add({ name: it.name, phone: it.phone, template: it.templateName, templateId: it.templateId, apptId: it.apptId || null, ok: res.ok, error: res.error || '', message: it.message });
+    comms.bust();
     results.push(res);
     progress({ done: i + 1, total: items.length, last: res });
     if (res.code === 'SIGNED_OUT' || res.code === 'LOCKED') break;
@@ -1225,7 +1233,7 @@ app.whenReady().then(() => {
   store.log.migrate();
   store.log.prune(store.settings.get().historyKeep);
   activity.prune();
-  try { faxes.repairOnce(); } catch {}
+  try { faxes.cleanTmp(); faxes.repairOnce(); } catch {}
   migrations.run();
   if (process.platform === 'win32') {
     // Windows names notifications after a Start-menu shortcut with the same app ID; without one it shows

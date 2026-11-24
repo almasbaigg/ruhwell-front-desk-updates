@@ -53,10 +53,11 @@ let settings = null, accounts = { rxnt: {}, ringrx: {} }, info = null, sendFrom 
 let visits = [], history = [], patients = [], confirmed = {}, idx = { byPhone: {}, byPid: {}, byChart: {} };
 let currentDate = ymd(), weekStart = null, weekData = {}, activePatient = null, pTab = 'contacts', pFilter = 'all', lastSync = null, busy = { high: 0, low: 0 }, localLoading = 0;
 
-// Texts, Emails, Calls and Faxes share one set of filters: Needs you · Unread · All · Sent/Done · Spam.
-const FILTER_LABEL = { needs: 'Needs you', unread: 'Unread' };
+// Texts, Emails, Calls and Faxes share one set of filters: To do · All · Sent (Done for faxes) · Spam.
+// Unread shows in the list itself (dot + bold), not as a separate filter.
+const FILTER_LABEL = { needs: 'To do' };
 function filterCounts(id, counts) { for (const [k, n] of Object.entries(counts)) { const b = document.querySelector(`#${id} [data-f="${k}"]`); if (b) b.innerHTML = `${FILTER_LABEL[k] || b.textContent.replace(/\d+$/, '')}${n ? `<b>${n}</b>` : ''}`; } }
-const fixFilter = (v, allowed) => (allowed.includes(v) ? v : v === 'inbox' || v === 'unanswered' || v === 'in' ? 'all' : v === 'new' ? 'needs' : v === 'out' ? 'sent' : v === 'unheard' ? 'unread' : 'needs');
+const fixFilter = (v, allowed) => (allowed.includes(v) ? v : v === 'inbox' || v === 'unanswered' || v === 'in' ? 'all' : v === 'out' ? 'sent' : 'needs');
 // Read and Done carry a time everywhere ("Read 9:42 PM", "Done 9:50 PM").
 const stamp = (label, at) => (at ? `<span class="stamp">${esc(label)} ${esc(shortWhen(new Date(typeof at === 'number' ? at : at).toISOString()))}</span>` : '');
 

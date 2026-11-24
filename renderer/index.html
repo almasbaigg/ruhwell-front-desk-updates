@@ -43,7 +43,7 @@
 <!-- App -->
 <div id="shell" class="shell hidden">
   <aside class="sidebar">
-    <div class="clock" id="clock"><b id="clock-time"></b><span id="clock-date"></span><em id="clock-next"></em></div>
+    <div class="clock" id="clock"><div class="clock-face"><b id="clock-time"></b><sup id="clock-ampm"></sup></div><span id="clock-date"></span><div class="day-track" id="day-track" title=""><i id="day-fill"></i></div><em id="clock-next"></em></div>
     <div class="timer" id="timer">
       <button class="timer-start" id="tm-start" title="Start a timer for what you're doing"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2M9 2h6"/></svg>Start a timer</button>
       <div class="timer-run hidden" id="tm-run">
@@ -55,7 +55,7 @@
     <button class="btn primary block" id="new-msg"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New message</button>
     <nav>
       <button class="nav" data-view="today"><svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></svg>Today<span class="badge hidden" id="nb-today"></span></button>
-      <p class="nav-label">Needs you</p>
+      <p class="nav-label">Inbox</p>
       <button class="nav" data-view="texts"><svg viewBox="0 0 24 24"><path d="M4 20l1.2-4A8 8 0 1 1 8 19z"/></svg>Texts<span class="badge hidden" id="nb-texts"></span></button>
       <button class="nav" data-view="emails"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>Emails<span class="badge hidden" id="nb-emails"></span></button>
       <button class="nav" data-view="calls"><svg viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/></svg>Calls<span class="badge hidden" id="nb-calls"></span></button>
@@ -176,7 +176,7 @@
       <header class="head">
         <div><p class="eyebrow" id="tx-range-label"></p><h1>Texts</h1></div>
         <div class="head-actions">
-          <div class="seg-toggle comm-filter" id="tx-filter"><button data-f="needs" class="on">Needs you</button><button data-f="unread">Unread</button><button data-f="all">All</button><button data-f="sent">Sent</button><button data-f="spam">Spam</button></div>
+          <div class="seg-toggle comm-filter" id="tx-filter"><button data-f="needs" class="on">To do</button><button data-f="all">All</button><button data-f="sent">Sent</button><button data-f="spam">Spam</button></div>
           <button class="btn sched-count">Scheduled</button>
           <select id="tx-range"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option></select>
         </div>
@@ -195,7 +195,7 @@
       <header class="head">
         <div><p class="eyebrow" id="em-sub">Gmail</p><h1>Emails</h1></div>
         <div class="head-actions">
-          <div class="seg-toggle comm-filter" id="em-filter"><button data-f="needs" class="on">Needs you</button><button data-f="unread">Unread</button><button data-f="all">All</button><button data-f="sent">Sent</button><button data-f="spam">Spam</button></div>
+          <div class="seg-toggle comm-filter" id="em-filter"><button data-f="needs" class="on">To do</button><button data-f="all">All</button><button data-f="sent">Sent</button><button data-f="spam">Spam</button></div>
           <button class="btn sched-count">Scheduled</button>
           <button class="btn primary" id="em-new"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New email</button>
         </div>
@@ -214,7 +214,7 @@
       <header class="head">
         <div><p class="eyebrow" id="cl-range-label"></p><h1>Calls</h1></div>
         <div class="head-actions">
-          <div class="seg-toggle comm-filter" id="ca-filter"><button data-f="needs" class="on">Needs you</button><button data-f="unread">Unread</button><button data-f="all">All</button><button data-f="sent">Outgoing</button><button data-f="spam">Spam</button></div>
+          <div class="seg-toggle comm-filter" id="ca-filter"><button data-f="needs" class="on">To do</button><button data-f="all">All</button><button data-f="sent">Outgoing</button><button data-f="spam">Spam</button></div>
           <select id="ca-range"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option></select>
         </div>
       </header>
@@ -228,7 +228,7 @@
       <header class="head">
         <div><p class="eyebrow" id="fx-sub">From Doximity</p><h1>Faxes</h1></div>
         <div class="head-actions">
-          <div class="seg-toggle comm-filter" id="fx-filter"><button data-f="needs" class="on">Needs you</button><button data-f="unread">Unread</button><button data-f="all">All</button><button data-f="done">Done</button><button data-f="spam">Spam</button></div>
+          <div class="seg-toggle comm-filter" id="fx-filter"><button data-f="needs" class="on">To do</button><button data-f="all">All</button><button data-f="done">Done</button><button data-f="spam">Spam</button></div>
           <button class="icon-btn" id="fx-refresh" title="Check for new faxes"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></button>
         </div>
       </header>
@@ -247,104 +247,87 @@
 
     <!-- Settings -->
     <section class="view hidden" id="view-settings">
-      <header class="head"><div><p class="eyebrow">Preferences</p><h1>Settings</h1></div><div class="head-actions"><div class="seg-toggle" id="set-tabs"><button data-t="connections">Connections</button><button data-t="messages">Messages</button><button data-t="alerts">Alerts</button><button data-t="app">App</button></div><span class="muted small" id="s-saved"></span><button class="btn primary" id="s-save">Save changes</button></div></header>
+      <header class="head"><div><p class="eyebrow">Preferences</p><h1>Settings</h1></div><div class="head-actions"><div class="seg-toggle" id="set-tabs"><button data-t="connections">Accounts</button><button data-t="alerts">You &amp; alerts</button><button data-t="messages">Messages</button><button data-t="app">App</button></div><span class="muted small" id="s-saved"></span><button class="btn primary" id="s-save">Save</button></div></header>
+
       <div class="card conn-card" data-tab="connections">
-        <div class="card-head"><h3>Connections</h3><button class="btn hidden" id="sy-now">Check everything now</button></div>
-        <p class="card-sub">Each account is actually checked every 5 minutes in office hours (10 after), and when the app starts, wakes or gets back online. Green only means the last real read worked. Sign-ins stay on this computer, encrypted.</p>
-        <div class="conn-row"><span class="health" id="s-rxnt-health"></span><div class="conn-main"><strong>RxNT</strong><span class="muted small" id="s-rxnt-state"></span><span class="muted small" id="s-rxnt-saved"></span><span class="sx" id="sx-rxnt"></span></div><div class="row-gap"><button class="btn small" data-check="schedule,rx,portal">Check &amp; sync</button><button class="btn small" id="s-rxnt-connect">Reconnect</button><button class="btn ghost small" id="s-rxnt-out">Sign out</button></div></div>
-        <div class="conn-row"><span class="health" id="s-ringrx-health"></span><div class="conn-main"><strong>RingRx</strong><span class="muted small" id="s-ringrx-state"></span><span class="from-line" id="s-from"></span><span class="sx" id="sx-comms"></span></div><div class="row-gap"><button class="btn small" data-check="comms">Check &amp; sync</button><button class="btn ghost small" id="s-ringrx-out">Sign out</button></div></div>
-        <div class="conn-row"><span class="health" id="s-gmail-health"></span><div class="conn-main"><strong>Gmail</strong><span class="muted small" id="s-gmail-state"></span><span class="sx" id="sx-gmail"></span></div><div class="row-gap"><button class="btn small" data-check="gmail">Check &amp; sync</button><button class="btn small" id="s-gmail-connect">Sign in</button><button class="btn ghost small" id="s-gmail-out">Sign out</button></div></div>
-        <div class="conn-row"><span class="health" id="s-doximity-health"></span><div class="conn-main"><strong>Doximity <small class="muted">(faxes)</small></strong><span class="muted small" id="s-dox-state"></span><span class="muted small" id="s-dox-saved"></span><span class="sx" id="sx-dox"></span><label class="muted small dox-back">First check brings in faxes from <select id="s-dox-back"><option value="0">everything in the inbox</option><option value="1">today</option><option value="3">the last 3 days</option><option value="7">the last 7 days</option></select></label></div><div class="row-gap"><label class="switch" title="Check for faxes"><input type="checkbox" id="s-dox-on"><span></span></label><button class="btn small" data-check="faxes">Check &amp; sync</button><button class="btn small" id="s-dox-connect">Sign in</button><button class="btn ghost small" id="s-dox-out">Sign out</button></div></div>
+        <div class="card-head"><h3>Accounts <i class="info" tabindex="0" data-tip="Each account is checked every 5 minutes during office hours and every 10 minutes after. A green dot means the last check worked. Sign-ins are saved, encrypted, on this computer only.">i</i></h3><button class="btn hidden" id="sy-now">Check everything now</button></div>
+        <div class="conn-row"><span class="health" id="s-rxnt-health"></span><div class="conn-main"><strong>RxNT</strong><span class="muted small" id="s-rxnt-state"></span><span class="muted small" id="s-rxnt-saved"></span><span class="sx" id="sx-rxnt"></span></div><div class="row-gap"><button class="btn small" id="s-rxnt-connect">Reconnect</button><div class="more-wrap"><button class="icon-btn row-more" title="More">⋯</button><div class="more-menu hidden"><button data-check="schedule,rx,portal">Check now</button><button id="s-rxnt-out">Sign out</button></div></div></div></div>
+        <div class="conn-row"><span class="health" id="s-ringrx-health"></span><div class="conn-main"><strong>RingRx</strong><span class="muted small" id="s-ringrx-state"></span><span class="from-line" id="s-from"></span><span class="sx" id="sx-comms"></span></div><div class="row-gap"><div class="more-wrap"><button class="icon-btn row-more" title="More">⋯</button><div class="more-menu hidden"><button data-check="comms">Check now</button><button id="s-ringrx-out">Sign out</button></div></div></div></div>
+        <div class="conn-row"><span class="health" id="s-gmail-health"></span><div class="conn-main"><strong>Gmail</strong><span class="muted small" id="s-gmail-state"></span><span class="sx" id="sx-gmail"></span></div><div class="row-gap"><button class="btn small" id="s-gmail-connect">Sign in</button><div class="more-wrap"><button class="icon-btn row-more" title="More">⋯</button><div class="more-menu hidden"><button data-check="gmail">Check now</button><button id="s-gmail-out">Sign out</button></div></div></div></div>
+        <div id="es-conn"></div>
+        <div class="conn-row"><span class="health" id="s-doximity-health"></span><div class="conn-main"><strong>Doximity <small class="muted">faxes</small></strong><span class="muted small" id="s-dox-state"></span><span class="muted small" id="s-dox-saved"></span><span class="sx" id="sx-dox"></span><label class="muted small dox-back">First import: <select id="s-dox-back"><option value="0">whole inbox</option><option value="1">today</option><option value="3">last 3 days</option><option value="7">last 7 days</option></select></label></div><div class="row-gap"><label class="switch" title="Check for faxes"><input type="checkbox" id="s-dox-on"><span></span></label><button class="btn small" id="s-dox-connect">Sign in</button><div class="more-wrap"><button class="icon-btn row-more" title="More">⋯</button><div class="more-menu hidden"><button data-check="faxes">Check now</button><button id="s-dox-out">Sign out</button></div></div></div></div>
         <div class="conn-row"><span class="health" id="s-pat-health"></span><div class="conn-main"><strong>Patient list</strong><span class="sx" id="sx-pat"></span></div><span class="muted small">every 4 hours</span></div>
         <span class="hidden" id="sx-rx"></span>
       </div>
+
       <div class="card" data-tab="alerts">
-        <h3>About you</h3>
-        <p class="card-sub">Used across the app: the greeting, when alerts may text you, and the end-of-day check.</p>
-        <div class="row-line first"><div><strong>Your name</strong><span class="muted small">Today says "Good morning, …"</span></div><input id="s-name" placeholder="e.g. Maria" style="width:210px" maxlength="30"></div>
-        <div class="row-line"><div><strong>Office hours</strong><span class="muted small">Weekdays. Alerts text you only in these hours; the end-of-day check runs at closing.</span></div><div class="row-gap"><input type="time" id="sy-start" class="w-time"><span class="muted small">to</span><input type="time" id="sy-end" class="w-time"><span class="muted small" style="white-space:nowrap">look ahead</span><select id="w-days"><option value="3">3 days</option><option value="7">7 days</option><option value="14">14 days</option></select></div></div>
-        <div class="row-line"><div><strong>Daily summaries</strong><span class="muted small">A pop-up with the day ahead, and a nudge to send tomorrow's reminders</span></div></div>
-        <div class="daily">
-          <label class="check"><input type="checkbox" id="s-sum-on"><span></span>Today's schedule</label><span class="muted small">at</span><input type="time" id="s-sum-time" class="w-time">
-          <label class="check"><input type="checkbox" id="s-nudge-on"><span></span>Tomorrow's reminders</label><span class="muted small">at</span><input type="time" id="s-nudge-time" class="w-time">
-        </div>
+        <h3>You</h3>
+        <div class="row-line first"><div><strong>Name</strong></div><input id="s-name" placeholder="e.g. Maria" style="width:210px" maxlength="30"></div>
+        <div class="row-line"><div><strong>Office hours <i class="info" tabindex="0" data-tip="Weekdays. Alert texts only go out in these hours, and the end-of-day check runs at closing.">i</i></strong></div><div class="row-gap"><input type="time" id="sy-start" class="w-time"><span class="muted small">to</span><input type="time" id="sy-end" class="w-time"></div></div>
+        <div class="row-line"><div><strong>Watch the schedule <i class="info" tabindex="0" data-tip="How far ahead the app watches RxNT for new, cancelled and moved visits.">i</i></strong></div><select id="w-days"><option value="3">3 days ahead</option><option value="7">7 days ahead</option><option value="14">14 days ahead</option></select></div>
+        <div class="row-line"><div><strong>Morning summary <i class="info" tabindex="0" data-tip="A pop-up with the day's schedule.">i</i></strong></div><div class="row-gap"><input type="time" id="s-sum-time" class="w-time"><label class="switch"><input type="checkbox" id="s-sum-on"><span></span></label></div></div>
+        <div class="row-line"><div><strong>Reminders nudge <i class="info" tabindex="0" data-tip="A pop-up reminding you to send tomorrow's appointment reminders.">i</i></strong></div><div class="row-gap"><input type="time" id="s-nudge-time" class="w-time"><label class="switch"><input type="checkbox" id="s-nudge-on"><span></span></label></div></div>
       </div>
       <div class="card" data-tab="alerts">
-        <h3>How should we reach you?</h3>
-        <p class="card-sub">Pick where each kind of alert shows up. Pop-ups appear on this computer; texts go to the cell below.</p>
-
-        <div class="row-line first"><div><strong>Send alert texts to</strong><span class="muted small">Leave empty to use the practice's RingRx number. Texts say what changed and when, never patient names.</span></div><div class="row-gap"><input id="s-cell" placeholder="(555) 555-5555" style="width:210px"><button class="btn" id="s-cell-test">Send test</button></div></div>
+        <h3>Alerts <i class="info" tabindex="0" data-tip="Pop-up shows on this computer. Text goes to your cell. Alert texts never include patient names.">i</i></h3>
+        <div class="row-line first"><div><strong>Your cell</strong></div><div class="row-gap"><input id="s-cell" placeholder="Practice number if empty" style="width:210px"><button class="btn" id="s-cell-test">Test</button></div></div>
         <div class="alert-grid">
-          <span></span><b>Notify on this computer</b><b>Text alert cell</b>
-          <span>Schedule changes <small class="muted">(new, cancelled, no-show, rescheduled)</small></span><label class="check"><input type="checkbox" data-k="schedule" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="schedule" data-c="text"><span></span></label>
-          <span>Patient messages <small class="muted">(texts and RxNT portal)</small></span><label class="check"><input type="checkbox" data-k="reply" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="reply" data-c="text"><span></span></label>
-          <span>New fax <small class="muted">(Doximity)</small></span><label class="check"><input type="checkbox" data-k="fax" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="fax" data-c="text"><span></span></label>
-          <span>New patient registered</span><label class="check"><input type="checkbox" data-k="newpatient" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="newpatient" data-c="text"><span></span></label>
-          <span>Prescriptions waiting <small class="muted">(over 1 hour)</small></span><label class="check"><input type="checkbox" data-k="rx" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="rx" data-c="text"><span></span></label>
-          <span>Wrap-up &amp; chart reminders <small class="muted">(pop-up only)</small></span><label class="check"><input type="checkbox" data-k="nudge" data-c="desk"><span></span></label><span class="muted center-text">–</span>
-          <span>Checklist reminder</span><label class="check"><input type="checkbox" data-k="task" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="task" data-c="text"><span></span></label>
-          <span>Visit starting in <select id="w-soon"><option value="10">10</option><option value="15">15</option><option value="30">30</option></select> min</span><label class="check"><input type="checkbox" data-k="soon" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="soon" data-c="text"><span></span></label>
+          <span></span><b>Pop-up</b><b>Text</b>
+          <span>Schedule changes</span><label class="check"><input type="checkbox" data-k="schedule" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="schedule" data-c="text"><span></span></label>
+          <span>Patient messages</span><label class="check"><input type="checkbox" data-k="reply" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="reply" data-c="text"><span></span></label>
+          <span>New fax</span><label class="check"><input type="checkbox" data-k="fax" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="fax" data-c="text"><span></span></label>
+          <span>New patient</span><label class="check"><input type="checkbox" data-k="newpatient" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="newpatient" data-c="text"><span></span></label>
+          <span>Prescriptions waiting 1 h+</span><label class="check"><input type="checkbox" data-k="rx" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="rx" data-c="text"><span></span></label>
+          <span>Wrap-up &amp; chart reminders</span><label class="check"><input type="checkbox" data-k="nudge" data-c="desk"><span></span></label><span class="muted center-text">–</span>
+          <span>Checklist reminders</span><label class="check"><input type="checkbox" data-k="task" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="task" data-c="text"><span></span></label>
+          <span>Visit in <select id="w-soon"><option value="10">10</option><option value="15">15</option><option value="30">30</option></select> min</span><label class="check"><input type="checkbox" data-k="soon" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="soon" data-c="text"><span></span></label>
         </div>
       </div>
-      <div class="card" data-tab="messages">
-        <h3>Text sign-off</h3>
-        <p class="card-sub">Added to the texts you send.</p>
 
-        <div class="set-grid">
-          <span>Review link</span><input id="s-review">
-          <span>Sign-off</span><div class="row-gap"><input id="s-sig"><label class="switch"><input type="checkbox" id="s-sig-on"><span></span></label></div>
-        </div>
-      </div>
       <div class="card" data-tab="messages">
-        <div class="card-head"><h3>Text templates</h3><button class="btn" id="t-add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add template</button></div>
-        <p class="muted small">Click a template to edit it. Tap a chip to add the patient's name, visit time and more.</p>
+        <div class="card-head"><h3>Texts</h3><button class="btn small" id="t-add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Template</button></div>
+        <div class="row-line first"><div><strong>Sign-off <i class="info" tabindex="0" data-tip="Added to the end of texts you send.">i</i></strong></div><div class="row-gap"><input id="s-sig" style="width:240px"><label class="switch"><input type="checkbox" id="s-sig-on"><span></span></label></div></div>
+        <div class="row-line"><div><strong>Google review link <i class="info" tabindex="0" data-tip="Used by the Google Review Request template.">i</i></strong></div><input id="s-review" style="width:300px"></div>
+        <h4 class="sub-h">Templates</h4>
         <div id="t-list"></div>
       </div>
       <div class="card" data-tab="messages" id="es-card">
-        <h3>Email</h3>
-        <p class="card-sub">The practice Gmail. Patients always get email from <b>hello@ruhwellmed.com</b>.</p>
-        <div id="es-conn"></div>
-        <div class="row-line first"><div><strong>Name patients see</strong><span class="muted small">Shown next to hello@ruhwellmed.com in their inbox</span></div><input id="es-name" placeholder="Ruhwell Med" style="width:210px" maxlength="60"></div>
+        <div class="card-head"><h3>Emails <i class="info" tabindex="0" data-tip="Patients always get email from hello@ruhwellmed.com.">i</i></h3><button class="btn small" id="es-tpl-add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Template</button></div>
+        <div class="row-line first"><div><strong>Sender name <i class="info" tabindex="0" data-tip="What patients see next to hello@ruhwellmed.com.">i</i></strong></div><input id="es-name" placeholder="Ruhwell Med" style="width:240px" maxlength="60"></div>
+        <div class="row-line"><div><strong>Welcome packet <i class="info" tabindex="0" data-tip="Attached to the Welcome email.">i</i></strong><span class="muted small" id="es-packet-sub"></span><span class="hidden" id="es-packet-name"></span></div><div class="row-gap"><button class="btn small" id="es-packet-open">Open</button><button class="btn small" id="es-packet-replace">Replace</button><button class="btn ghost small hidden" id="es-packet-reset">Use original</button></div></div>
         <h4 class="sub-h">Signature</h4>
         <div class="ec-body small-body" id="es-sig" contenteditable="true"></div>
-        <h4 class="sub-h">Welcome packet</h4>
-        <div class="conn-row"><div class="conn-main"><strong id="es-packet-name"></strong><span class="muted small" id="es-packet-sub"></span></div><div class="row-gap"><button class="btn small" id="es-packet-open">Open</button><button class="btn small" id="es-packet-replace">Replace</button><button class="btn ghost small hidden" id="es-packet-reset">Use the original</button></div></div>
-        <div class="card-head" style="margin-top:14px"><h4 class="sub-h" style="margin:0">Email templates</h4><button class="btn small" id="es-tpl-add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add</button></div>
+        <h4 class="sub-h">Templates</h4>
         <div id="es-tpls"></div>
       </div>
       <div class="card" data-tab="messages">
-        <h3>Sending hours</h3>
-        <p class="card-sub">Texts and emails to patients only go out in these hours. Anything sent or scheduled outside them waits for the next allowed time (you can still choose "Send now anyway").</p>
-        <div class="row-line first"><div><strong>Hours</strong><span class="muted small">Local time on this computer</span></div><div class="row-gap"><select id="qh-start"></select><span class="muted small">to</span><select id="qh-end"></select></div></div>
+        <h3>Sending hours <i class="info" tabindex="0" data-tip="Texts and emails to patients wait for these hours. You can still choose Send now anyway.">i</i></h3>
+        <div class="row-line first"><div><strong>Hours</strong></div><div class="row-gap"><select id="qh-start"></select><span class="muted small">to</span><select id="qh-end"></select></div></div>
         <div class="row-line"><div><strong>Days</strong></div><div class="day-chips" id="qh-days" style="margin:0"></div></div>
       </div>
+
       <div class="card" data-tab="app">
-        <h3>Records</h3>
-        <div class="row-line first"><div><strong>Activity log</strong><span class="muted small">What the app did with RxNT, Doximity and RingRx (faxes filed, sign-ins, syncs). Kept 90 days, chart numbers only, no names.</span></div><button class="btn" id="s-activity">View</button></div>
-        <div class="row-line"><div><strong>Spam numbers</strong><span class="muted small" id="s-spam-line">Calls and texts from these go straight to Spam.</span></div><button class="btn" id="s-spam">Manage</button></div>
-      </div>
-      <div class="card" data-tab="app">
-        <div class="card-head"><h3>App updates</h3><button class="btn" id="up-check">Check for updates</button></div>
-        <div class="row-line first"><div><strong id="up-ver"></strong><span class="muted small" id="up-msg">The app checks on its own every few hours and downloads quietly.</span></div><button class="btn primary hidden" id="up-restart">Restart to update</button></div>
+        <div class="card-head"><h3>Updates</h3><button class="btn small" id="up-check">Check</button></div>
+        <div class="row-line first"><div><strong id="up-ver"></strong><span class="muted small" id="up-msg"></span></div><button class="btn primary hidden" id="up-restart">Restart to update</button></div>
       </div>
       <div class="card" data-tab="app">
         <h3>This computer</h3>
         <div class="toggles">
           <label class="switch"><input type="checkbox" id="s-login"><span></span><b id="s-login-label">Start with Windows</b></label>
-          <label class="switch"><input type="checkbox" id="s-close"><span></span><b>Keep running in tray when closed</b></label>
+          <label class="switch"><input type="checkbox" id="s-close"><span></span><b>Keep running when closed</b></label>
           <label class="switch"><input type="checkbox" id="s-min"><span></span><b>Minimize to tray</b></label>
-          <label class="switch"><input type="checkbox" id="s-sound"><span></span><b>Sound for alerts</b></label>
+          <label class="switch"><input type="checkbox" id="s-sound"><span></span><b>Alert sound</b></label>
         </div>
       </div>
       <div class="card" data-tab="app">
-        <h3>Your data</h3>
-        <p class="card-sub">Everything is saved on this computer, encrypted, and backed up daily.</p>
-
-        <div class="row-line"><div><strong>History</strong><span class="muted small">How long sent messages are kept</span></div><select id="s-keep"><option value="forever">Keep forever</option><option value="2y">Keep 2 years</option><option value="1y">Keep 1 year</option></select></div>
-        <div class="row-line"><div><strong>Automatic backup</strong><span class="muted small" id="b-auto-line">Every day, last 14 kept in the data folder</span></div><div class="row-gap"><button class="btn" id="b-auto-restore">Restore…</button><label class="switch"><input type="checkbox" id="s-autobackup"><span></span></label></div></div>
-        <div class="row-line"><div><strong>Backup file</strong><span class="muted small">Password-protected file with everything: patients, history, calls, contacts, checklists, notes and settings</span></div><div class="row-gap"><button class="btn" id="b-restore">Restore file</button><button class="btn" id="b-export">Save backup file</button></div></div>
-        <div class="row-line"><div><strong>Contacts</strong><span class="muted small">Patients and RingRx contacts as a spreadsheet (opens in Excel, imports into Google or iPhone contacts). Not password-protected.</span></div><button class="btn" id="b-contacts">Save contacts file</button></div>
-        <div class="row-line"><div><strong>Data folder</strong><span class="muted small mono" id="data-path"></span></div><button class="btn" id="open-data">Open</button></div>
+        <h3>Data <i class="info" tabindex="0" data-tip="Everything is saved encrypted on this computer.">i</i></h3>
+        <div class="row-line first"><div><strong>Daily backup <i class="info" tabindex="0" data-tip="Last 14 days are kept in the data folder.">i</i></strong><span class="muted small" id="b-auto-line"></span></div><div class="row-gap"><button class="btn small" id="b-auto-restore">Restore…</button><label class="switch"><input type="checkbox" id="s-autobackup"><span></span></label></div></div>
+        <div class="row-line"><div><strong>Backup file <i class="info" tabindex="0" data-tip="One password-protected file with everything: patients, history, calls, checklists, notes and settings.">i</i></strong></div><div class="row-gap"><button class="btn small" id="b-restore">Restore</button><button class="btn small" id="b-export">Save</button></div></div>
+        <div class="row-line"><div><strong>Contacts <i class="info" tabindex="0" data-tip="A spreadsheet of patients and RingRx contacts. Not password-protected.">i</i></strong></div><button class="btn small" id="b-contacts">Save</button></div>
+        <div class="row-line"><div><strong>Keep sent history</strong></div><select id="s-keep"><option value="forever">Forever</option><option value="2y">2 years</option><option value="1y">1 year</option></select></div>
+        <div class="row-line"><div><strong>Activity log <i class="info" tabindex="0" data-tip="What the app did with RxNT, Doximity and RingRx. 90 days, no patient names.">i</i></strong></div><button class="btn small" id="s-activity">View</button></div>
+        <div class="row-line"><div><strong>Spam numbers</strong><span class="muted small" id="s-spam-line"></span></div><button class="btn small" id="s-spam">Manage</button></div>
+        <div class="row-line"><div><strong>Data folder</strong><span class="muted small mono" id="data-path"></span></div><button class="btn small" id="open-data">Open</button></div>
       </div>
     </section>
   </main>

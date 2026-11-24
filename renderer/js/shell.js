@@ -209,8 +209,14 @@ $('update-ready').onclick = () => window.api.updateRestart();
 /* ---------- Clock with a next-visit countdown (time awareness at a glance) ---------- */
 function paintClock() {
   const now = new Date();
-  $('clock-time').textContent = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  $('clock-date').textContent = now.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+  const parts = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).split(' ');
+  $('clock-time').textContent = parts[0]; $('clock-ampm').textContent = parts[1] || '';
+  $('clock-date').textContent = now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+  // A thin line under the date shows how far through office hours the day is.
+  const sy = (typeof settings !== 'undefined' && settings && settings.sync) || {}, hm = (v, d) => { const [h, m] = String(v || d).split(':').map(Number); return h * 60 + (m || 0); };
+  const a = hm(sy.busyStart, '08:00'), b = hm(sy.busyEnd, '17:00'), cur = now.getHours() * 60 + now.getMinutes(), pct = Math.max(0, Math.min(1, (cur - a) / Math.max(1, b - a)));
+  $('day-fill').style.width = `${pct * 100}%`; $('day-track').classList.toggle('off', cur < a || cur > b || [0, 6].includes(now.getDay()));
+  $('day-track').title = cur < a ? 'Before office hours' : cur > b ? 'After office hours' : `${Math.round(pct * 100)}% through office hours`;
   const next = (((typeof dayStore !== 'undefined' && dayStore[ymd()]) || {}).items || [])
     .filter((v) => ['booked', 'confirmed'].includes(stateOf(v)) && new Date(v.start) > now - 5 * 60000)
     .sort((a, b) => new Date(a.start) - new Date(b.start))[0];
@@ -222,4 +228,4 @@ function paintClock() {
   el.title = typeof visitBrief === 'function' ? visitBrief(next) : '';
 }
 paintClock();
-setInterval(paintClock, 15000);
+setInterval(paintClock, 10000);

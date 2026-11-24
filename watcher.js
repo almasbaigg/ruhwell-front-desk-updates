@@ -212,7 +212,7 @@ function targetOf(e) {
   if (e.kind === 'portal' || e.kind === 'rx') return { view: 'rx' };
   if (e.kind === 'newpatient') return { view: 'patients' };
   if (e.kind === 'fax') return { view: 'faxes' };
-  if (e.appt && e.appt.start) return { view: 'visits', date: new Date(e.appt.start).toISOString().slice(0, 10) };
+  if (e.appt && e.appt.start) return { view: 'visits', date: e.appt.date || ymd(new Date(e.appt.start)) };   // local date (an evening visit isn't tomorrow)
   return { view: 'today' };
 }
 let digest = [];

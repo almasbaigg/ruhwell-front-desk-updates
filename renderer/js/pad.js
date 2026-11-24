@@ -106,12 +106,13 @@ const dayTitle = (k, title) => title || (k === todayKey() ? 'Today' : k === addD
 // A pending edit is saved for the day it was typed on, with the text as it was typed (switching days can't mix them up).
 let ntPending = null, ntSeq = 0;
 async function flushNote() {
-  clearTimeout(ntTimer); const p = ntPending; ntPending = null; if (!p) return;
-  try { const page = await window.api.notesSave(p.day, p.text); if (p.day === ntDay) { ntPage = page; $('nt-state').textContent = 'Saved'; paintLinks(); } }
-  catch { if (p.day === ntDay) $('nt-state').textContent = "Couldn't save. Keep this open and try again."; if (!ntPending) ntPending = p; }
+  clearTimeout(ntTimer); const p = ntPending; ntPending = null; if (!p) return true;
+  try { const page = await window.api.notesSave(p.day, p.text); if (!page) throw new Error('not saved'); if (p.day === ntDay) { ntPage = page; $('nt-state').textContent = 'Saved'; paintLinks(); } return true; }
+  catch { if (!ntPending) ntPending = p; if (p.day === ntDay) $('nt-state').textContent = "Couldn't save · retrying"; clearTimeout(ntTimer); ntTimer = setTimeout(flushNote, 5000); return false; }
 }
 async function loadNotes(day) {
-  if (ntPending && day && day !== ntPending.day) await flushNote();
+  // Leaving a day whose text didn't save: stay on it (nothing typed is ever shown under another day).
+  if (ntPending && day && day !== ntPending.day && !(await flushNote())) { toast("This page hasn't saved yet. Staying here until it does."); return; }
   if (day) ntDay = day; if (!ntDay) ntDay = todayKey();
   const seq = ++ntSeq, want = ntDay, page = await window.api.notes(want);
   if (seq !== ntSeq || want !== ntDay) return;   // a newer page was asked for meanwhile

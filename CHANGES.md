@@ -175,6 +175,41 @@
 ### Deferred
 - Splitting main.js into smaller files (no behavior change): saved for a quiet release, so it can't mix with these fixes.
 
+## 2.2.0 (Windows + Mac, Nov 24)
+**Asked for**
+- **No more 5-second auto-send.** The confirm window waits for you: Send, Send later, or Cancel (outside sending hours: "Send today at 8:00 AM" or "Send now anyway").
+- **Simpler filters, the same everywhere**: To do · All · Sent (Done for faxes) · Spam. Unread is shown in the list itself (dot + bold), not as its own filter. The sidebar group is now "Inbox".
+- **Email writing area**: a clean sheet with a quiet header (From / To / Subject), a soft toolbar, the body as a white page, and the actions in a footer that always stays visible.
+- **Premium pass** across the app: softer layered shadows, finer borders, warmer background light, refined buttons and toggles, blurred backdrop behind windows, slimmer scrollbars.
+- **Clock**: big serif time with small AM/PM, the full date, and a thin line showing how far through office hours the day is.
+- **Settings, reorganized and shorter**: four tabs (Accounts · You & alerts · Messages · App). Explanations moved into a small (i) you can hover; each account row has one main button and a ⋯ menu (Check now, Sign out). Texts and Emails each have one card (sign-off, review link, templates / sender name, welcome packet, signature, templates). Data, backups, activity log and spam numbers are together under App.
+- Faxes: one Done button; Download, Open in Doximity, Mark unread, Not patient-related and Spam are under More.
+
+## 2.2.0 also includes: fixes from ChatGPT's second review, each checked against the code
+- **Reply to the right number**: replying in a conversation from a patient's second number now goes to that number (it could use their main number). The number is shown next to Send. A slow-loading conversation can't paint over the one you just opened.
+- **STOP check order**: both the patient list and STOP list are read first, then checked for a lock, before every text and its retry (the first text after a new lock could still go).
+- **STOP never skipped after a crash**: replies are marked "processed" in the same save as the STOP itself, separate from the text history.
+- **Fax chart match**: a matching chart number no longer passes when the DOB or name disagrees; names with accents compare correctly; no names at all isn't enough. Maria's confirmation is still required.
+- **Failed or scheduled replies stay in Needs you**: only a reply that really went out clears the draft and marks the conversation done (Texts and Patients).
+- **Siblings on one number**: a pending patient is merged into a chart only when it's clearly the same person (one pending record on that number and the name/DOB agree).
+- **Back up now / before update**: the new backup is built and checked first, then replaces today's file; works even with daily backups off; reports the real result.
+- **Emails don't count as text replies** (and don't show in the text thread or count as appointment reminders).
+- **Scheduling IDs**: each Message window has its own random ID (two different texts at the same time can't collide); the welcome email gets its own ID from the same action.
+- **Notes**: if a day's text can't save, the app stays on that day and retries, instead of moving on.
+- **Fax download temp files** are removed at every start (a crash mid-download can't leave a copy).
+- **Scheduled batch interrupted** by a lock or sign-out is tried again later; patients already texted are skipped; counts show all intended recipients.
+- **Mark unread** on a text sticks even if RingRx already has it as read.
+- **Emails**: "Load older emails" always shows when there are more; fixed a duplicate button id.
+- **Slow sign-in pages** (RxNT, Doximity) no longer mark a saved password as wrong; only an explicit error does.
+- **RingRx read retries**: up to 5,000 kept; ones that keep failing move to the back.
+- Handled faxes stay handled for good (no 400-day expiry).
+- Faster lists and badges: the combined text/call timeline is reused until something is saved.
+- Alert clicks open the visit's local date (an evening visit no longer opens the next day).
+- **Small windows / high scaling**: the window never opens bigger than the screen; Today's tiles stay on one row and drop their second line; Needs attention and Today's visits get more room; the sidebar tightens so Sync now stays visible; the fax side panel narrows.
+- Texts: Mark unread, Spam and Block moved into one More menu. Calls: search also filters the callback list. Today panels stay clickable while updating.
+- Settings loads its Email section directly (no longer depends on script order).
+- Not taken: removing the send countdown (kept as before); renaming Emails "All" or Calls "Unread" (kept the same filter names on every screen, as asked).
+
 ## 2.1.0 (Windows + Mac, Nov 23)
 **Same everywhere**
 - Texts, Emails, Calls and Faxes share one set of filters: **Needs you · Unread · All · Sent (or Done) · Spam**, with counts.

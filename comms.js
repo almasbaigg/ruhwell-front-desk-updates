@@ -38,6 +38,7 @@ function attachVoicemails(list, vms) {
 
 // Pull texts, voicemails, calls and contacts from RingRx (last 90 days). Returns new inbound texts for reply handling.
 async function sync(pid) {
+  bust();
   if (running || !pid || !ringrx.status(pid).connected) return { skipped: true };
   running = true;
   const since = Date.now() - 90 * DAY, keep = (x) => new Date(x.at) >= since;
@@ -50,8 +51,12 @@ async function sync(pid) {
     if (msgs === null) { ok = false; store.ringrxHistory.set({ ...prevTexts, error: 'unavailable', failedAt: new Date().toISOString() }); }
     else {
       const texts = msgs.filter((m) => m.kind === 'text');
-      const known = new Set((prevTexts.items || []).map((m) => m.id));
-      fresh = texts.filter((m) => m.inbound && !known.has(m.id));
+      // "New" = not yet processed for STOP/START/YES (kept separately from the text history, so a crash between
+      // saving the history and handling a reply can't skip a STOP). Starts from what was already in the history.
+      const ib = store.inbound.get();
+      if (!Array.isArray(ib.processed)) store.inbound.set({ ...ib, processed: (prevTexts.items || []).filter((m) => m.inbound).map((m) => m.id).slice(-8000) });
+      const done = new Set(store.inbound.get().processed || []);
+      fresh = texts.filter((m) => m.inbound && !done.has(m.id));
       store.ringrxHistory.set({ items: texts.filter(keep), at: new Date().toISOString(), error: null, v: 2 });
     }
     if (calls === null) { ok = false; store.calls.set({ ...prevCalls, error: 'unavailable', failedAt: new Date().toISOString() }); }
@@ -65,7 +70,7 @@ async function sync(pid) {
   } catch (e) {
     ok = false;
     try { store.ringrxHistory.set({ ...store.ringrxHistory.get(), error: 'failed', failedAt: new Date().toISOString() }); } catch {}
-  } finally { running = false; }
+  } finally { running = false; bust(); }
   // A failed pull keeps the old texts/calls but says so (their "at" stays at the last success).
   try { spamCleanup(); } catch {}
   return { fresh, ok };
@@ -89,8 +94,13 @@ function directory() {
 }
 
 // One timeline per phone number: texts both ways (Front Desk and RingRx app) plus calls and voicemails.
-function events() {
-  const local = store.log.all().filter((h) => h.ok).map((h) => ({ id: 'fd-' + h.at + h.phone, type: 'text', inbound: false, phone: d10(h.phone), at: h.at, body: h.message || '', via: 'Front Desk', by: h.sentBy || '', template: h.template || '' }));
+// The combined timeline is read from several encrypted files; it is kept for a few seconds so the badges,
+// Today and the lists don't each decrypt everything again. Anything that changes it clears it (bust).
+let evCache = null;
+const bust = () => { evCache = null; };
+function events() { const ver = store.raw.version(); if (evCache && evCache.ver === ver && Date.now() - evCache.at < 4000) return evCache.v; const v = buildEvents(); evCache = { at: Date.now(), ver, v }; return v; }
+function buildEvents() {
+  const local = store.log.all().filter((h) => h.ok && h.channel !== 'email').map((h) => ({ id: 'fd-' + h.at + h.phone, type: 'text', inbound: false, phone: d10(h.phone), at: h.at, body: h.message || '', via: 'Front Desk', by: h.sentBy || '', template: h.template || '' }));
   const rr = (store.ringrxHistory.get().items || []).filter((m) => m.v !== undefined || m.kind || true).map((m) => ({ id: m.id, type: 'text', inbound: !!m.inbound, phone: m.phone, at: m.at, body: m.body || '', via: m.inbound ? '' : 'RingRx', unread: m.unread }));
   // A text sent from Front Desk also shows up in RingRx's sent folder: keep the Front Desk copy.
   // Same number, same words, within 10 minutes; each Front Desk copy hides at most one RingRx copy.
@@ -116,7 +126,7 @@ const recentOpen = (e, handledAt) => new Date(e.at).getTime() > (handledAt || 0)
 // Texts tab: one conversation per number (texts only), newest first.
 // "Needs reply" = their last text came after our last text, isn't STOP/confirm, and wasn't marked done.
 function textThreads(days = 30) {
-  const who = directory(), done = doneMap(), seen = store.callbacks.get().seen || {}, skip = ignored(), since = Date.now() - days * DAY, by = {};
+  const who = directory(), done = doneMap(), cbk = store.callbacks.get(), seen = cbk.seen || {}, force = cbk.unreadForce || {}, skip = ignored(), since = Date.now() - days * DAY, by = {};
   for (const e of events().filter((x) => x.type === 'text')) (by[e.phone] = by[e.phone] || []).push(e);
   const out = [];
   for (const [phone, list] of Object.entries(by)) {
@@ -129,7 +139,7 @@ function textThreads(days = 30) {
     const answer = lastIn && last.inbound ? answerOf(lastIn, list, done['t:' + phone]) : lastIn ? answerOf(lastIn, list, done['t:' + phone]) : null;
     out.push({ phone, who: w, spam, answer, last: { inbound: last.inbound, at: last.at, body: last.body },
       lastIn: lastIn ? { at: lastIn.at, body: lastIn.body } : null,
-      lastSent: lastOut ? { at: lastOut.at, body: lastOut.body } : null, needs: open.length && !w.dnt && !skip.has(phone) && !spam ? 'reply' : null, ignored: skip.has(phone), needsAt: open.length ? open[open.length - 1].at : null, unread: spam ? 0 : list.filter((e) => e.inbound && e.unread !== false && new Date(e.at) > (seen[phone] || 0)).length, readAt: seen[phone] || null, doneAt: done['t:' + phone] || null, count: list.length });
+      lastSent: lastOut ? { at: lastOut.at, body: lastOut.body } : null, needs: open.length && !w.dnt && !skip.has(phone) && !spam ? 'reply' : null, ignored: skip.has(phone), needsAt: open.length ? open[open.length - 1].at : null, unread: spam ? 0 : Math.max(force[phone] ? 1 : 0, list.filter((e) => e.inbound && e.unread !== false && new Date(e.at) > (seen[phone] || 0)).length), readAt: seen[phone] || null, doneAt: done['t:' + phone] || null, count: list.length });
   }
   return out.sort((a, b) => new Date(b.last.at) - new Date(a.last.at));
 }
@@ -176,7 +186,8 @@ const isSpam = (phone, w) => { const v = spamMap()[phone]; return !!v && (v < 0 
 // Listened marks for voicemails: id -> time first played (or transcript opened).
 function markHeard(id) { const c = store.callbacks.get(); if ((c.heard || {})[id]) return; c.heard = { ...(c.heard || {}), [id]: Date.now() }; const keys = Object.keys(c.heard); if (keys.length > 3000) for (const k of keys.slice(0, keys.length - 3000)) delete c.heard[k]; store.callbacks.set(c); }
 function unmarkHeard(id) { const c = store.callbacks.get(); if (c.heard) delete c.heard[id]; store.callbacks.set(c); }
-function unmarkSeen(phone) { const c = store.callbacks.get(); if (c.seen) delete c.seen[phone]; store.callbacks.set(c); }
+// Mark unread sticks even when RingRx already has the text as read (cleared when it's opened again).
+function unmarkSeen(phone) { const c = store.callbacks.get(); if (c.seen) delete c.seen[phone]; c.unreadForce = { ...(c.unreadForce || {}), [phone]: Date.now() }; store.callbacks.set(c); }
 // How an incoming call/voicemail/text got answered: the first later call out, text out, or answered call back in.
 function answerOf(e, all, handledAt) {
   const t = new Date(e.at);
@@ -189,11 +200,12 @@ function answerOf(e, all, handledAt) {
 // RingRx ids still marked new, so reading in the app can mark them read in RingRx too.
 function unreadRingrxTexts(phone) { return (store.ringrxHistory.get().items || []).filter((m) => m.inbound && m.unread && m.phone === phone).map((m) => m.id); }
 function setRingrxRead(ids) {
+  bust();
   const set = new Set(ids); if (!set.size) return;
   const h = store.ringrxHistory.get(); h.items = (h.items || []).map((m) => (set.has(m.id) ? { ...m, unread: false } : m)); store.ringrxHistory.set(h);
   const c = store.calls.get(); c.vms = (c.vms || []).map((v) => (set.has(v.id) ? { ...v, unread: false } : v)); c.items = (c.items || []).map((x) => (set.has(x.vmId) ? { ...x, vmUnread: false } : x)); store.calls.set(c);
 }
-function markSeen(phone) { const c = store.callbacks.get(); c.seen = { ...(c.seen || {}), [phone]: Date.now() }; store.callbacks.set(c); }
+function markSeen(phone) { const c = store.callbacks.get(); c.seen = { ...(c.seen || {}), [phone]: Date.now() }; if (c.unreadForce) delete c.unreadForce[phone]; store.callbacks.set(c); }
 // True when an item was marked done after the given time (used for RxNT portal conversations too).
 // Undo a "done" (the last few seconds' click): forget when it was marked.
 function unmarkDone(kind, id) { const k = `${kind}:${id}@`; const c = store.callbacks.get(); c.done = (c.done || []).filter((d) => !String(d).startsWith(k)); store.callbacks.set(c); }
@@ -234,7 +246,7 @@ function handleReplies(fresh, addEvents) {
       // Credit the confirmation to whoever was last texted on this number (the reminder), not just anyone on it.
       // Credit it only to an appointment reminder sent to this number in the last 4 days, and only when exactly
       // one person got one. Otherwise it needs Maria to look (shared numbers, or a YES to something else).
-      const rem = store.log.all().filter((h) => h.ok && h.phone === m.phone && (h.apptId || /remind/i.test(String(h.templateId || h.template || ''))) && new Date(h.at) <= new Date(m.at) && new Date(m.at) - new Date(h.at) < 4 * DAY);
+      const rem = store.log.all().filter((h) => h.ok && h.channel !== 'email' && h.phone === m.phone && (h.apptId || /remind/i.test(String(h.templateId || h.template || ''))) && new Date(h.at) <= new Date(m.at) && new Date(m.at) - new Date(h.at) < 4 * DAY);
       const people = [...new Set(rem.map((h) => h.name || ''))];
       if (people.length === 1 && (hits.length <= 1 || rem.every((h) => h.apptId))) {
         const sent = rem.sort((a, b) => new Date(b.at) - new Date(a.at))[0];
@@ -245,10 +257,13 @@ function handleReplies(fresh, addEvents) {
       events.push({ kind: 'reply', text: `New text from ${who}`, appt: { first: p?.first, last: p?.last, phone: m.phone } });
     }
   }
+  // Marked as handled only now, in the same save as the STOP itself: a crash before this point means the
+  // reply is processed again on the next sync (STOP and START are safe to apply twice).
+  st.processed = [...new Set([...(st.processed || []), ...fresh.map((m) => m.id)])].slice(-8000);
   store.inbound.set(st);
   if (events.length) addEvents(events);
 }
 
 const status = () => { const h = store.ringrxHistory.get(), c = store.calls.get(); return { running, at: h.at, error: h.error || c.error, texts: (h.items || []).length, calls: (c.items || []).length }; };
 
-module.exports = { unreadRingrxTexts, setRingrxRead, attachVoicemails, markSpam, spamList, spamCleanup, spamMap, markHeard, unmarkHeard, unmarkSeen, answerOf, unmarkDone, optedOut, clearOptOut, sync, textThreads, callList, thread, markDone, doneSince, markSeen, snooze, snoozes, ignore, counts, handleReplies, status, events, directory, d10 };
+module.exports = { bust, unreadRingrxTexts, setRingrxRead, attachVoicemails, markSpam, spamList, spamCleanup, spamMap, markHeard, unmarkHeard, unmarkSeen, answerOf, unmarkDone, optedOut, clearOptOut, sync, textThreads, callList, thread, markDone, doneSince, markSeen, snooze, snoozes, ignore, counts, handleReplies, status, events, directory, d10 };

@@ -39,12 +39,13 @@ function update(id, patch) { const ix = index(); const i = (ix.items || []).find
 function prune() {
   const ix = index(), cutoff = Date.now() - KEEP_FILED_DAYS * 864e5;
   const keep = [], drop = [];
-  // The PDF goes after 30 days; a small record (id, what was done, when) stays for a year so Doximity still
+  // The PDF goes after 30 days; a small record (id, what was done, when) stays so Doximity still
   // listing the fax can never bring it back as new.
-  const yearAgo = Date.now() - 400 * 864e5;
   for (const f of ix.items || []) (['filed', 'notpatient', 'spam', 'done'].includes(f.status) && !f.pruned && new Date(f.doneAt || f.at || 0) < cutoff ? drop : keep).push(f);
   const tomb = drop.map((f) => ({ id: f.id, status: f.status, doneAt: f.doneAt || null, at: f.at, pruned: true, filed: f.filed ? { chart: f.filed.chart, at: f.filed.at } : undefined }));
-  const items = keep.filter((f) => !(f.pruned && new Date(f.doneAt || f.at || 0) < yearAgo)).concat(tomb);
+  // Handled records are tiny and kept (newest 20,000), so a fax Doximity keeps listing can never come back.
+  const all = keep.concat(tomb), extra = all.filter((f) => f.pruned).length - 20000;
+  const items = extra > 0 ? all.filter((f, i, a) => !f.pruned || a.slice(0, i + 1).filter((x) => x.pruned).length > extra) : all;
   if (!drop.length && items.length === keep.length) return;
   saveIndex({ ...ix, items });
   for (const f of drop) try { fs.rmSync(store.raw.file(path.join(DIR, `${safe(f.id)}.bin`)), { force: true }); } catch {}
@@ -108,7 +109,7 @@ async function autoSignIn() {
       if (look.step === 'bad') { markLoginBad(); return 'bad'; }
       if (look.step === 'code') return 'code';
       if ((look.step === 'username' || look.step === 'password') && !done.has(look.step)) { done.add(look.step); await call(win, autofillStep, c.u, c.p, true); }
-      else if (look.step === 'password' && done.has('password')) { await sleep(3000); const again = await call(win, autofillStep, '', '', false); if (again.step === 'password' || again.step === 'bad') { markLoginBad(); return 'bad'; } }
+      else if (look.step === 'password' && done.has('password')) { await sleep(3000); const again = await call(win, autofillStep, '', '', false); if (again.step === 'bad') { markLoginBad(); return 'bad'; } /* still on the password page: slow, not wrong; keep waiting */ }
     }
     return 'failed';
   } finally { if (!win.isDestroyed()) win.destroy(); }
@@ -322,4 +323,6 @@ function repairOnce() {
 }
 
 function setMeta(id, meta) { const allowed = ['category', 'suggest', 'ocrAt', 'ocrError', 'textHint']; const m = Object.fromEntries(Object.entries(meta || {}).filter(([k]) => allowed.includes(k))); return update(id, m); }
-module.exports = { setMeta, sniff, retryDownload, faxUrl, repairOnce, PART, sync, status, list, pdf, update, signIn, signOut, autoSignIn, forgetLogin, loginState, savedLogin, prune, whenOf, readInbox, KEEP_FILED_DAYS };
+// A download cut off by a crash or power loss can leave a temporary copy: removed at every start.
+function cleanTmp() { try { const d = store.raw.file(''); for (const f of fs.readdirSync(d)) if (/^tmp-fax-/.test(f)) fs.rmSync(path.join(d, f), { force: true }); } catch {} }
+module.exports = { cleanTmp, setMeta, sniff, retryDownload, faxUrl, repairOnce, PART, sync, status, list, pdf, update, signIn, signOut, autoSignIn, forgetLogin, loginState, savedLogin, prune, whenOf, readInbox, KEEP_FILED_DAYS };

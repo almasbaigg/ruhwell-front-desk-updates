@@ -1,5 +1,5 @@
 /* Texts: one conversation per number (patients, parents, new callers), answered right here. */
-let txFilter = fixFilter(recall('tx-filter', 'needs'), ['needs', 'unread', 'all', 'sent', 'spam']), txData = [], txOpen = null;
+let txFilter = fixFilter(recall('tx-filter', 'needs'), ['needs', 'all', 'sent', 'spam']), txData = [], txOpen = null;
 const WHO_TAG = { unknown: ['amber', 'Not a patient'], pending: ['blue', 'Not in RxNT yet'], contact: ['', 'RingRx contact'], shared: ['', 'Shared number'] };
 const whoTag = (w) => (WHO_TAG[w.kind] ? `<span class="pill ${WHO_TAG[w.kind][0]}">${WHO_TAG[w.kind][1]}</span>` : '');
 const whoName = (w, phone) => w.name || fmtPhone(phone);
@@ -58,9 +58,11 @@ async function openThread(phone, keepDraft) {
   renderTextList();
   const t = txData.find((x) => x.phone === phone) || { phone, who: { kind: 'unknown', name: '' }, needs: null };
   const msgs = await window.api.thread(phone);
+  if (txOpen !== phone) return;   // another conversation was opened meanwhile
   const rec = recordFor({ phone });
   const draft = keepDraft && txOpen === phone && $('tx-pane').querySelector('textarea') ? $('tx-pane').querySelector('textarea').value : '';
-  const p = rec ? { ...rec, rec, text: draft, templateId: null } : { first: '', last: '', phone, text: draft, templateId: null };
+  // The reply goes to the number of this conversation, even when it's a patient's second number.
+  const p = rec ? { ...rec, rec, phone, text: draft, templateId: null } : { first: '', last: '', phone, text: draft, templateId: null };
   p.greet = greetName(p, rec);
   let lastDay = '';
   const bubbles = msgs.map((m) => {
@@ -72,13 +74,14 @@ async function openThread(phone, keepDraft) {
   $('tx-pane').innerHTML = `
     <div class="convo-head"><span class="avatar ${unknown ? 'unk' : ''}">${whoInitials(t.who)}</span>
       <div><h2>${esc(whoName(t.who, phone))} ${whoTag(t.who)}</h2>${unknown ? '' : `<p class="muted small">${esc(fmtPhone(phone))}</p>`}</div>
-      <div class="row-gap">${t.lastIn && !t.spam ? (t.needs ? `<button class="btn" id="tx-done">${I.check}Mark done</button>` : t.doneAt ? `<span class="done-pill">${I.check}Done</span>` : '') : ''}${rec ? '<button class="btn" id="tx-patient">Open patient</button>' : ''}${unknown ? `<button class="btn" id="tx-who">${I.user}Who is this?</button>` : ''}<button class="btn" id="tx-unread" title="Mark unread">Mark unread</button>${t.spam ? '<button class="btn" id="tx-block">Block in RingRx</button><button class="btn" id="tx-notspam">Not spam</button>' : `<button class="btn spam-btn" id="tx-spam" title="Mark this number as spam">${I.x}Spam</button>`}</div></div>
+      <div class="row-gap">${t.lastIn && !t.spam ? (t.needs ? `<button class="btn" id="tx-done">${I.check}Mark done</button>` : t.doneAt ? `<span class="done-pill">${I.check}Done</span>` : '') : ''}${rec ? '<button class="btn" id="tx-patient">Open patient</button>' : ''}${unknown ? `<button class="btn" id="tx-who">${I.user}Who is this?</button>` : ''}<div class="more-wrap"><button class="btn" id="tx-more">More ▾</button><div class="more-menu hidden" id="tx-menu"><button id="tx-unread">Mark unread</button>${t.spam ? '<button id="tx-notspam">Not spam</button><button id="tx-block">Block in RingRx</button>' : '<button id="tx-spam">Mark as spam</button>'}</div></div></div></div>
     ${t.lastIn ? `<div class="receipt-line">${t.readAt ? stamp('Read', t.readAt) : '<b>New</b>'}${t.answer ? ` · ${esc(answerLabel(t.answer))}` : t.needs ? ' · <b class="amber-t">Needs reply</b>' : ''}${t.doneAt ? ' · ' + stamp('Done', t.doneAt) : ''}</div>` : ''}
     <div class="convo-body" id="tx-body">${bubbles || '<p class="muted small center-text" style="margin-top:30px">No texts yet.</p>'}</div>
-    ${rec && rec.dnt ? '<div class="convo-foot muted small">Marked do not text.</div>' : `<div class="convo-foot" id="tx-comp">${composerHTML(p, { rows: 3, placeholder: 'Write a reply…' })}<div class="row-gap foot-actions"><span class="from-chip">${sendFrom ? `${I.phone}From ${esc(fmtPhone(sendFrom))}` : ''}</span><span style="flex:1"></span><button class="btn primary" id="tx-send">${I.send}Send</button></div></div>`}`;
+    ${rec && rec.dnt ? '<div class="convo-foot muted small">Marked do not text.</div>' : `<div class="convo-foot" id="tx-comp">${composerHTML(p, { rows: 3, placeholder: 'Write a reply…' })}<div class="row-gap foot-actions"><span class="from-chip">${sendFrom ? `${I.phone}From ${esc(fmtPhone(sendFrom))}` : ''}</span><span style="flex:1"></span><span class="to-chip">To ${esc(fmtPhone(phone))}</span><button class="btn primary" id="tx-send">${I.send}Send</button></div></div>`}`;
   const body = $('tx-body'); body.scrollTop = body.scrollHeight;
   if ($('tx-done')) $('tx-done').onclick = async () => { await window.api.markDone('t', phone); bumpDone(); toast('Marked done'); loadTexts(true); };
   if ($('tx-patient')) $('tx-patient').onclick = () => openPatient(rec);
+  $('tx-more').onclick = (e) => { e.stopPropagation(); $('tx-menu').classList.toggle('hidden'); };
   $('tx-unread').onclick = async () => { await window.api.markUnseen(phone); txOpen = null; toast('Marked unread', async () => { await window.api.markSeen(phone); loadTexts(true); }); loadTexts(true); };
   if ($('tx-spam')) $('tx-spam').onclick = () => markSpamFlow(t, () => { txOpen = null; loadTexts(true); });
   if ($('tx-block')) $('tx-block').onclick = () => { window.api.openRingrx('block'); toast('Opened RingRx. Add the number to your block list there.'); };
@@ -89,7 +92,13 @@ async function openThread(phone, keepDraft) {
     bindComposer($('tx-comp'), p, rebind);
     $('tx-send').onclick = () => {
       if (!finalMessage(p)) return toast('Write a message first.');
-      confirmAndSend([itemFor(p)], async () => { p.text = ''; await window.api.markDone('t', phone); bumpDone(); window.api.commsSync().then(() => loadTexts(true)); history = await window.api.history(); loadTexts(true); });
+      // Only a reply that really went out clears the draft and marks the conversation done. A scheduled reply
+      // leaves it in Needs you until it's sent; a failed one keeps the draft.
+      confirmAndSend([itemFor(p)], async (results, mode) => {
+        if (mode === 'scheduled') { p.text = ''; loadTexts(true); return; }
+        if (!results || !results.length || !results.every((r) => r.ok)) return;
+        p.text = ''; await window.api.markDone('t', phone); bumpDone(); window.api.commsSync().then(() => loadTexts(true)); history = await window.api.history(); loadTexts(true);
+      });
     };
   }
 }

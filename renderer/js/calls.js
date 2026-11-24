@@ -1,6 +1,6 @@
 /* Calls: the RingRx call log. Calls can't be answered from the app, so this shows who called, what's
    still waiting for a callback, and a quick way to text back. */
-let caFilter = fixFilter(recall('ca-filter', 'needs'), ['needs', 'unread', 'all', 'sent', 'spam']), caData = [];
+let caFilter = fixFilter(recall('ca-filter', 'needs'), ['needs', 'all', 'sent', 'spam']), caData = [];
 
 async function loadCalls() {
   const days = +$('ca-range').value;
@@ -64,7 +64,7 @@ function callRow(c, due, group) {
 function renderCalls() {
   const q = $('ca-search').value.trim().toLowerCase(), qd = digits(q);
   // Needs you = callbacks due (oldest wait first, with how long); the rest are the same filters as Texts and Emails.
-  const due = caData.filter((c) => c.due);
+  const due = caData.filter((c) => c.due && (!q || (c.who.name || '').toLowerCase().includes(q) || (qd.length >= 3 && c.phone.includes(qd))));
   filterCounts('ca-filter', { needs: due.length, unread: caData.filter((c) => !c.spam && c.voicemail && !c.heardAt).length });
   $('ca-due').innerHTML = caFilter === 'needs' ? (due.length ? `<div class="list">${due.map((c) => callRow(c, true)).join('')}</div>` : `<div class="all-clear small-clear">${I.check}<b>No calls waiting for a callback</b></div>`) : '';
   if (caFilter === 'needs') { $('ca-list').innerHTML = ''; bindCallRows(); return; }

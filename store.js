@@ -21,7 +21,9 @@ function atomicWrite(f, data, mode) {
 function readPlain(name, fallback) {
   try { return JSON.parse(fs.readFileSync(file(name), 'utf8')); } catch { return fallback; }
 }
-function writePlain(name, data) { atomicWrite(file(name), JSON.stringify(data, null, 2)); }
+let writes = 0;   // bumped on every save, so caches elsewhere know when data changed
+function writePlain(name, data) {
+  writes++; atomicWrite(file(name), JSON.stringify(data, null, 2)); }
 
 /* Encrypted files. Patient data is never saved unencrypted, and data that can't be unlocked is never
    treated as empty: if a file exists but can't be decrypted (for example the Mac Keychain refused access
@@ -54,6 +56,7 @@ function readSecure(name, fallback) {
   }
 }
 function writeSecure(name, data) {
+  writes++;
   if (locked.has(name)) throw Object.assign(new Error(`Saved data (${name}) is locked, not overwriting it.`), { code: 'LOCKED' });
   const text = JSON.stringify(data);
   let out;
@@ -196,9 +199,13 @@ module.exports = {
         if (m.guardianFirst && !m.contactSetInApp && m.age != null && m.age < 18) { m.contactType = 'parent'; m.contactName = m.guardianFirst; m.contactSource = 'RxNT'; }
         m.key = key; m.updatedAt = new Date().toISOString();
         // A patient added in the app before they were in RxNT links up once RxNT has them (same phone).
+        // Only when it is clearly the same person: exactly one pending record on that number, and its name (when
+        // it has one) matches. Siblings sharing a parent's phone stay separate, to be linked by hand.
         if (m.chart && m.phone) {
-          for (const [k2, q] of Object.entries(db)) {
-            if (k2 === key || !q.pending || !(q.phone === m.phone || (q.otherPhones || []).includes(m.phone))) continue;
+          const nmz = (v) => String(v || '').normalize('NFKD').toLowerCase().replace(/[^\p{L}]/gu, '');
+          const onNum = Object.entries(db).filter(([k2, q]) => k2 !== key && q.pending && (q.phone === m.phone || (q.otherPhones || []).includes(m.phone)));
+          const sameWho = (q) => (!nmz(q.last) || nmz(q.last) === nmz(m.last)) && (!nmz(q.first) || nmz(q.first) === nmz(m.first)) && (!q.dob || !m.dob || String(q.dob).slice(0, 10) === String(m.dob).slice(0, 10));
+          for (const [k2, q] of onNum.length === 1 && sameWho(onNum[0][1]) ? onNum : []) {
             for (const f of ['contactType', 'contactName', 'contactSetInApp', 'dnt', 'dntReason']) if (q[f] !== undefined && m[f] === undefined) m[f] = q[f];
             m.otherPhones = [...new Set([...(m.otherPhones || []), ...(q.otherPhones || [])])];
             delete db[k2];
@@ -282,6 +289,6 @@ module.exports = {
     set: (v) => writeSecure('inbound.bin', v),
   },
   // Raw access for backup/restore.
-  raw: { readSecure, writeSecure, readPlain, writePlain, file, lockedFiles, retryLocked },
+  raw: { version: () => writes, readSecure, writeSecure, readPlain, writePlain, file, lockedFiles, retryLocked },
   DEFAULT_TEMPLATES,
 };

@@ -39,6 +39,7 @@ async function loadSettings() {
     $('b-auto-line').classList.toggle('warn-text', failed);
   });
   $('data-path').textContent = info?.dataDir || ''; $('s-saved').textContent = '';
+  if (typeof loadEmailSettings === 'function') loadEmailSettings().catch(() => {});   // Settings → Email and Sending hours
   renderTemplates();
   paintHealth();
 }
@@ -250,3 +251,6 @@ $('s-spam').onclick = async () => {
   openModal(`<h2>Spam numbers</h2><p class="muted small">Calls, voicemails and texts from these go straight to Spam, with no alerts.</p><div class="lines" id="sp-list" style="max-height:340px;overflow:auto"></div><div class="actions"><button class="btn" id="sp-close">Close</button></div>`);
   $('sp-close').onclick = closeModal; draw();
 };
+
+// Account rows: Check now and Sign out live in a small ⋯ menu.
+document.querySelectorAll('#view-settings .row-more').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); const m = b.nextElementSibling; const open = m.classList.contains('hidden'); document.querySelectorAll('.more-menu').forEach((x) => x.classList.add('hidden')); if (open) m.classList.remove('hidden'); }));

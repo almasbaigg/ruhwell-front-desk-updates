@@ -82,7 +82,7 @@ function renderCompose() {
     $('c-send').onclick = () => {
       if (digits(p.phone).length !== 10) return toast('Enter a valid 10-digit phone number.');
       if (!finalMessage(p)) return toast('Write a message first.');
-      confirmAndSend([itemFor(p)], async () => { history = await window.api.history(); p.text = ''; p.templateId = null; renderCompose(); });
+      confirmAndSend([itemFor(p)], async (results, mode) => { history = await window.api.history(); if (mode === 'scheduled' || (results && results.length && results.every((r) => r.ok))) { p.text = ''; p.templateId = null; } renderCompose(); });
     };
   }
 }

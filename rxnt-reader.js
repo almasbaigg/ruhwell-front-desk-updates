@@ -362,7 +362,7 @@ async function autoSignIn(pid) {
       if (look.step === 'in') { await keepSignedIn(pid); return 'ok'; }
       if ((look.step === 'username' || look.step === 'password') && !done.has(look.step)) {
         done.add(look.step); await call(win, autofillStep, c.u, c.p, true);
-      } else if (look.step === 'password' && done.has('password')) { await sleep(3000); const again = await call(win, autofillStep, '', '', false); if (again.step === 'password' || again.step === 'bad') { markLoginBad(pid); return 'bad'; } }
+      } else if (look.step === 'password' && done.has('password')) { await sleep(3000); const again = await call(win, autofillStep, '', '', false); if (again.step === 'bad') { markLoginBad(pid); return 'bad'; } /* still on the password page: slow, not wrong; keep waiting */ }
     }
     return 'failed';
   } finally { if (!win.isDestroyed()) win.destroy(); }
@@ -725,8 +725,11 @@ function sameChart(p, who) {
   if (!p) return false;
   const chartOk = who.patientId && p.chart ? String(p.chart) === String(who.patientId) : null;
   if (chartOk === false) return false;
-  const nameOk = norm(p.last) === norm(who.last) && norm(p.first) === norm(who.first);
-  const dobOk = !!who.dob && !!p.dob && p.dob === String(who.dob).slice(0, 10);
+  // Any clear conflict stops it, even when the chart number matches: a different DOB, or a different name.
+  const nm = (v) => String(v || '').normalize('NFKD').toLowerCase().replace(/[^\p{L}]/gu, '');
+  const bothName = nm(p.last) && nm(who.last), nameOk = !!bothName && nm(p.last) === nm(who.last) && (!nm(p.first) || !nm(who.first) || nm(p.first) === nm(who.first));
+  const bothDob = !!who.dob && !!p.dob, dobOk = bothDob && p.dob === String(who.dob).slice(0, 10);
+  if ((bothDob && !dobOk) || (bothName && !nameOk)) return false;
   return chartOk === true ? nameOk || dobOk : nameOk && dobOk;
 }
 async function findChart(pid, who) {

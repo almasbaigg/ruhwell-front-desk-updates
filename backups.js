@@ -86,13 +86,19 @@ function list() {
 // so a failing backup shows up in Settings and the status line instead of failing quietly.
 const STATUS = 'backup-status.json';
 const status = () => store.raw.readPlain(STATUS, {});
-function autoDaily() {
-  if (store.settings.get().autoBackup === false) return false;
+// force: "Back up now" and before an update. The new copy is built and checked first; only then does it replace
+// today's file (an atomic write), so a failed attempt never removes the backup that was there.
+function autoDaily(force) {
+  if (!force && store.settings.get().autoBackup === false) return false;
   const name = `auto-${ymd()}.bin`, rel = path.join(DIR, name);
   try {
-    if (list().some((b) => b.file === name) && store.raw.readSecure(rel, null)) return false;
-    if (store.raw.lockedFiles().length) throw new Error('Your saved data is locked right now, so no backup was made.');
-    store.raw.writeSecure(rel, snapshot());
+    if (!force && list().some((b) => b.file === name) && store.raw.readSecure(rel, null)) return false;
+    const before = store.raw.lockedFiles().length, snap = snapshot();
+    if (before || store.raw.lockedFiles().length) throw new Error('Your saved data is locked right now, so no backup was made.');
+    const tmp = path.join(DIR, `new-${name}`);
+    store.raw.writeSecure(tmp, snap);
+    if (!store.raw.readSecure(tmp, null)) throw new Error('The backup could not be read back.');
+    fs.renameSync(store.raw.file(tmp), store.raw.file(rel));
     if (!store.raw.readSecure(rel, null)) throw new Error('The backup could not be read back.');
     list().slice(KEEP).forEach((b) => { try { fs.unlinkSync(store.raw.file(path.join(DIR, b.file))); } catch {} });
     store.raw.writePlain(STATUS, { at: new Date().toISOString(), ok: true });
