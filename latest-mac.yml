@@ -1,17 +1,17 @@
-version: 1.6.1
+version: 1.6.3
 files:
-  - url: RuhwellFrontDesk-x64.zip
-    sha512: S9yq0vumVq+fNfIruBT7pO1WCWtoi14Hf19Ycv/Sfa8UxT/8sSAM7VZBgmrw+ihw5ukBlXxzmewMZUjdI0JTDw==
-    size: 100151833
   - url: RuhwellFrontDesk-arm64.zip
-    sha512: xorkYcroyvqVlQpaKC7z4glJFqOpw71fHM4VpRNkO1lqtgW7GN6j67p4zCdXLku57Z6+HxAudRGV1J7cL0wMTw==
-    size: 95524640
+    sha512: ivKvdfiTKttpCkRLTG16chd3PXvONLCfexPvQssRyYFgrZSjyDj42EV/jAClAGBklFipXBvP/3ClFWi8AvnACw==
+    size: 111583005
+  - url: RuhwellFrontDesk-x64.zip
+    sha512: rT+cCDeZ/xBMgQowmtkC2XTfvD5GlvYzdzrZhlbG8Ac60EgDrjhmjDwx/6MvgS9HQ+5cU2ZLjCZect+WTbroIQ==
+    size: 116210198
   - url: RuhwellFrontDesk-x64.dmg
-    sha512: tbEq3fc+9cMdJsowjH7WDdPvQHAFd+pnU9xCKMVlNrzYoRvvfMNFekefF39D+5lgqnXrjpWDjlD0ONoEeBm95g==
-    size: 103496336
+    sha512: bzVB7s0hSBrA8Yb1JRzT4JXJ4Q9mUqEL+Avu+yNQD3gHBg1aNghY0gPU3LeWhB2xOq8yob/sKBh64junDt6Tow==
+    size: 120068895
   - url: RuhwellFrontDesk-arm64.dmg
-    sha512: ZmfrHPVVFYrVo70sebUEdoSPDsOq9rnyejl9QCHrCqZqqlwFyBaeHbHHH08yEz1msvbmCjDjrN0jPxoxjF9EJA==
-    size: 98885472
-path: RuhwellFrontDesk-x64.zip
-sha512: S9yq0vumVq+fNfIruBT7pO1WCWtoi14Hf19Ycv/Sfa8UxT/8sSAM7VZBgmrw+ihw5ukBlXxzmewMZUjdI0JTDw==
-releaseDate: '2026-11-21T05:04:30.484Z'
+    sha512: 8UWsouoHIvb7J98i76v2U7iRmCsgh3FKBt27FwhdJuanpp/1+qh20CrySVNTNds+qQbAhocznTApsxGhdAhgjQ==
+    size: 115480053
+path: RuhwellFrontDesk-arm64.zip
+sha512: ivKvdfiTKttpCkRLTG16chd3PXvONLCfexPvQssRyYFgrZSjyDj42EV/jAClAGBklFipXBvP/3ClFWi8AvnACw==
+releaseDate: '2026-11-24T01:35:28.238Z'
