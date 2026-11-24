@@ -1,5 +1,5 @@
 /* Texts: one conversation per number (patients, parents, new callers), answered right here. */
-let txFilter = recall('tx-filter', 'needs'), txData = [], txOpen = null;
+let txFilter = fixFilter(recall('tx-filter', 'needs'), ['needs', 'unread', 'all', 'sent', 'spam']), txData = [], txOpen = null;
 const WHO_TAG = { unknown: ['amber', 'Not a patient'], pending: ['blue', 'Not in RxNT yet'], contact: ['', 'RingRx contact'], shared: ['', 'Shared number'] };
 const whoTag = (w) => (WHO_TAG[w.kind] ? `<span class="pill ${WHO_TAG[w.kind][0]}">${WHO_TAG[w.kind][1]}</span>` : '');
 const whoName = (w, phone) => w.name || fmtPhone(phone);
@@ -26,10 +26,7 @@ async function loadTexts(keep) {
   $('tx-range-label').textContent = `${new Date(Date.now() - days * 864e5).toLocaleDateString([], { month: 'short', day: 'numeric' })} – today`;
   txData = await loading(() => window.api.textThreads(days));
   if (!patients.length) { patients = await window.api.patients(); indexPatients(patients); }
-  const n = txData.filter((t) => t.needs).length, nu = txData.filter((t) => !t.spam && t.unread).length, na = txData.filter((t) => !t.spam && t.lastIn && !t.answer && !t.who.dnt).length;
-  document.querySelector('#tx-filter [data-f="needs"]').innerHTML = `Needs reply${n ? `<b>${n}</b>` : ''}`;
-  document.querySelector('#tx-filter [data-f="unread"]').innerHTML = `Unread${nu ? `<b>${nu}</b>` : ''}`;
-  document.querySelector('#tx-filter [data-f="unanswered"]').innerHTML = `Unanswered${na ? `<b>${na}</b>` : ''}`;
+  filterCounts('tx-filter', { needs: txData.filter((t) => t.needs).length, unread: txData.filter((t) => !t.spam && t.unread).length });
   renderTextList();
   if (txOpen && keep) openThread(txOpen, true);
   else if (!txOpen) $('tx-pane').innerHTML = `<div class="empty-state">${I.msg}<h3>Pick a conversation</h3><p>Texts from patients, and the texts you send from here or the RingRx app.</p></div>`;
@@ -37,7 +34,7 @@ async function loadTexts(keep) {
 function renderTextList() {
   const q = $('tx-search').value.trim().toLowerCase(), qd = digits(q);
   // Needs reply: waiting on us. Inbox: what patients sent (latest first). Sent: what we sent.
-  const pick = { needs: (t) => !t.spam && t.needs && t.last, unread: (t) => !t.spam && t.unread && t.lastIn, unanswered: (t) => !t.spam && t.lastIn && !t.answer && !t.who.dnt && t.lastIn, inbox: (t) => !t.spam && t.lastIn, sent: (t) => t.lastSent, spam: (t) => t.spam && t.last }[txFilter] || ((t) => t.last);
+  const pick = { needs: (t) => !t.spam && t.needs && t.last, unread: (t) => !t.spam && t.unread && t.lastIn, all: (t) => !t.spam && t.last, sent: (t) => t.lastSent, spam: (t) => t.spam && t.last }[txFilter] || ((t) => t.last);
   const match = (t) => !q || (t.who.name || '').toLowerCase().includes(q) || (qd.length >= 3 && t.phone.includes(qd));
   const list = txData.filter((t) => pick(t) && match(t)).sort((a, b) => new Date(pick(b).at) - new Date(pick(a).at));
   // Grouped by day so a long list reads in chunks; in Needs reply, how long they've waited is colored by urgency.
@@ -48,9 +45,9 @@ function renderTextList() {
     return `${sep}
     <button class="trow-btn ${txOpen === t.phone ? 'active' : ''} ${t.unread ? 'unread' : ''}" data-p="${t.phone}">
       <span class="avatar ${t.who.kind === 'unknown' ? 'unk' : ''}">${whoInitials(t.who)}</span>
-      <span class="mid"><b>${esc(whoName(t.who, t.phone))}${t.unread ? '<i class="dot-new"></i>' : ''}</b>${t.lastIn && !t.spam ? `<span class="rstat ${t.answer ? 'ok' : 'wait'}">${t.answer ? esc(answerLabel(t.answer)) : 'Unanswered'}</span>` : ''}<span class="prev">${txFilter === 'sent' || (txFilter === 'needs' && !t.last.inbound) ? 'You: ' : ''}${esc(String(m.body || '').slice(0, 60))}</span></span>
+      <span class="mid"><b>${esc(whoName(t.who, t.phone))}${t.unread ? '<i class="dot-new"></i>' : ''}</b>${t.lastIn && !t.spam ? (t.needs ? '<span class="rstat wait">Needs reply</span>' : t.answer ? `<span class="rstat ok">${esc(answerLabel(t.answer))}</span>` : '') : ''}<span class="prev">${txFilter === 'sent' || (txFilter === 'needs' && !t.last.inbound) ? 'You: ' : ''}${esc(String(m.body || '').slice(0, 60))}</span></span>
       ${wait}
-    </button>`; }).join('') : `<div class="all-clear small-clear">${I.check}<b>${{ needs: 'Nothing waiting for a reply', inbox: 'No texts received in this range', sent: 'Nothing sent in this range' }[txFilter] || { unread: 'Nothing unread', unanswered: 'Every text has been answered', spam: 'No spam numbers' }[txFilter]}</b></div>`;
+    </button>`; }).join('') : `<div class="all-clear small-clear">${I.check}<b>${{ needs: 'Nothing waiting for a reply', all: 'No texts in this range', sent: 'Nothing sent in this range', unread: 'Nothing unread', spam: 'No spam numbers' }[txFilter]}</b></div>`;
   $('tx-list').querySelectorAll('.trow-btn').forEach((b) => (b.onclick = () => openThread(b.dataset.p)));
 }
 
@@ -75,8 +72,8 @@ async function openThread(phone, keepDraft) {
   $('tx-pane').innerHTML = `
     <div class="convo-head"><span class="avatar ${unknown ? 'unk' : ''}">${whoInitials(t.who)}</span>
       <div><h2>${esc(whoName(t.who, phone))} ${whoTag(t.who)}</h2>${unknown ? '' : `<p class="muted small">${esc(fmtPhone(phone))}</p>`}</div>
-      <div class="row-gap">${t.needs ? `<button class="btn" id="tx-done">${I.check}Mark done</button>` : ''}${rec ? '<button class="btn" id="tx-patient">Open patient</button>' : ''}${unknown ? `<button class="btn" id="tx-who">${I.user}Who is this?</button>` : ''}<button class="btn" id="tx-unread" title="Mark unread">Mark unread</button>${t.spam ? '<button class="btn" id="tx-block">Block in RingRx</button><button class="btn" id="tx-notspam">Not spam</button>' : `<button class="btn spam-btn" id="tx-spam" title="Mark this number as spam">${I.x}Spam</button>`}</div></div>
-    ${t.lastIn ? `<div class="receipt-line">${t.readAt ? `Read ${esc(fmtTime(new Date(t.readAt)))}` : 'New'} · ${t.answer ? esc(answerLabel(t.answer)) : '<b class="amber-t">Unanswered</b>'}</div>` : ''}
+      <div class="row-gap">${t.lastIn && !t.spam ? (t.needs ? `<button class="btn" id="tx-done">${I.check}Mark done</button>` : t.doneAt ? `<span class="done-pill">${I.check}Done</span>` : '') : ''}${rec ? '<button class="btn" id="tx-patient">Open patient</button>' : ''}${unknown ? `<button class="btn" id="tx-who">${I.user}Who is this?</button>` : ''}<button class="btn" id="tx-unread" title="Mark unread">Mark unread</button>${t.spam ? '<button class="btn" id="tx-block">Block in RingRx</button><button class="btn" id="tx-notspam">Not spam</button>' : `<button class="btn spam-btn" id="tx-spam" title="Mark this number as spam">${I.x}Spam</button>`}</div></div>
+    ${t.lastIn ? `<div class="receipt-line">${t.readAt ? stamp('Read', t.readAt) : '<b>New</b>'}${t.answer ? ` · ${esc(answerLabel(t.answer))}` : t.needs ? ' · <b class="amber-t">Needs reply</b>' : ''}${t.doneAt ? ' · ' + stamp('Done', t.doneAt) : ''}</div>` : ''}
     <div class="convo-body" id="tx-body">${bubbles || '<p class="muted small center-text" style="margin-top:30px">No texts yet.</p>'}</div>
     ${rec && rec.dnt ? '<div class="convo-foot muted small">Marked do not text.</div>' : `<div class="convo-foot" id="tx-comp">${composerHTML(p, { rows: 3, placeholder: 'Write a reply…' })}<div class="row-gap foot-actions"><span class="from-chip">${sendFrom ? `${I.phone}From ${esc(fmtPhone(sendFrom))}` : ''}</span><span style="flex:1"></span><button class="btn primary" id="tx-send">${I.send}Send</button></div></div>`}`;
   const body = $('tx-body'); body.scrollTop = body.scrollHeight;

@@ -129,7 +129,7 @@ function textThreads(days = 30) {
     const answer = lastIn && last.inbound ? answerOf(lastIn, list, done['t:' + phone]) : lastIn ? answerOf(lastIn, list, done['t:' + phone]) : null;
     out.push({ phone, who: w, spam, answer, last: { inbound: last.inbound, at: last.at, body: last.body },
       lastIn: lastIn ? { at: lastIn.at, body: lastIn.body } : null,
-      lastSent: lastOut ? { at: lastOut.at, body: lastOut.body } : null, needs: open.length && !w.dnt && !skip.has(phone) && !spam ? 'reply' : null, ignored: skip.has(phone), needsAt: open.length ? open[open.length - 1].at : null, unread: spam ? 0 : list.filter((e) => e.inbound && e.unread !== false && new Date(e.at) > (seen[phone] || 0)).length, readAt: seen[phone] || null, count: list.length });
+      lastSent: lastOut ? { at: lastOut.at, body: lastOut.body } : null, needs: open.length && !w.dnt && !skip.has(phone) && !spam ? 'reply' : null, ignored: skip.has(phone), needsAt: open.length ? open[open.length - 1].at : null, unread: spam ? 0 : list.filter((e) => e.inbound && e.unread !== false && new Date(e.at) > (seen[phone] || 0)).length, readAt: seen[phone] || null, doneAt: done['t:' + phone] || null, count: list.length });
   }
   return out.sort((a, b) => new Date(b.last.at) - new Date(a.last.at));
 }
@@ -149,7 +149,7 @@ function callList(days = 30) {
       if (!answered) { due = true; dueSeen.add(c.phone); }
     }
     const answer = c.inbound && (c.missed || c.voicemail) ? answerOf(c, all, done['c:' + c.phone]) : null;
-    return { ...c, who: w, due, spam, answer, heardAt: c.voicemail ? heard[c.id] || (c.vmUnread === false ? 'ringrx' : null) : null };
+    return { ...c, who: w, due, spam, answer, doneAt: c.inbound && (c.missed || c.voicemail) && done['c:' + c.phone] && done['c:' + c.phone] > new Date(c.at) ? done['c:' + c.phone] : null, heardAt: c.voicemail ? heard[c.id] || (c.vmUnread === false ? 'ringrx' : null) : null };
   });
 }
 
@@ -204,7 +204,8 @@ const counts = () => ({ texts: textThreads(14).filter((t) => t.needs && t.unread
 
 // Numbers that replied STOP. The number itself is blocked, for everyone who uses it (siblings, a parent's phone).
 const optedOut = (phone) => !!((store.inbound.get().optOut || {})[String(phone || '').replace(/\D/g, '').slice(-10)]);
-function clearOptOut(phones) { const st = store.inbound.get(), o = { ...(st.optOut || {}) }; phones.forEach((ph) => delete o[ph]); store.inbound.set({ ...st, optOut: o }); }
+// Removing a STOP is remembered (optIn) so a backup restore can tell a deliberate removal from a lost record.
+function clearOptOut(phones) { const st = store.inbound.get(), o = { ...(st.optOut || {}) }, inn = { ...(st.optIn || {}) }; phones.forEach((ph) => { delete o[ph]; inn[ph] = { at: new Date().toISOString() }; }); store.inbound.set({ ...st, optOut: o, optIn: inn }); }
 const fullName = (p) => `${p.first || ''} ${p.last || ''}`.trim();
 
 // Replies: STOP blocks the number (always); recent "C" replies confirm the visit that was actually reminded.
@@ -226,7 +227,7 @@ function handleReplies(fresh, addEvents) {
       if (recent(m)) events.push({ kind: 'optout', text: `Opted out: ${who} replied STOP`, appt: { first: p?.first, last: p?.last, phone: m.phone } });
     } else if (/^\s*(start|unstop)\s*[.!]?\s*$/i.test(m.body) && (st.optOut || {})[m.phone] && new Date(m.at) > new Date(st.optOut[m.phone].at)) {   // only a START sent after the STOP counts
       // They texted START: texts are allowed again on this number (the standard way to opt back in).
-      const o = { ...(st.optOut || {}) }; delete o[m.phone]; st.optOut = o;
+      const o = { ...(st.optOut || {}) }; delete o[m.phone]; st.optOut = o; st.optIn = { ...(st.optIn || {}), [m.phone]: { at: m.at } };
       for (const x of hits) if (x.dntReason === 'Replied STOP') store.patients.update(x.key, { dnt: false, dntReason: '' });
       if (recent(m)) events.push({ kind: 'reply', text: `${who} replied START (texts allowed again)`, appt: { first: p?.first, last: p?.last, phone: m.phone } });
     } else if (recent(m) && CONFIRM_RE.test(m.body)) {

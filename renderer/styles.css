@@ -1126,3 +1126,30 @@ em.vm{cursor:pointer}
 #es-card .conn-row:has(.health) { grid-template-columns: auto minmax(0, 1fr) auto; }
 .modal:has(#m-later) { width: 580px; }
 .send-foot { flex-wrap: wrap; }
+/* Read / Done stamps and the shared filters */
+.stamp { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+.stamp::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--teal-200, #9cc); }
+.done-pill { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 10px; border-radius: 9px; background: var(--teal-50); color: var(--teal); font-size: 12.5px; font-weight: 700; }
+.done-pill svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; }
+.comm-filter button b { margin-left: 5px; }
+.more-wrap { position: relative; }
+.more-menu { position: absolute; right: 0; top: 34px; z-index: 6; background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-2, 0 8px 24px rgba(0,0,0,.12)); padding: 4px; display: grid; min-width: 190px; }
+.more-menu button { text-align: left; border: 0; background: none; padding: 8px 10px; border-radius: 8px; font: inherit; font-size: 13px; cursor: pointer; color: var(--ink); }
+.more-menu button:hover { background: var(--teal-50); }
+.trow-btn.unread b, .em-row.unread b { font-weight: 800; }
+:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; border-radius: 6px; }
+.chan-tabs { display: inline-flex; gap: 4px; padding: 3px; background: var(--porcelain, #fcf7f5); border: 1px solid var(--line); border-radius: 11px; justify-self: start; }
+.chan-tabs button { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 14px; border: 0; border-radius: 8px; background: transparent; font: inherit; font-size: 13px; font-weight: 600; color: var(--muted); cursor: pointer; }
+.chan-tabs button svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+.chan-tabs button.on { background: #fff; color: var(--teal); box-shadow: var(--shadow-1); }
+.chan-tabs button:disabled { opacity: .45; cursor: not-allowed; }
+.fresh { margin-left: auto; margin-right: 8px; font-size: 11.5px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.fresh.old { color: #a2621f; }
+.fresh .spinner { width: 11px; height: 11px; }
+.panel.refreshing .scroll { opacity: .5; transition: opacity .3s; pointer-events: none; }
+.side-sync-row { display: grid; gap: 6px; }
+.side-sync { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 34px; border-radius: 11px; border: 1px solid var(--teal-100); background: var(--card); color: var(--teal); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.side-sync:hover { background: var(--teal-50); }
+.side-sync svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 2; }
+.side-sync.spin svg { animation: spin 1s linear infinite; }
+#status-line { cursor: pointer; }

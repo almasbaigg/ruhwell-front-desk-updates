@@ -103,10 +103,20 @@ async function addToChecklist(it, due) {
 let ntDay = null, ntPage = null, ntTimer = null;
 const todayKey = () => ymd();
 const dayTitle = (k, title) => title || (k === todayKey() ? 'Today' : k === addDays(todayKey(), -1) ? 'Yesterday' : parseYmd(k).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }));
+// A pending edit is saved for the day it was typed on, with the text as it was typed (switching days can't mix them up).
+let ntPending = null, ntSeq = 0;
+async function flushNote() {
+  clearTimeout(ntTimer); const p = ntPending; ntPending = null; if (!p) return;
+  try { const page = await window.api.notesSave(p.day, p.text); if (p.day === ntDay) { ntPage = page; $('nt-state').textContent = 'Saved'; paintLinks(); } }
+  catch { if (p.day === ntDay) $('nt-state').textContent = "Couldn't save. Keep this open and try again."; if (!ntPending) ntPending = p; }
+}
 async function loadNotes(day) {
+  if (ntPending && day && day !== ntPending.day) await flushNote();
   if (day) ntDay = day; if (!ntDay) ntDay = todayKey();
-  ntPage = await window.api.notes(ntDay);
-  if (document.activeElement !== $('nt-text') || day) $('nt-text').value = ntPage.text || '';
+  const seq = ++ntSeq, want = ntDay, page = await window.api.notes(want);
+  if (seq !== ntSeq || want !== ntDay) return;   // a newer page was asked for meanwhile
+  ntPage = page;
+  if (!ntPending && (document.activeElement !== $('nt-text') || day)) $('nt-text').value = ntPage.text || '';
   $('nt-day').textContent = dayTitle(ntDay, ntPage.title);
   $('nt-pin').classList.toggle('on', !!ntPage.pinned);
   $('nt-next').disabled = ntDay >= todayKey();
@@ -127,12 +137,13 @@ $('nt-prev').onclick = () => stepDay(-1);
 $('nt-next').onclick = () => stepDay(1);
 $('nt-day').onclick = () => loadNotes(todayKey());
 $('nt-pin').onclick = async () => { ntPage = await window.api.notesPin(ntDay, !ntPage.pinned); toast(ntPage.pinned ? 'Pinned. It stays one click away.' : 'Unpinned'); loadNotes(ntDay); };
-$('nt-text').oninput = (e) => {
+$('nt-text').oninput = () => {
   $('nt-state').textContent = 'Saving…'; clearTimeout(ntTimer);
-  const day = ntDay;
-  ntTimer = setTimeout(async () => { ntPage = await window.api.notesSave(day, $('nt-text').value); $('nt-state').textContent = 'Saved'; paintLinks(); }, 600);
+  ntPending = { day: ntDay, text: $('nt-text').value };
+  ntTimer = setTimeout(flushNote, 600);
   mentionCheck();
 };
+window.addEventListener('beforeunload', () => { if (ntPending) window.api.notesSave(ntPending.day, ntPending.text); });
 
 // Line → task: the line the cursor is on becomes a checklist task (times like "at 3" still work).
 $('nt-task').onclick = async () => {

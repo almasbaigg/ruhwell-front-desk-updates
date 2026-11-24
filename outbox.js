@@ -29,8 +29,10 @@ function nextAllowed(d = new Date(), q = quiet()) {
 
 function add(item) {
   const items = all();
+  // The same submission (double click, a retried call) is only ever queued once.
+  if (item.id) { const dup = items.find((x) => x.id === item.id); if (dup) return dup; }
   const at = new Date(item.sendAt || Date.now());
-  const it = { id: `ob-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, createdAt: new Date().toISOString(), status: 'scheduled',
+  const it = { id: item.id ? String(item.id).slice(0, 80) : `ob-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, createdAt: new Date().toISOString(), status: 'scheduled',
     kind: item.kind, label: String(item.label || '').slice(0, 120), to: String(item.to || '').slice(0, 200), payload: item.payload,
     sendAt: (item.respectQuiet === false ? at : nextAllowed(at)).toISOString(), respectQuiet: item.respectQuiet !== false };
   items.push(it); save(items); kick();
@@ -64,7 +66,10 @@ async function tick() {
       let r;
       try { r = await fn(due.payload, due); } catch (e) { r = { ok: false, error: e.message, code: e.code }; }
       // Offline / signed out: try again in 10 minutes (still scheduled), anything else is a real failure.
-      if (!r.ok && (r.code === 'OFFLINE' || r.code === 'SIGNED_OUT') && (due.tries || 0) < 12) update(due.id, { status: 'scheduled', tries: (due.tries || 0) + 1, sendAt: new Date(Date.now() + 10 * 60000).toISOString(), error: r.error });
+      if (!r.ok && r.code === 'HELD') { update(due.id, { status: 'scheduled', sendAt: nextAllowed(new Date(Date.now() + 60000)).toISOString() }); continue; }
+      if (!r.ok && (r.code === 'OFFLINE' || r.code === 'SIGNED_OUT' || r.code === 'LOCKED') && (due.tries || 0) < 12) update(due.id, { status: 'scheduled', tries: (due.tries || 0) + 1, sendAt: new Date(Date.now() + 10 * 60000).toISOString(), error: r.error });
+      // The provider may already have it (a timeout or server error after submitting): never send again on our own.
+      else if (!r.ok && r.code === 'UNCERTAIN') update(due.id, { status: 'uncertain', error: r.error || 'Not sure it went out. Check Sent before sending again.', doneAt: new Date().toISOString() });
       else update(due.id, { status: r.ok ? 'sent' : 'failed', error: r.ok ? '' : r.error || 'Failed', doneAt: new Date().toISOString(), result: r.partial || undefined });
     }
   } finally { busy = false; }
@@ -83,4 +88,6 @@ function start(opts) {
   kick();
 }
 
-module.exports = { start, add, cancel, sendNow, reschedule, list, pending, allowed, nextAllowed, quiet, tick, dismiss: (id) => update(id, { status: 'checked', doneAt: new Date().toISOString() }) };
+const get = (id) => all().find((x) => x.id === id) || null;
+function setPayload(id, payload) { const items = all(); const i = items.findIndex((x) => x.id === id); if (i >= 0) { items[i].payload = payload; store.raw.writeSecure(FILE, { items }); } }
+module.exports = { get, setPayload, start, add, cancel, sendNow, reschedule, list, pending, allowed, nextAllowed, quiet, tick, dismiss: (id) => update(id, { status: 'checked', doneAt: new Date().toISOString() }) };

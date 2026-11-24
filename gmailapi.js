@@ -69,8 +69,14 @@ function signIn() {
 }
 function signOut() { store.raw.writeSecure(TOKEN, null); access = null; accessExp = 0; last = { connected: false, account: '', unread: null, at: null, error: null, sendAs: null }; }
 
-async function token() {
-  if (access && Date.now() < accessExp - 60000) return access;
+// One refresh at a time: requests that find the access expired all wait for the same refresh.
+let refreshing = null;
+function token() {
+  if (access && Date.now() < accessExp - 60000) return Promise.resolve(access);
+  if (!refreshing) refreshing = refreshToken().finally(() => { refreshing = null; });
+  return refreshing;
+}
+async function refreshToken() {
   const k = key(), t = tokens();
   if (!k || !t || !t.refresh) throw new GmailError('Connect Gmail in Settings first.', 'SIGNED_OUT');
   let r;
@@ -85,10 +91,11 @@ async function token() {
   access = j.access_token; accessExp = Date.now() + (Number(j.expires_in) || 3000) * 1000;
   return access;
 }
-async function api(path, opts = {}) {
+async function api(path, opts = {}, retried) {
   const res = await fetch(path.startsWith('http') ? path : API + path, { ...opts, signal: AbortSignal.timeout(opts.timeout || 30000),
     headers: { Authorization: `Bearer ${await token()}`, ...(opts.body && !opts.raw ? { 'Content-Type': 'application/json' } : {}), ...(opts.headers || {}) } });
-  if (res.status === 401) { access = null; throw new GmailError('Gmail sign-in expired.', 'SIGNED_OUT'); }
+  // An expired access token: refresh once and try again (Google refused it, so nothing was done the first time).
+  if (res.status === 401) { access = null; if (!retried) return api(path, opts, true); throw new GmailError('Gmail sign-in expired.', 'SIGNED_OUT'); }
   const text = await res.text(); let j = null; try { j = JSON.parse(text); } catch {}
   if (!res.ok) throw new GmailError((j && j.error && j.error.message) || `Gmail ${res.status}`, res.status === 429 || res.status >= 500 ? 'OFFLINE' : 'FAILED');
   return j;
@@ -118,7 +125,7 @@ async function pool(items, n, fn) { const out = new Array(items.length); let i =
 // folder: inbox | sent | all ; q: Gmail search words
 async function list({ folder = 'inbox', q = '', pageToken = '' } = {}) {
   const p = new URLSearchParams({ maxResults: '30' });
-  if (folder === 'inbox') p.set('labelIds', 'INBOX'); else if (folder === 'sent') p.set('labelIds', 'SENT'); else if (folder === 'unread') { p.set('labelIds', 'INBOX'); p.set('q', 'is:unread'); }
+  if (folder === 'inbox') p.set('labelIds', 'INBOX'); else if (folder === 'sent') p.set('labelIds', 'SENT'); else if (folder === 'spam') { p.set('labelIds', 'SPAM'); p.set('includeSpamTrash', 'true'); } else if (folder === 'unread') { p.set('labelIds', 'INBOX'); p.set('q', 'is:unread'); }
   if (q) p.set('q', [p.get('q'), q].filter(Boolean).join(' '));
   if (pageToken) p.set('pageToken', pageToken);
   const r = await api(`/threads?${p}`);
@@ -154,6 +161,8 @@ const modify = (threadId, add = [], remove = []) => api(`/threads/${encodeURICom
 const markRead = (id, read = true) => modify(id, read ? [] : ['UNREAD'], read ? ['UNREAD'] : []);
 const archive = (id) => modify(id, [], ['INBOX']);
 const unarchive = (id) => modify(id, ['INBOX'], []);
+const notSpam = (id) => modify(id, ['INBOX'], ['SPAM']);
+const spam = (id) => modify(id, ['SPAM'], ['INBOX']);
 
 // ---------- Sending (always from hello@ruhwellmed.com) ----------
 const enc = (s) => (/^[\x20-\x7e]*$/.test(s) ? s : `=?UTF-8?B?${Buffer.from(s).toString('base64')}?=`);
@@ -184,8 +193,16 @@ async function send(msg) {
   const raw = mime({ ...msg, to: recips.join(', '), fromName: msg.fromName || store.settings.get().emailFromName || st.sendAs.name || 'Ruhwell Med' });
   const bound = 'rfdup' + crypto.randomBytes(8).toString('hex');
   const body = Buffer.concat([Buffer.from(`--${bound}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(msg.threadId ? { threadId: msg.threadId } : {})}\r\n--${bound}\r\nContent-Type: message/rfc822\r\n\r\n`), Buffer.from(raw), Buffer.from(`\r\n--${bound}--`)]);
-  const r = await api('https://gmail.googleapis.com/upload/gmail/v1/users/me/messages/send?uploadType=multipart', { method: 'POST', raw: true, body, timeout: 120000, headers: { 'Content-Type': `multipart/related; boundary=${bound}` } });
+  await token();   // a sign-in problem shows up here, before anything is submitted
+  let r;
+  try { r = await api('https://gmail.googleapis.com/upload/gmail/v1/users/me/messages/send?uploadType=multipart', { method: 'POST', raw: true, body, timeout: 120000, headers: { 'Content-Type': `multipart/related; boundary=${bound}` } }); }
+  catch (e) {
+    // Google said no (4xx) or the sign-in was refused: nothing went out. Anything else (timeout, dropped connection,
+    // server error) may have been accepted, so it is never sent again automatically.
+    if (e instanceof GmailError && (e.code === 'FAILED' || e.code === 'SIGNED_OUT')) throw e;
+    throw new GmailError("Not sure this email went out (the connection dropped while sending). Check Sent before sending again.", 'UNCERTAIN');
+  }
   return { id: r.id, threadId: r.threadId };
 }
 
-module.exports = { loadKeyFile, hasKey, connected, signIn, signOut, check, status, list, thread, attachment, markRead, archive, unarchive, send, mime, plain, validEmail, SENDER, GmailError };
+module.exports = { loadKeyFile, hasKey, connected, signIn, signOut, check, status, list, thread, attachment, markRead, archive, unarchive, spam, notSpam, send, mime, plain, validEmail, SENDER, GmailError };

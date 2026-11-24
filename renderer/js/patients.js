@@ -123,15 +123,12 @@ $('new-msg').onclick = async () => {
     <div class="actions"><span class="from-chip">${sendFrom ? `${I.phone}From ${esc(fmtPhone(sendFrom))}` : ''}</span><span style="flex:1"></span><button class="btn" id="q-cancel">Cancel</button><button class="btn primary" id="q-next">${I.send}Send</button></div>`);
   const rebind = () => { p.greet = picked ? greetName(p, picked) : (p.first || p.last); $('q-comp').innerHTML = composerHTML(p); bindComposer($('q-comp'), p, rebind); };
   rebind();
-  const choose = (rec) => {
-    picked = rec; Object.assign(p, { first: rec.first, last: rec.last, phone: rec.phone, rec, age: rec.age, lastVisit: rec.lastVisit, key: rec.key });
-    $('q-to').value = `${fullName(rec)} · ${fmtPhone(rec.phone)}`; $('q-suggest').innerHTML = '';
-    $('q-names').classList.add('hidden'); $('q-save-wrap').classList.add('hidden'); rebind();
-  };
+  // Picking a patient opens the same Message window used everywhere (Text | Email, Send / Send later).
+  const choose = (rec) => { closeModal(); messageModal({ ...rec, rec }); };
   $('q-to').oninput = () => {
     picked = null; $('q-names').classList.remove('hidden'); $('q-save-wrap').classList.remove('hidden'); $('q-err').textContent = '';
     const q = $('q-to').value.trim().toLowerCase(), qd = digits(q);
-    const hits = q.length < 2 ? [] : patients.filter((x) => !x.dnt && x.phone && (`${x.first} ${x.last}`.toLowerCase().includes(q) || (qd.length >= 3 && x.phone.includes(qd)))).slice(0, 5);
+    const hits = q.length < 2 ? [] : patients.filter((x) => !x.dnt && (x.phone || x.email || x.emailTyped) && (`${x.first} ${x.last}`.toLowerCase().includes(q) || (qd.length >= 3 && x.phone.includes(qd)))).slice(0, 5);
     $('q-suggest').innerHTML = hits.length ? `<div class="suggest">${hits.map((h) => `<button data-k="${esc(h.key)}"><span>${esc(fullName(h))}</span><span class="muted">${esc(fmtPhone(h.phone))}</span></button>`).join('')}</div>` : '';
     $('q-suggest').querySelectorAll('button').forEach((b) => (b.onclick = () => choose(patients.find((x) => x.key === b.dataset.k))));
   };

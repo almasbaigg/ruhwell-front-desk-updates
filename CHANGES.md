@@ -175,6 +175,27 @@
 ### Deferred
 - Splitting main.js into smaller files (no behavior change): saved for a quiet release, so it can't mix with these fixes.
 
+## 2.1.0 (Windows + Mac, Nov 23)
+**Same everywhere**
+- Texts, Emails, Calls and Faxes share one set of filters: **Needs you · Unread · All · Sent (or Done) · Spam**, with counts.
+- **Read and Done carry a time everywhere** ("Read 9:42 PM", "Done 9:50 PM", "Listened 9:44 PM"). Faxes now have Read/Unread (opening marks read, Mark unread), a **Done** button, and Spam / Not patient-related under More. Emails: Done = archive in Gmail, Report spam / Not spam, Spam folder.
+- **One Message window**: Text and Email are two tabs of the same window, with the same **Send later** and **Send** buttons, from Today, the visit list, Patients and New message.
+**Today and layout**
+- Today opens with the last saved schedule right away. Each panel says **Updated 9:42** or **Updating…**; while it re-reads and what's shown is over 10 minutes old, the panel dims, then repaints when fresh.
+- **Sync now** is in the sidebar under the status line ("Synced · 2 min ago"; click it for details). Duplicate refresh buttons removed.
+- **Settings in four tabs**: Connections · Messages · Alerts · App.
+**Safety fixes (from the code review, checked against the code)**
+- If the patient list or STOP list can't be unlocked, no text is sent. Restoring a backup keeps every STOP (a later START still counts).
+- Sending hours are checked for each patient in a batch; anyone not reached before closing goes to the morning. Scheduled batches remember who was already texted, so a retry never texts anyone twice.
+- A double click or repeated request queues a message only once.
+- An email whose sending was cut off (timeout, server error after submitting) is marked **Check this one** and never re-sent on its own. A sent email is never turned into "failed" by a logging hiccup.
+- Notes: typing then switching days can no longer save one day's text onto another.
+- Faxes already handled stay handled after the PDF is cleared (a small record is kept for a year).
+- Shortening the schedule look-ahead no longer looks like cancellations.
+- RingRx and Gmail: one sign-in refresh at a time; an expired access is refreshed and the read retried once; RingRx needing a code keeps the saved sign-in and stops retrying the password. Reads marked in the app that RingRx didn't take are retried after each sync.
+- Visible keyboard focus.
+**Not taken from the review (on purpose)**: removing the 5-second send countdown (kept; it already pauses for warnings and outside sending hours), per-item Done for texts (the current per-conversation Done works with the new Read/Done times).
+
 ## 2.0.0 (Windows + Mac, Nov 23)
 - **Emails section**: the practice Gmail in the app. Read, reply, write, archive, mark unread; reading here marks it read in Gmail (and the other way round). Attachments can be saved.
 - **Email composer**: formatting (bold, brand colors, headings, lists, links), templates, attachments, preview, signature. The Welcome template matches the practice's Gmail welcome, with the New Patient Welcome Packet attached by default (replaceable in Settings → Email).

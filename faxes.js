@@ -32,17 +32,22 @@ function makeWindow(show, parent) {
 /* ---------- Stored faxes (encrypted) ---------- */
 const index = () => store.raw.readSecure(INDEX, { items: [], seeded: null });
 const saveIndex = (v) => store.raw.writeSecure(INDEX, v);
-const list = () => (index().items || []).slice().sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
+const list = () => (index().items || []).filter((f) => !f.pruned).sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
 function pdf(id) { const r = store.raw.readSecure(path.join(DIR, `${safe(id)}.bin`), null); if (!r || !r.data) return null; const mime = sniff(r.data); return mime ? { data: r.data, mime } : null; }
 const safe = (id) => String(id).replace(/[^\w-]/g, '_').slice(0, 80);
 function update(id, patch) { const ix = index(); const i = (ix.items || []).findIndex((f) => f.id === id); if (i < 0) return null; ix.items[i] = { ...ix.items[i], ...patch }; saveIndex(ix); return ix.items[i]; }
 function prune() {
   const ix = index(), cutoff = Date.now() - KEEP_FILED_DAYS * 864e5;
   const keep = [], drop = [];
-  for (const f of ix.items || []) (['filed', 'notpatient', 'spam'].includes(f.status) && new Date(f.doneAt || f.at || 0) < cutoff ? drop : keep).push(f);
-  if (!drop.length) return;
+  // The PDF goes after 30 days; a small record (id, what was done, when) stays for a year so Doximity still
+  // listing the fax can never bring it back as new.
+  const yearAgo = Date.now() - 400 * 864e5;
+  for (const f of ix.items || []) (['filed', 'notpatient', 'spam', 'done'].includes(f.status) && !f.pruned && new Date(f.doneAt || f.at || 0) < cutoff ? drop : keep).push(f);
+  const tomb = drop.map((f) => ({ id: f.id, status: f.status, doneAt: f.doneAt || null, at: f.at, pruned: true, filed: f.filed ? { chart: f.filed.chart, at: f.filed.at } : undefined }));
+  const items = keep.filter((f) => !(f.pruned && new Date(f.doneAt || f.at || 0) < yearAgo)).concat(tomb);
+  if (!drop.length && items.length === keep.length) return;
+  saveIndex({ ...ix, items });
   for (const f of drop) try { fs.rmSync(store.raw.file(path.join(DIR, `${safe(f.id)}.bin`)), { force: true }); } catch {}
-  saveIndex({ ...ix, items: keep });
 }
 
 /* ---------- Saved sign-in (same rules as RxNT) ---------- */

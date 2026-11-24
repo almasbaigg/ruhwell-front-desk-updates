@@ -296,9 +296,14 @@ async function pump() {
 const inFlight = {};
 
 // Day cache: visits + provider blocks per date, refreshed in the background.
+// Days read from RxNT. The last good copy of the coming week is kept (encrypted) so the app opens with the
+// schedule right away, marked with when it was read, while it refreshes.
 const dayCache = {};
+let dayCacheTimer = null;
+function saveDayCache() { clearTimeout(dayCacheTimer); dayCacheTimer = setTimeout(() => { try { const from = ymd(new Date(Date.now() - 864e5)), out = {}; for (const [d, v] of Object.entries(dayCache)) if (d >= from && d <= addDays(ymd(new Date()), 8) && v.items) out[d] = { items: v.items, blocks: v.blocks, at: v.at }; store.raw.writeSecure('daycache.bin', out); } catch {} }, 2000); }
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const addDays = (s, n) => { const [y, m, d] = s.split('-').map(Number); const x = new Date(y, m - 1, d + n); return ymd(x); };
+app.whenReady().then(() => { try { const saved = store.raw.readSecure('daycache.bin', {}); const keepFrom = ymd(new Date(Date.now() - 864e5)); for (const [d, v] of Object.entries(saved || {})) if (d >= keepFrom && v && v.items) dayCache[d] = { ...v, saved: true }; } catch {} });
 async function loadDay(date, priority = 'low') {
   const key = date + priority;
   if (inFlight[key]) return inFlight[key];
@@ -311,7 +316,7 @@ async function loadDayNow(date, priority) {
   if (r.items && date === ymd(new Date())) mergeEhrToday(r);
   if (r.items) {
     setRxntFlag(id, true);
-    dayCache[date] = { ...r, at: Date.now() };
+    dayCache[date] = { ...r, at: Date.now() }; saveDayCache();
     store.patients.upsert(r.items.filter((i) => i.patientId).map((i) => ({
       patientId: i.patientId, chart: i.chart, first: i.first, last: i.last, dob: i.dob, age: i.age,
       cell: i.cell, home: i.home, preferred: i.preferred, email: i.email, visitAt: i.start, visitType: i.visitType,
@@ -388,6 +393,7 @@ async function syncComms(force) {
   if (!force && st.at && Date.now() - new Date(st.at) < 4 * 60000) return false;
   send('sync', syncStatus());
   const r = await comms.sync(pid());
+  if (r && r.ok) setTimeout(retryRingrxReads, 1000);
   if (r && r.fresh) {
     comms.handleReplies(r.fresh, (ev) => watcher.addEvents(ev));
     let n = 0; for (const m of r.fresh) n += checklist.resolveFollowUps(pid(), m.phone, m.at);
@@ -409,10 +415,17 @@ ipcMain.handle('comms:calls', (_e, days) => comms.callList(days || 30));
 ipcMain.handle('comms:thread', (_e, phone) => comms.thread(phone));
 ipcMain.handle('comms:seen', (_e, phone) => { const ph = String(phone || '').replace(/\D/g, '').slice(-10); comms.markSeen(ph); send('sync', syncStatus()); ringrxRead(comms.unreadRingrxTexts(ph)); return true; });
 // Read in the app → read in RingRx (in the background; if RingRx refuses, the app still shows it read).
+// Ones that don't go through (offline, RingRx busy) wait in a small list and are retried after each sync and restart.
 function ringrxRead(ids) {
   const id = pid(); if (!id || !ids || !ids.length) return;
-  ringrx.markRead(id, ids).then((done) => { if (done.length) { comms.setRingrxRead(done); send('sync', syncStatus()); } if (done.length < ids.length) activity.add('RingRx', 'mark-read', { failed: ids.length - done.length }, false); }).catch(() => {});
+  const cb = store.callbacks.get(); cb.rrPending = [...new Set([...(cb.rrPending || []), ...ids.map(String)])].slice(-500); store.callbacks.set(cb);
+  ringrx.markRead(id, ids).then((done) => {
+    const c2 = store.callbacks.get(); c2.rrPending = (c2.rrPending || []).filter((x) => !done.includes(x)); store.callbacks.set(c2);
+    if (done.length) { comms.setRingrxRead(done); send('sync', syncStatus()); }
+    if (done.length < ids.length) activity.add('RingRx', 'mark-read', { waiting: ids.length - done.length }, false);
+  }).catch(() => {});
 }
+function retryRingrxReads() { const p = store.callbacks.get().rrPending || []; if (p.length) ringrxRead(p.slice(0, 50)); }
 // RxNT portal messages (sidebar chat): read-only, alert on new patient messages.
 let portal = { at: null, error: null, me: null, conversations: [] };
 async function refreshPortal() {
@@ -479,7 +492,8 @@ ipcMain.handle('fax:save', async (_e, id) => {
   activity.add('Doximity', 'fax-saved', { fax: String(id).slice(0, 12) }, true);
   return { ok: true, path: r.filePath };
 });
-ipcMain.handle('fax:mark', (_e, id, st) => { if (!['new', 'notpatient', 'spam'].includes(st)) return false; const f = faxes.update(String(id), { status: st, doneAt: new Date().toISOString() }); activity.add('Doximity', 'fax-marked', { fax: String(id).slice(0, 12), as: st }); send('sync', syncStatus()); return !!f; });
+ipcMain.handle('fax:read', (_e, id, read) => { try { const f = faxes.update(String(id), { readAt: read === false ? null : new Date().toISOString() }); send('sync', syncStatus()); return !!f; } catch { return false; } });
+ipcMain.handle('fax:mark', (_e, id, st) => { if (!['new', 'notpatient', 'spam', 'done'].includes(st)) return false; let f = null; try { f = faxes.update(String(id), { status: st, doneAt: st === 'new' ? null : new Date().toISOString() }); } catch { return false; } activity.add('Doximity', 'fax-marked', { fax: String(id).slice(0, 12), as: st }); send('sync', syncStatus()); return !!f; });
 ipcMain.handle('fax:signin', async () => {
   const ok = await faxes.signIn(win);
   activity.add('Doximity', 'sign-in', {}, !!ok);
@@ -600,6 +614,9 @@ function syncStatus() {
     alerts: watcher.status(),
     gmail: mail.status(),
     outbox: outbox.pending(),
+    // What each part last read and whether it's reading right now (Today shows "Updated 9:42" / "Updating…").
+    fresh: { schedule: (dayCache[ymd(new Date())] || {}).at || null, comms: Date.parse(store.ringrxHistory.get().at || '') || null, rx: lastOk.rx || null, gmail: lastOk.gmail || null, faxes: lastOk.faxes || null, portal: lastOk.portal || null },
+    running: { ...syncRunning },
     rx: rxtasks.status(),
     needs: (() => { try { return comms.counts(); } catch { return { texts: 0, calls: 0 }; } })(),
     messages: comms.status(),
@@ -1016,6 +1033,7 @@ const mailErr = (e) => ({ error: e.message, code: e.code });
 ipcMain.handle('email:list', async (_e, o) => { try { return await gapi.list(o || {}); } catch (e) { return mailErr(e); } });
 ipcMain.handle('email:thread', async (_e, id) => { try { return await gapi.thread(String(id)); } catch (e) { return mailErr(e); } });
 ipcMain.handle('email:read', async (_e, id, read) => { try { await gapi.markRead(String(id), read !== false); mail.check().then(() => send('sync', syncStatus())); return true; } catch (e) { return mailErr(e); } });
+ipcMain.handle('email:spam', async (_e, id, on) => { try { await (on ? gapi.spam(String(id)) : gapi.notSpam(String(id))); return true; } catch (e) { return mailErr(e); } });
 ipcMain.handle('email:archive', async (_e, id, undo) => { try { await (undo ? gapi.unarchive(String(id)) : gapi.archive(String(id))); return true; } catch (e) { return mailErr(e); } });
 ipcMain.handle('email:saveAttachment', async (_e, msgId, att) => {
   try {
@@ -1060,8 +1078,9 @@ async function sendEmailNow(p) {
   if (p.packet) files.unshift(packet());
   try {
     const r = await gapi.send({ to: p.to, cc: p.cc, subject: p.subject, html: p.html, files, threadId: p.threadId, inReplyTo: p.inReplyTo, refs: p.refs });
-    activity.add('Gmail', 'email-sent', { files: files.length, reply: !!p.threadId }, true);
-    if (p.patientKey) store.log.add({ name: p.name || '', phone: p.phone || '', template: p.templateName || 'Email', templateId: p.templateId || null, ok: true, error: '', message: `Email: ${p.subject}`, channel: 'email' });
+    // Once Gmail has it, a local logging hiccup must never turn it into a "failed" (and a second send).
+    try { activity.add('Gmail', 'email-sent', { files: files.length, reply: !!p.threadId }, true); } catch {}
+    if (p.patientKey) try { store.log.add({ name: p.name || '', phone: p.phone || '', template: p.templateName || 'Email', templateId: p.templateId || null, ok: true, error: '', message: `Email: ${p.subject}`, channel: 'email' }); } catch {}
     return { ok: true, id: r.id, threadId: r.threadId };
   } catch (e) { activity.add('Gmail', 'email-sent', { code: e.code || '' }, false); return { ok: false, error: e.message, code: e.code }; }
 }
@@ -1084,8 +1103,15 @@ ipcMain.handle('outbox:nextAllowed', (_e, when) => outbox.nextAllowed(new Date(w
 app.whenReady().then(() => {
   outbox.start({
     senders: {
-      text: async (p) => { const res = await sendTexts(p.items || []); const ok = res.filter((r) => r.ok).length; const out = res.find((r) => r.code === 'SIGNED_OUT');
-        return out && !ok ? { ok: false, code: 'SIGNED_OUT', error: 'RingRx sign-in needed' } : { ok: ok === res.length, error: ok === res.length ? '' : `${ok} of ${res.length} sent`, partial: ok < res.length ? res.map((r) => ({ name: r.name, ok: r.ok, error: r.error })) : undefined }; },
+      // Each patient is marked as sent in the item as soon as it goes, so a retry or restart never texts them twice.
+      text: async (p, item) => {
+        const todo = (p.items || []).filter((x) => !x.sentAt);
+        const res = await sendTexts(todo, (d) => { if (d.last && d.last.ok) { const cur = outbox.get(item.id); if (cur) { const items = cur.payload.items.map((x) => (x.phone === d.last.phone && x.message === d.last.message && !x.sentAt ? { ...x, sentAt: new Date().toISOString() } : x)); outbox.setPayload(item.id, { ...cur.payload, items }); } } }, { respectQuiet: item.respectQuiet !== false });
+        const ok = res.filter((r) => r.ok).length, out = res.find((r) => r.code === 'SIGNED_OUT' || r.code === 'LOCKED'), held = res.some((r) => r.held);
+        if (held && !res.some((r) => !r.ok && !r.held)) return { ok: false, code: 'HELD', error: 'Waiting for sending hours' };
+        if (out && !ok) return { ok: false, code: out.code === 'LOCKED' ? 'LOCKED' : 'SIGNED_OUT', error: out.error };
+        return { ok: ok === res.length, error: ok === res.length ? '' : `${ok} of ${res.length} sent`, partial: ok < res.length ? res.map((r) => ({ name: r.name, ok: r.ok, error: r.error })) : undefined };
+      },
       email: (p) => sendEmailNow(p),
     },
     onChange: () => { try { outboxEvent(); } catch {} },
@@ -1093,23 +1119,37 @@ app.whenReady().then(() => {
   powerMonitor.on('resume', () => setTimeout(() => outbox.tick().catch(() => {}), 8000));
 });
 
-ipcMain.handle('send:batch', async (e, items, opId) => {
-  if (opId) { if (sendOps.has(opId)) return sendOps.get(opId); const p = sendBatch(e, items); sendOps.set(opId, p); setTimeout(() => sendOps.delete(opId), 10 * 60000); return p; }
-  return sendBatch(e, items);
+ipcMain.handle('send:batch', async (e, items, opId, opts) => {
+  if (opId) { if (sendOps.has(opId)) return sendOps.get(opId); const p = sendBatch(e, items, opts); sendOps.set(opId, p); setTimeout(() => sendOps.delete(opId), 10 * 60000); return p; }
+  return sendBatch(e, items, opts);
 });
-const sendBatch = (e, items) => sendTexts(items, (d) => { try { e.sender.send('send:progress', d); } catch {} });
-async function sendTexts(items, progress = () => {}) {
+// Immediate sends follow sending hours too (unless "Send now anyway"): anyone not reached before closing goes to the outbox for the morning.
+async function sendBatch(e, items, opts = {}) {
+  const res = await sendTexts(items, (d) => { try { e.sender.send('send:progress', d); } catch {} }, { respectQuiet: opts.respectQuiet !== false });
+  const held = res.filter((r) => r.held);
+  if (held.length) {
+    const it = outbox.add({ kind: 'text', label: 'Held for sending hours', to: held.length === 1 ? held[0].name : `${held.length} patients`, payload: { items: held.map(({ held: _h, ok: _o, error: _e, ...x }) => x) }, sendAt: outbox.nextAllowed().toISOString(), id: opts.opId ? opts.opId + ':held' : undefined });
+    held.forEach((r) => { r.error = `Will send ${new Date(it.sendAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`; });
+  }
+  return res;
+}
+async function sendTexts(items, progress = () => {}, opts = {}) {
   const id = pid();
   // Blocked numbers, read fresh before every single text (a STOP can arrive mid-batch): anyone marked
   // do-not-text (main or extra numbers) and every number that replied STOP. All compared as 10 digits.
   const d10 = (x) => String(x || '').replace(/\D/g, '').slice(-10);
+  // If the patient list or the STOP list can't be unlocked, nothing is sent (an unreadable list must never read as "nobody opted out").
+  const unreadable = () => { const l = store.raw.lockedFiles(); return l.includes('patients.bin') || l.includes('inbound.bin'); };
   const blocked = () => { const b = new Set(Object.values(store.patients.all()).filter((p) => p.dnt).flatMap((p) => [p.phone, ...(p.otherPhones || [])]).map(d10).filter((x) => x.length === 10)); Object.keys(store.inbound.get().optOut || {}).forEach((ph) => b.add(d10(ph))); return b; };
   const results = [];
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     let res;
     try {
+      if (unreadable()) throw Object.assign(new Error("Saved data is locked, so the do-not-text list can't be checked. Nothing was sent."), { code: 'LOCKED' });
       if (blocked().has(d10(it.phone))) throw Object.assign(new Error('Marked do-not-text'), { code: 'DNT' });
+      // Sending hours, checked for every patient (a batch can run into closing time): the rest wait for the morning.
+      if (opts.respectQuiet && !outbox.allowed()) { res = { ...it, ok: false, held: true, error: 'Held for sending hours' }; results.push(res); progress({ done: i + 1, total: items.length, last: res }); continue; }
       try { await ringrx.sendSms(id, it.phone, it.message); }
       catch (err) {
         if (err.code !== 'RETRY') throw err;
@@ -1123,7 +1163,7 @@ async function sendTexts(items, progress = () => {}) {
     store.log.add({ name: it.name, phone: it.phone, template: it.templateName, templateId: it.templateId, apptId: it.apptId || null, ok: res.ok, error: res.error || '', message: it.message });
     results.push(res);
     progress({ done: i + 1, total: items.length, last: res });
-    if (res.code === 'SIGNED_OUT') break;
+    if (res.code === 'SIGNED_OUT' || res.code === 'LOCKED') break;
     if (i < items.length - 1) await new Promise((r) => setTimeout(r, 1500));
   }
   return results;

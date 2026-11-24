@@ -70,3 +70,11 @@ function editEmailTemplate(i) {
 // Runs with the rest of Settings.
 const _loadSettings = loadSettings;
 loadSettings = async function () { await _loadSettings(); loadEmailSettings().catch(() => {}); };
+// Settings in four tabs, one at a time: Connections · Messages · Alerts · App.
+function showSettingsTab(t) {
+  t = ['connections', 'messages', 'alerts', 'app'].includes(t) ? t : 'connections'; remember('set-tab', t);
+  document.querySelectorAll('#view-settings .card[data-tab]').forEach((c) => c.classList.toggle('hidden', c.dataset.tab !== t));
+  document.querySelectorAll('#set-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
+}
+document.querySelectorAll('#set-tabs button').forEach((b) => (b.onclick = () => showSettingsTab(b.dataset.t)));
+showSettingsTab(recall('set-tab', 'connections'));

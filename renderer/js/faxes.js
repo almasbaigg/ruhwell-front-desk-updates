@@ -1,7 +1,7 @@
 /* Faxes: received in Doximity, filed into the patient's RxNT chart.
    The app never guesses the patient: Maria picks one, sees that chart's name, DOB and chart number read
    fresh from RxNT, confirms, and only then is the fax uploaded (then checked in the chart). */
-let fxFilter = 'new', fxData = [], fxOpen = null, fxUrl = null, fxSeq = 0, fxCat = '';
+let fxFilter = fixFilter(recall('fx-filter', 'needs'), ['needs', 'unread', 'all', 'done', 'spam']), fxData = [], fxOpen = null, fxUrl = null, fxSeq = 0, fxCat = '';
 const FX_ORDER = ['Prior authorization', 'Pharmacy', 'Lab results', 'Records', 'Referral', 'Insurance', 'Other', 'Unreadable', 'Notice'];
 const FX_CATS = ['Other', 'Consults', 'Lab Results', 'Imaging', 'Patient Chart', 'Insurance Scan', 'External CCR/CCD Documents', 'Advanced Directives', 'Patient Consent'];
 const fxWhen = (iso, f) => { if (f && f.dateUnknown) return 'date unavailable'; const d = new Date(iso); return isNaN(d) ? '' : `${dayLabel(iso)} · ${fmtTime(d)}`; };
@@ -37,8 +37,7 @@ async function sortPending() {
 async function loadFaxes() {
   fxData = await window.api.faxList();
   if (!patients.length) { patients = await window.api.patients(); indexPatients(patients); }
-  const n = fxData.filter((f) => f.status === 'new').length;
-  document.querySelector('#fx-filter [data-f="new"]').innerHTML = `To file${n ? `<b>${n}</b>` : ''}`;
+  filterCounts('fx-filter', { needs: fxData.filter((f) => f.status === 'new').length, unread: fxData.filter((f) => f.status === 'new' && !f.readAt).length });
   renderFaxList();
   if (fxOpen && fxData.find((f) => f.id === fxOpen)) openFax(fxOpen, true); else if (!fxOpen) fxEmpty();
 }
@@ -51,7 +50,9 @@ function fxEmpty() {
   if ($('fx-signin')) $('fx-signin').onclick = async () => { if (await window.api.faxSignIn()) { toast('Doximity connected'); await syncEverything(['faxes']); loadFaxes(); } };
 }
 function renderFaxList() {
-  const base = fxData.filter((f) => (fxFilter === 'new' ? f.status === 'new' : f.status !== 'new'));
+  // Needs you = still to deal with · Unread = never opened · Done = filed or handled here (Not patient-related, Done) · Spam.
+  const F = { needs: (f) => f.status === 'new', unread: (f) => f.status === 'new' && !f.readAt, all: (f) => f.status !== 'spam', done: (f) => ['filed', 'done', 'notpatient'].includes(f.status), spam: (f) => f.status === 'spam' };
+  const base = fxData.filter(F[fxFilter] || F.needs);
   const counts = {}; base.forEach((f) => { const c = f.category || 'Sorting…'; counts[c] = (counts[c] || 0) + 1; });
   const cats = [...FX_ORDER.filter((c) => counts[c]), ...(counts['Sorting…'] ? ['Sorting…'] : [])];
   if (fxCat && !counts[fxCat]) fxCat = '';
@@ -60,11 +61,11 @@ function renderFaxList() {
   let lastDay = '';
   $('fx-list').innerHTML = list.length ? list.map((f) => {
     const day = f.dateUnknown ? 'Date unavailable' : dayLabel(f.at), sep = day !== lastDay ? `<p class="list-day">${esc(day)}</p>` : ''; lastDay = day;
-    const h = hoursSince(f.at), tag = f.status === 'new' && f.download === 'failed' ? '<span class="rstat wait">Download failed</span>' : f.status === 'new' && f.download === 'pending' ? '<span class="rstat">Downloading…</span>' : f.status === 'filed' ? '<span class="rstat ok">Filed to chart ✓</span>' : f.status === 'notpatient' ? '<span class="rstat">Not patient-related</span>' : f.status === 'spam' ? '<span class="rstat">Spam</span>' : `<span class="wait u-${h >= 24 ? 'red' : h >= 4 ? 'amber' : 'green'}">${esc(waitLabel(f.at))}</span>`;
-    return `${sep}<button class="trow-btn ${fxOpen === f.id ? 'active' : ''} ${f.status === 'new' ? 'unread' : ''}" data-id="${esc(f.id)}">
+    const h = hoursSince(f.at), tag = f.status === 'new' && f.download === 'failed' ? '<span class="rstat wait">Download failed</span>' : f.status === 'new' && f.download === 'pending' ? '<span class="rstat">Downloading…</span>' : f.status === 'filed' ? '<span class="rstat ok">Filed to chart ✓</span>' : f.status === 'done' ? '<span class="rstat ok">Done</span>' : f.status === 'notpatient' ? '<span class="rstat">Not patient-related</span>' : f.status === 'spam' ? '<span class="rstat">Spam</span>' : `<span class="wait u-${h >= 24 ? 'red' : h >= 4 ? 'amber' : 'green'}">${esc(waitLabel(f.at))}</span>`;
+    return `${sep}<button class="trow-btn ${fxOpen === f.id ? 'active' : ''} ${f.status === 'new' && !f.readAt ? 'unread' : ''}" data-id="${esc(f.id)}">
       <span class="avatar unk">${I.fax || '<svg viewBox="0 0 24 24"><path d="M7 9V4h10v5"/><rect x="3" y="9" width="18" height="9" rx="2"/><path d="M7 14h10v6H7z"/></svg>'}</span>
-      <span class="mid"><b>${esc(fxFrom(f))}</b><span class="prev">${f.category ? `<i class="fx-cat-tag c-${esc(f.category.toLowerCase().replace(/[^a-z]/g, ''))}">${esc(f.category)}</i>` : ''}${f.pages ? `${f.pages} page${f.pages > 1 ? 's' : ''} · ` : ''}${esc(f.dateUnknown ? 'time unknown' : fmtTime(new Date(f.at)))}</span>${(f.suggest || []).length && f.status === 'new' ? `<span class="fx-sug">Possibly ${esc(sugName(f.suggest[0]))}</span>` : ''}</span>${tag}</button>`;
-  }).join('') : `<div class="all-clear small-clear">${I.check}<b>${fxFilter === 'new' ? 'No faxes to file' : 'Nothing filed yet'}</b></div>`;
+      <span class="mid"><b>${esc(fxFrom(f))}${f.status === 'new' && !f.readAt ? '<i class="dot-new"></i>' : ''}</b><span class="prev">${f.category ? `<i class="fx-cat-tag c-${esc(f.category.toLowerCase().replace(/[^a-z]/g, ''))}">${esc(f.category)}</i>` : ''}${f.pages ? `${f.pages} page${f.pages > 1 ? 's' : ''} · ` : ''}${esc(f.dateUnknown ? 'time unknown' : fmtTime(new Date(f.at)))}</span>${(f.suggest || []).length && f.status === 'new' ? `<span class="fx-sug">Possibly ${esc(sugName(f.suggest[0]))}</span>` : ''}</span>${tag}</button>`;
+  }).join('') : `<div class="all-clear small-clear">${I.check}<b>${{ needs: 'No faxes waiting', unread: 'Nothing unread', done: 'Nothing done yet', spam: 'No spam faxes' }[fxFilter] || 'No faxes'}</b></div>`;
   if (chips) $('fx-list').insertAdjacentHTML('afterbegin', chips);
   $('fx-list').querySelectorAll('.fx-chips button').forEach((b) => (b.onclick = () => { fxCat = b.dataset.c; renderFaxList(); }));
   $('fx-list').querySelectorAll('.trow-btn').forEach((b) => (b.onclick = () => openFax(b.dataset.id)));
@@ -105,13 +106,16 @@ async function openFax(id, keep) {
   if (fxOpen !== id) { if (fxView.doc) try { fxView.doc.destroy(); } catch {} fxView = { zoom: 'fit', rot: 0, doc: null }; }   // each fax opens upright, fit to width
   fxOpen = id; renderFaxList();
   const f = fxData.find((x) => x.id === id); if (!f) return fxEmpty();
+  // Opening a fax marks it read (with the time), like texts and emails.
+  if (!f.readAt && !keep) { f.readAt = new Date().toISOString(); window.api.faxRead(f.id, true); renderFaxList(); filterCounts('fx-filter', { needs: fxData.filter((x) => x.status === 'new').length, unread: fxData.filter((x) => x.status === 'new' && !x.readAt).length }); }
   const prev = await previewHTML(f);
   if (seq !== fxSeq || fxOpen !== id) return;
   const done = f.status !== 'new';
   $('fx-pane').innerHTML = `
     <div class="convo-head"><span class="avatar unk"><svg viewBox="0 0 24 24"><path d="M7 9V4h10v5"/><rect x="3" y="9" width="18" height="9" rx="2"/><path d="M7 14h10v6H7z"/></svg></span>
       <div><h2>${esc(fxFrom(f))}</h2><p class="muted small">${esc(f.number || '')}${f.pages ? ` · ${f.pages} page${f.pages > 1 ? 's' : ''}` : ''} · received ${esc(fxWhen(f.at, f))}</p></div>
-      <div class="row-gap">${!['pending', 'failed'].includes(f.download) ? '<button class="btn small" id="fx-save">Download</button>' : ''}<button class="btn small" id="fx-dox2">Open in Doximity</button>${done ? (f.status !== 'filed' ? '<button class="btn small" id="fx-back">Move back to To file</button>' : '') : '<button class="btn small" id="fx-np">Not patient-related</button><button class="btn small" id="fx-spam">Spam</button>'}</div></div>
+      <div class="row-gap">${!['pending', 'failed'].includes(f.download) ? '<button class="btn small" id="fx-save">Download</button>' : ''}<button class="btn small" id="fx-dox2">Open in Doximity</button>${done ? (f.status !== 'filed' ? '<button class="btn small" id="fx-back">Move back to Needs you</button>' : '') : `<button class="btn small" id="fx-unread">Mark unread</button><div class="more-wrap"><button class="btn small" id="fx-more">More ▾</button><div class="more-menu hidden" id="fx-menu"><button id="fx-np">Not patient-related</button><button id="fx-spam">Spam</button></div></div><button class="btn small" id="fx-done">${I.check}Done</button>`}</div></div>
+    <div class="receipt-line">${f.readAt ? stamp('Read', f.readAt) : '<b>New</b>'}${f.doneAt && done ? ' · ' + stamp(f.status === 'filed' ? 'Filed' : f.status === 'spam' ? 'Spam' : 'Done', f.doneAt) : ''}<span class="muted"> · Done and Spam stay in this app (Doximity unchanged)</span></div>
     <div class="fx-body"><div class="fx-prev">${prev}</div><div class="fx-side" id="fx-side"></div></div>`;
   drawPages(seq);
   if ($('fx-zo')) { const cur = () => (fxView.zoom === 'fit' ? (parseInt($('fx-zv').textContent, 10) || 100) / 100 : fxView.zoom);
@@ -120,7 +124,11 @@ async function openFax(id, keep) {
   if ($('fx-save')) $('fx-save').onclick = async () => { const r = await window.api.faxSave(f.id); if (r && r.ok) toast('Saved to ' + r.path.split(/[\\/]/).pop()); else if (r && r.error) toast("This fax isn't downloaded yet."); };
   const dox = () => window.api.faxOpen(f.id);
   if ($('fx-dox')) $('fx-dox').onclick = dox; $('fx-dox2').onclick = dox;
-  const mark = async (st, msg) => { await window.api.faxMark(f.id, st); toast(msg, async () => { await window.api.faxMark(f.id, 'new'); loadFaxes(); }); fxOpen = null; loadFaxes(); };
+  // The list only changes once the mark is saved; Undo puts back exactly what it was.
+  const mark = async (st, msg) => { const prev = f.status; if (!(await window.api.faxMark(f.id, st))) return toast("Couldn't save that. The fax stays where it was."); toast(msg, async () => { await window.api.faxMark(f.id, prev); loadFaxes(); }); fxOpen = null; loadFaxes(); };
+  if ($('fx-done')) $('fx-done').onclick = () => mark('done', 'Marked done');
+  if ($('fx-more')) $('fx-more').onclick = (e) => { e.stopPropagation(); $('fx-menu').classList.toggle('hidden'); };
+  if ($('fx-unread')) $('fx-unread').onclick = async () => { await window.api.faxRead(f.id, false); f.readAt = null; fxOpen = null; toast('Marked unread'); loadFaxes(); };
   if ($('fx-np')) $('fx-np').onclick = () => mark('notpatient', 'Marked not patient-related');
   if ($('fx-spam')) $('fx-spam').onclick = () => mark('spam', 'Marked as spam');
   if ($('fx-back')) $('fx-back').onclick = async () => { await window.api.faxMark(f.id, 'new'); loadFaxes(); };
@@ -189,7 +197,8 @@ async function confirmStep(f, p) {
     $('fx-rx').onclick = () => window.api.openRxnt('todo');
   };
 }
-document.querySelectorAll('#fx-filter button').forEach((b) => (b.onclick = () => { fxFilter = b.dataset.f; document.querySelectorAll('#fx-filter button').forEach((x) => x.classList.toggle('on', x === b)); fxOpen = null; renderFaxList(); fxEmpty(); }));
+document.querySelectorAll('#fx-filter button').forEach((x) => x.classList.toggle('on', x.dataset.f === fxFilter));
+document.querySelectorAll('#fx-filter button').forEach((b) => (b.onclick = () => { fxFilter = b.dataset.f; remember('fx-filter', fxFilter); document.querySelectorAll('#fx-filter button').forEach((x) => x.classList.toggle('on', x === b)); fxOpen = null; renderFaxList(); fxEmpty(); }));
 $('fx-refresh').onclick = async () => { await syncEverything(['faxes']); loadFaxes(); };
 window.api.onFaxes(() => { if (view === 'faxes') loadFaxes(); sortPending(); });
 setTimeout(sortPending, 8000);

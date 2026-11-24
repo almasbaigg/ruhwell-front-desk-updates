@@ -36,9 +36,10 @@ function pairMoves(newOnes, goneOnes) {
   return pairs;
 }
 
-function diff(prev, cur, prevRange) {
+function diff(prev, cur, prevRange, curRange) {
   const events = [];
-  const inPrev = (date) => prevRange && date >= prevRange.from && date <= prevRange.to;
+  // Only days read both times count: a visit on a day outside this read (the look-ahead got shorter) didn't "go away".
+  const inPrev = (date) => prevRange && date >= prevRange.from && date <= prevRange.to && (!curRange || (date >= curRange.from && date <= curRange.to));
   const today = ymd(new Date());
   const added = Object.values(cur).filter((a) => !prev[a.appointmentId] && inPrev(a.date));
   // Visits that went away since last time: no longer listed, or newly cancelled.
@@ -102,10 +103,11 @@ async function check({ silent = false } = {}) {
       else delete strikes[d];
     }
     for (const [id, a] of Object.entries(prevSnap)) if (suspect.has(a.date) && !cur[id]) cur[id] = a;   // keep what we knew
-    const events = state.snapshot ? diff(prevSnap, cur, state.range) : [];
+    const events = state.snapshot ? diff(prevSnap, cur, state.range, range) : [];
     // Cancellations and removals must be seen twice, a few minutes apart, before anyone hears about them.
     const isCx = (e) => e.kind === 'cancelled' || e.kind === 'noshow';
-    const stillTrue = (e) => { const a = cur[e.appt.appointmentId]; return e.removed ? !a : !!a && (e.kind === 'noshow' ? isNoShow(a) : isCancel(a)); };
+    const covered = (e) => { const d = e.appt.date || String(e.appt.start || '').slice(0, 10); return !d || (d >= range.from && d <= range.to); };
+    const stillTrue = (e) => { if (!covered(e)) return false; const a = cur[e.appt.appointmentId]; return e.removed ? !a : !!a && (e.kind === 'noshow' ? isNoShow(a) : isCancel(a)); };
     // Same-day/next-day changes confirm on the next read; later visits wait 20 minutes, because staff usually
     // cancel and rebook in one go and that should arrive as one "rescheduled", not two alerts.
     const hold = (e) => { const d = (new Date(new Date(e.appt.start).toDateString()) - new Date(new Date().toDateString())) / 864e5; return d <= 1 ? 90000 : 20 * 60000; };

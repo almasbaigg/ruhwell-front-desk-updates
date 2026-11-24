@@ -47,10 +47,17 @@ async function login(pid, username, password, otp) {
   return { username };
 }
 
-async function token(pid) {
+// One refresh at a time per account: everything that finds the access expired waits for the same one.
+const inflight = {};
+function token(pid) {
   const c = cache[pid];
-  if (c && Date.now() < c.exp - 30000) return c.access;
+  if (c && Date.now() < c.exp - 30000) return Promise.resolve(c.access);
+  if (!inflight[pid]) inflight[pid] = refreshAccess(pid).finally(() => { delete inflight[pid]; });
+  return inflight[pid];
+}
+async function refreshAccess(pid) {
   const saved = store.ringrx.get(pid);
+  if (saved && saved.needsCode) throw new RingRxError('RingRx needs a verification code. Sign in again in Settings.', 'SIGNED_OUT');
   if (!saved?.refreshToken) throw new RingRxError('Sign in to RingRx first.', 'SIGNED_OUT');
   let r;
   try { r = await post('/auth/refresh', { refresh_token: saved.refreshToken }); }
@@ -63,6 +70,9 @@ async function token(pid) {
     catch (e) {
       // Only a definite "wrong password / needs a code" ends the sign-in. A dropped connection keeps everything saved.
       if (e.code !== 'BAD_LOGIN' && e.code !== 'OTP_REQUIRED') throw new RingRxError("Can't reach RingRx right now.", 'OFFLINE');
+      // A code is needed: keep the saved sign-in (so only the code is asked for) and stop trying until then,
+      // so the password is never sent over and over.
+      if (e.code === 'OTP_REQUIRED') { store.ringrx.set(pid, { ...store.ringrx.get(pid), refreshToken: undefined, needsCode: true }); throw new RingRxError('RingRx needs a verification code. Sign in again in Settings.', 'SIGNED_OUT'); }
       store.ringrx.set(pid, { ...store.ringrx.get(pid), password: undefined });
     }
   }
@@ -117,10 +127,11 @@ function status(pid) {
   return s?.refreshToken ? { connected: true, username: s.username } : { connected: false };
 }
 
-async function get(pid, path, query) {
+async function get(pid, path, query, retried) {
   const url = new URL(BASE + path);
   if (query) Object.entries(query).forEach(([k, v]) => url.searchParams.set(k, v));
   const res = await fetch(url, { headers: { Authorization: `Bearer ${await token(pid)}` } });
+  if (res.status === 401 && !retried) { delete cache[pid]; return get(pid, path, query, true); }   // access ran out early: refresh once, read again
   if (!res.ok) throw new RingRxError(`RingRx ${path} ${res.status}`, 'GET_FAILED');
   return res.json();
 }
@@ -249,7 +260,7 @@ function vmSeconds(d) { const n = Number(d) || 0; return Math.round(n >= 1000 ? 
 // (PATCH /voicemails/<id> with status "read"). Only the read status is sent; nothing else can change.
 async function markRead(pid, ids) {
   const done = [];
-  for (const id of [...new Set(ids || [])].filter((x) => /^[\w-]{6,64}$/.test(String(x))).slice(0, 50)) {
+  for (const id of [...new Set(ids || [])].map(String).filter((x) => x && x.length <= 100)) {
     try {
       const res = await fetch(`${BASE}/voicemails/${encodeURIComponent(id)}`, { method: 'PATCH', signal: AbortSignal.timeout(15000),
         headers: { Authorization: `Bearer ${await token(pid)}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ voicemail: { status: 'read' } }) });

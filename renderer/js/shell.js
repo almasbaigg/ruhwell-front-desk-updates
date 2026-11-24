@@ -114,7 +114,7 @@ function paintSync(st) {
   const working = busy.high || busy.low || P.running || (st.messages || {}).running;
   const issue = (st.locked && problem) || accProblem || problem;
   $('status-line').className = 'status-line ' + (issue ? 'warn' : working ? 'busy' : 'on');
-  $('status-text').textContent = issue || (working ? 'Syncing…' : `${notSetUp.length ? 'Connected · ' + notSetUp.join(', ') + ' not set up' : 'All connected'} · ${minsAgo((st.alerts || {}).lastRun || (st.schedule || {}).at) || 'just now'}`);
+  $('status-text').textContent = issue || (working ? 'Syncing…' : `${notSetUp.length ? 'Synced · ' + notSetUp.join(', ') + ' not set up' : 'Synced'} · ${minsAgo((st.alerts || {}).lastRun || (st.schedule || {}).at) || 'just now'}`);
 }
 async function paintConnections() { const st = await window.api.syncStatus(); accounts.rxnt.connected = st.rxnt; accounts.ringrx.connected = st.ringrx; paintSync(st); }
 window.api.onSync((st) => { paintSync(st); if (!st.patients.running && view === 'patients') loadPatients(true); if (view === 'settings') paintSyncTimes(); });
@@ -125,6 +125,9 @@ setInterval(() => paintSync(), 30000);
 const MARK = '<rect y="43.34" width="43.16" height="43.16" rx="2.88"/><rect x="47.48" y="87.31" width="43.16" height="43.16" rx="2.88"/><path d="m131.62,43.56h-34.99s-2.43,0-2.43,0c-.04,0-.08,0-.13.01h-3.15v-3.17s.01-.07.01-.11v-.99s0-36.43,0-36.43C90.93,1.28,89.65,0,88.06,0h-37.42c-.92,0-1.73.43-2.24,1.1v.02c-.35.41-.61.93-.61,1.51,0,25.41,2.98,43.69,21.68,62.39s37.39,21.67,62.44,21.67c.56,0,1.06-.26,1.45-.6h.02c.67-.51,1.1-1.32,1.1-2.24v-37.41c.01-1.59-1.28-2.88-2.87-2.88Z"/>';
 const SYNC_PARTS = [['schedule', 'RxNT schedule'], ['rx', 'Prescriptions & To-Do'], ['portal', 'Portal messages'], ['comms', 'Texts & calls'], ['gmail', 'Email'], ['faxes', 'Faxes']];
 let syncCardBusy = null;
+$('side-sync').onclick = async () => { const b = $('side-sync'); if (b.classList.contains('spin')) return; b.classList.add('spin'); try { await syncEverything(); } finally { b.classList.remove('spin'); } };
+// The status line opens the connection details (Settings → Connections).
+$('status-line').onclick = () => { go('settings'); setTimeout(() => typeof showSettingsTab === 'function' && showSettingsTab('connections'), 50); };
 async function syncEverything(only) {
   if (syncCardBusy) return syncCardBusy;
   const parts = SYNC_PARTS.filter(([k]) => !only || only.includes(k));

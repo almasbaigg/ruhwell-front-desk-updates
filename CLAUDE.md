@@ -46,6 +46,7 @@ Don't change app code from the Mac build chat. Code changes happen in Almas's ch
 - `gmailapi.js`: Gmail through Google's sign-in (internal OAuth app in Google Cloud project `ruhwell-front-desk`; key .json loaded once per computer in Settings, kept encrypted, never in the repo). Inbox, threads, mark read, archive, send with attachments. `outbox.js`: Send later + sending hours for texts and emails. `renderer/js/emails.js`: Emails view, composer, schedule picker, Scheduled list; `emailsettings.js`: Settings → Email + Sending hours.
 - RingRx read sync: reading in the app PATCHes `/voicemails/<id>` `{voicemail:{status:'read'}}` (what RingRx's site does); RingRx "read" shows as read/listened in the app. RingRx voicemail `duration` is milliseconds.
 - `comms.js`, `ringrx.js`, `gmail.js`: texts, calls (spam list, listened/answered marks, voicemail audio via `/voicemails/<id>/voice_payload`), email. `checklist.js`: checklist (plain-language times, repeats, Top 3) and day-page notes.
+- Shared UI rules: Texts/Emails/Calls/Faxes use the same filters (Needs you · Unread · All · Sent/Done · Spam) and show Read/Done times; one Message window (Text | Email tabs). Settings has four tabs (Connections · Messages · Alerts · App). Today shows saved data first with per-panel freshness.
 - `renderer/`: one page app. `js/today.js` (home), `js/pad.js` (checklist + notes), `js/rx.js` (RxNT), `js/faxes.js` (Faxes), `js/texts.js`, `js/calls.js`, `js/settings.js`.
 - Tests: `npm test` (must pass before any release).
 

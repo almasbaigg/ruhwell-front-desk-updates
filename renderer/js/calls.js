@@ -1,6 +1,6 @@
 /* Calls: the RingRx call log. Calls can't be answered from the app, so this shows who called, what's
    still waiting for a callback, and a quick way to text back. */
-let caFilter = recall('ca-filter', 'all'), caData = [];
+let caFilter = fixFilter(recall('ca-filter', 'needs'), ['needs', 'unread', 'all', 'sent', 'spam']), caData = [];
 
 async function loadCalls() {
   const days = +$('ca-range').value;
@@ -53,7 +53,7 @@ function callRow(c, due, group) {
     <div class="c-time"><b>${esc(fmtTime(new Date((calls.length > 1 ? first : c).at)))}</b><span>${esc(due ? 'waiting ' + waitLabel(c.at) : calls.length > 1 ? calls.length + ' calls' : dayLabel(c.at))}</span></div>
     <div class="who">
       <div class="c-name"><b>${esc(whoName(c.who, c.phone))}</b>${c.voicemail && !c.heardAt && !c.spam ? '<i class="dot-new"></i>' : ''}${whoTag(c.who)}${callStatus(c)}</div>
-      <div class="c-sub">${whoName(c.who, c.phone) === fmtPhone(c.phone) ? '' : `<span class="c-phone">${esc(fmtPhone(c.phone))}</span>`}${calls.length > 1 ? '' : `<span class="c-kind ${kindCls(c)}">${callIcon(c)}${esc(callDetail(c))}</span>`}</div>
+      <div class="c-sub">${whoName(c.who, c.phone) === fmtPhone(c.phone) ? '' : `<span class="c-phone">${esc(fmtPhone(c.phone))}</span>`}${calls.length > 1 ? '' : `<span class="c-kind ${kindCls(c)}">${callIcon(c)}${esc(callDetail(c))}</span>`}${c.voicemail && c.heardAt ? (c.heardAt === 'ringrx' ? '<span class="stamp">Listened in RingRx</span>' : stamp('Listened', c.heardAt)) : ''}${c.doneAt ? stamp('Done', c.doneAt) : ''}</div>
       ${trail}
       ${c.transcription ? `<em class="vm">“${esc(c.transcription)}”</em>` : ''}
       ${c.voicemail ? '<div class="vm-player"></div>' : ''}
@@ -63,9 +63,12 @@ function callRow(c, due, group) {
 }
 function renderCalls() {
   const q = $('ca-search').value.trim().toLowerCase(), qd = digits(q);
-  const due = caFilter === 'spam' ? [] : caData.filter((c) => c.due);
-  $('ca-due').innerHTML = due.length ? `<div class="section-head"><h2>Needs a callback</h2><span class="muted small">${due.length}</span></div><div class="list">${due.map((c) => callRow(c, true)).join('')}</div>` : '';
-  const F = { all: (c) => !c.spam, in: (c) => !c.spam && c.inbound, out: (c) => !c.inbound, spam: (c) => c.spam, unheard: (c) => !c.spam && c.voicemail && !c.heardAt, unanswered: (c) => !c.spam && c.inbound && (c.missed || c.voicemail) && !c.answer };
+  // Needs you = callbacks due (oldest wait first, with how long); the rest are the same filters as Texts and Emails.
+  const due = caData.filter((c) => c.due);
+  filterCounts('ca-filter', { needs: due.length, unread: caData.filter((c) => !c.spam && c.voicemail && !c.heardAt).length });
+  $('ca-due').innerHTML = caFilter === 'needs' ? (due.length ? `<div class="list">${due.map((c) => callRow(c, true)).join('')}</div>` : `<div class="all-clear small-clear">${I.check}<b>No calls waiting for a callback</b></div>`) : '';
+  if (caFilter === 'needs') { $('ca-list').innerHTML = ''; bindCallRows(); return; }
+  const F = { all: (c) => !c.spam, sent: (c) => !c.inbound, spam: (c) => c.spam, unread: (c) => !c.spam && c.voicemail && !c.heardAt };
   const list = caData.filter((c) => (F[caFilter] || F.all)(c) && (!q || (c.who.name || '').toLowerCase().includes(q) || (qd.length >= 3 && c.phone.includes(qd))));
   // Today stays open; earlier days fold into one "Earlier" section so the page stays short.
   const today = new Date().toDateString(), todays = list.filter((c) => new Date(c.at).toDateString() === today), older = list.filter((c) => new Date(c.at).toDateString() !== today);
@@ -77,7 +80,10 @@ function renderCalls() {
     for (const d of days) inner += `<div class="group-head">${esc(d.day)} · ${d.calls.length} call${d.calls.length === 1 ? '' : 's'}</div>` + groupCalls(d.calls).map((g) => callRow(g.main, false, g)).join('');
     html += `<details class="history" ${q ? 'open' : ''}><summary><span>Earlier</span><em>${older.length} call${older.length === 1 ? '' : 's'}</em></summary><div class="hist-body">${inner}</div></details>`;
   }
-  $('ca-list').innerHTML = list.length ? html : `<div class="empty-state">${I.phone}<h3>No calls</h3><p>Nothing in this range.</p></div>`;
+  $('ca-list').innerHTML = list.length ? html : `<div class="all-clear small-clear">${I.check}<b>${{ unread: 'No new voicemails', sent: 'No outgoing calls in this range', spam: 'No spam calls' }[caFilter] || 'No calls in this range'}</b></div>`;
+  bindCallRows();
+}
+function bindCallRows() {
   document.querySelectorAll('#view-calls .call-row').forEach((el) => {
     const c = caData.find((x) => x.id === el.dataset.id); if (!c) return;
     const t = el.querySelector('.act-text'); if (t) t.onclick = () => openThread(c.phone);

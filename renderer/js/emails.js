@@ -1,7 +1,11 @@
 /* Emails: the practice Gmail (read, reply, write), the email composer (formatting, templates, attachments,
    preview, signature), "Send later" + quiet hours for texts and emails, and the Scheduled list.
    Patients always get email from hello@ruhwellmed.com. */
-let emFolder = recall('em-folder', 'inbox'), emData = { items: [], next: '' }, emOpen = null, emSeq = 0, emTemplates = null;
+// When an email was opened here (Gmail doesn't keep that), so "Read 9:42 PM" works like texts and faxes.
+const emReadAt = (() => { try { return JSON.parse(localStorage.getItem('rfd-em-read') || '{}'); } catch { return {}; } })();
+const saveReadAt = () => { try { const k = Object.keys(emReadAt); if (k.length > 2000) k.slice(0, k.length - 2000).forEach((x) => delete emReadAt[x]); localStorage.setItem('rfd-em-read', JSON.stringify(emReadAt)); } catch {} };
+const ours = (e) => /@ruhwellmed\.com$/i.test(String(e || ''));
+let emFolder = fixFilter(recall('em-folder', 'needs'), ['needs', 'unread', 'all', 'sent', 'spam']), emData = { items: [], next: '' }, emOpen = null, emSeq = 0, emTemplates = null;
 
 /* ---------- Small helpers ---------- */
 const fmtWhen = (d) => { const x = new Date(d), t = new Date(), tm = new Date(); tm.setDate(t.getDate() + 1);
@@ -105,7 +109,8 @@ async function emailCompose(o = {}) {
   const body0 = (o.html || '<p><br></p>') + (sig ? `<div data-sig="1"><br>${sig}</div>` : '');
   const opts = patientEmails().map((p) => `<option value="${esc(p.email)}">${esc(`${p.first || ''} ${p.last || ''}`.trim())}</option>`).join('');
   openModal(`<div class="em-compose">
-    <div class="send-head"><h2>${o.threadId ? 'Reply' : 'New email'}</h2><button class="icon-btn" id="ec-x">${I.x}</button></div>
+    ${o.who && o.who.phone && !o.threadId ? channelTabs('email', { ...o.who, rec: o.who }) : ''}
+    <div class="send-head"><h2>${o.threadId ? 'Reply' : o.who && o.who.first ? esc(`${o.who.first} ${o.who.last || ''}`.trim()) : 'New email'}</h2><button class="icon-btn" id="ec-x">${I.x}</button></div>
     <div class="ec-fields">
       <label><span>From</span><b class="ec-from">${esc(st.sendAs && st.sendAs.email || 'hello@ruhwellmed.com')}</b>${!st.error && st.at && !(st.sendAs && st.sendAs.ok) ? '<em class="bad small">not set up as a Send-as address in Gmail</em>' : ''}</label>
       <label><span>To</span><input id="ec-to" list="ec-people" value="${esc(c.to)}" placeholder="Patient name or email"><button class="linkbtn" id="ec-ccbtn">Cc</button></label>
@@ -124,6 +129,7 @@ async function emailCompose(o = {}) {
     <div class="actions"><button class="btn" id="ec-attach">${I.plus}Attach</button><button class="btn" id="ec-preview">Preview</button><span style="flex:1"></span><button class="btn" id="ec-later">${I.clock}Send later</button><button class="btn primary" id="ec-send">${I.send}Send</button></div>
   </div>`);
   const body = $('ec-body');
+  if (o.who && o.who.phone) bindChannelTabs({ ...o.who, rec: o.who });
   const paintFiles = () => {
     $('ec-files').innerHTML = (c.packet ? [{ name: packet.name, size: packet.size, packet: true }] : []).concat(c.files).map((f, i) => `<span class="file-chip">${I.mail.replace('<svg', '<svg class="fi"')}<b>${esc(f.name)}</b><em>${esc(fmtSize(f.size || 0))}</em><button data-i="${f.packet ? 'p' : i - (c.packet ? 1 : 0)}" title="Remove">${I.x}</button></span>`).join('');
     $('ec-files').querySelectorAll('button').forEach((b) => (b.onclick = () => { if (b.dataset.i === 'p') c.packet = false; else c.files.splice(+b.dataset.i, 1); paintFiles(); }));
@@ -165,13 +171,18 @@ async function emailCompose(o = {}) {
     document.body.append(w); w.querySelector('iframe').srcdoc = `<!doctype html><meta charset="utf-8"><body style="margin:18px;background:#fff">${p.html}</body>`;
     w.querySelector('button').onclick = () => w.remove();
   };
+  // One window = one email: a double click or a repeated request can never queue it twice.
+  let subId = `em-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, busy = false;
   const go2 = async (when, respectQuiet) => {
-    const p = collect(); if (!p) return;
+    const p = collect(); if (!p || busy) return; busy = true;
     $('ec-send').disabled = $('ec-later').disabled = true; $('ec-send').innerHTML = when ? 'Scheduling…' : '<span class="spinner"></span>Sending…';
-    const r = await window.api.outboxAdd({ kind: 'email', label: p.subject, to: p.name ? `${p.name} <${p.to}>` : p.to, payload: p, sendAt: when ? when.toISOString() : undefined, respectQuiet });
+    const r = await window.api.outboxAdd({ id: subId, kind: 'email', label: p.subject, to: p.name ? `${p.name} <${p.to}>` : p.to, payload: p, sendAt: when ? when.toISOString() : undefined, respectQuiet });
     $('ec-send').disabled = $('ec-later').disabled = false; $('ec-send').innerHTML = `${I.send}Send`;
     if (r.status === 'sent') { closeModal(); toast(`Sent to ${p.name || p.to}`); if (o.after) o.after(); if (view === 'emails') loadEmails(); return; }
     if (r.status === 'scheduled') { closeModal(); toast(`Scheduled for ${fmtWhen(r.sendAt)}`); if (o.after) o.after(); return; }
+    busy = false;
+    if (r.status === 'uncertain') { closeModal(); toast(r.error || 'Not sure it went out. Check Sent in Emails.'); return; }
+    subId = `em-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;   // it did not go: trying again is a new attempt
     toast(r.error || 'Not sent.');
   };
   $('ec-send').onclick = async () => { if (!collect()) return; const q = await quietCheck(); if (!q) return; go2(q.when, q.respectQuiet); };
@@ -191,7 +202,8 @@ async function loadEmails(more) {
   $('em-sub').textContent = st.connected ? `${st.account || 'Gmail'} · sending as ${(st.sendAs && st.sendAs.email) || 'hello@ruhwellmed.com'}` : 'Gmail';
   if (!st.connected) { $('em-list').innerHTML = ''; $('em-pane').innerHTML = emConnectHTML(st); bindConnect(); return; }
   const q = $('em-search').value.trim(), seq = ++emSeq;
-  const r = await loading(() => window.api.emailList({ folder: emFolder, q, pageToken: more ? emData.next : '' }));
+  const folder = { needs: 'inbox', all: 'inbox', unread: 'unread', sent: 'sent', spam: 'spam' }[emFolder] || 'inbox';
+  const r = await loading(() => window.api.emailList({ folder, q, pageToken: more ? emData.next : '' }));
   if (seq !== emSeq) return;
   if (r.error) { $('em-list').innerHTML = `<p class="muted small" style="padding:12px">Couldn't load email: ${esc(r.error)}</p>`; return; }
   emData = { items: more ? emData.items.concat(r.items) : r.items, next: r.next };
@@ -209,11 +221,13 @@ function bindConnect() {
   if (c) c.onclick = async () => { c.disabled = true; c.textContent = 'Waiting for Google…'; const r = await window.api.emailConnect(); c.disabled = false; c.textContent = 'Sign in with Google'; if (r.ok) { toast(`Gmail connected${r.account ? ' · ' + r.account : ''}`); paintConnections(); } else toast(r.error === 'timeout' ? 'Google sign-in timed out.' : `Sign-in didn't finish${r.error ? ' (' + r.error + ')' : ''}.`); view === 'emails' ? loadEmails() : loadSettings(); };
 }
 function renderEmailList() {
-  const rows = emData.items;
+  // Needs you: Inbox threads where the last word is from someone else (archive = Done, like Gmail).
+  const rows = emFolder === 'needs' ? emData.items.filter((m) => !ours(m.from.email)) : emData.items;
+  filterCounts('em-filter', { needs: emFolder === 'needs' || emFolder === 'all' ? emData.items.filter((m) => !ours(m.from.email)).length : 0, unread: (lastSync && lastSync.gmail && lastSync.gmail.unread) || 0 });
   $('em-list').innerHTML = rows.length ? rows.map((m) => `<button class="em-row ${m.unread ? 'unread' : ''} ${emOpen === m.id ? 'on' : ''}" data-id="${esc(m.id)}">
       <div class="tr-top"><b>${esc(emFolder === 'sent' ? 'To: ' + (m.to.name || m.to.email) : m.from.name || m.from.email)}</b>${m.count > 1 ? `<em class="cnt">${m.count}</em>` : ''}<span class="t">${esc(shortWhen(m.at))}</span></div>
       <div class="em-subj">${m.unread ? '<i class="dot-new"></i>' : ''}${esc(m.subject)}</div><div class="tr-snip">${esc(m.snippet)}</div></button>`).join('') + (emData.next ? '<button class="btn small em-more" id="em-more">Load more</button>' : '')
-    : `<div class="empty-state small">${I.mail}<p>No emails here.</p></div>`;
+    : `<div class="all-clear small-clear">${I.check}<b>${{ needs: 'Nothing waiting for you', unread: 'Nothing unread', sent: 'Nothing sent', spam: 'No spam' }[emFolder] || 'No emails'}</b></div>`;
   $('em-list').querySelectorAll('.em-row').forEach((b) => (b.onclick = () => openEmail(b.dataset.id)));
   if ($('em-more')) $('em-more').onclick = () => loadEmails(true);
 }
@@ -223,10 +237,12 @@ async function openEmail(id) {
   if (seq !== emSeq || emOpen !== id) return;
   if (t.error) { $('em-pane').innerHTML = `<p class="muted" style="padding:20px">Couldn't open this email: ${esc(t.error)}</p>`; return; }
   const row = emData.items.find((x) => x.id === id), msgs = t.messages, lastIn = [...msgs].reverse().find((m) => !m.sent) || msgs[msgs.length - 1];
-  if (row && row.unread) { row.unread = false; renderEmailList(); window.api.emailRead(id, true); }
+  if (row && row.unread) { row.unread = false; renderEmailList(); const ok = await window.api.emailRead(id, true); if (ok && ok.error) { row.unread = true; renderEmailList(); toast("Couldn't mark it read in Gmail."); } }
+  if (!emReadAt[id]) { emReadAt[id] = Date.now(); saveReadAt(); }
   $('em-pane').innerHTML = `<div class="convo-head"><span class="avatar">${esc(((lastIn.from.name || lastIn.from.email)[0] || '?').toUpperCase())}</span>
       <div><h2>${esc(msgs[0].subject || '(no subject)')}</h2><p class="muted small">${msgs.length} message${msgs.length > 1 ? 's' : ''}</p></div>
-      <div class="row-gap"><button class="btn small" id="em-unread">Mark unread</button><button class="btn small" id="em-archive">Archive</button><button class="btn primary small" id="em-reply">${I.msg}Reply</button></div></div>
+      <div class="row-gap">${emFolder === 'spam' ? '<button class="btn small" id="em-notspam">Not spam</button>' : `<button class="btn small" id="em-unread">Mark unread</button><div class="more-wrap"><button class="btn small" id="em-more">More ▾</button><div class="more-menu hidden" id="em-menu"><button id="em-spam">Report spam</button></div></div>${row && row.inbox !== false && emFolder !== 'sent' ? `<button class="btn small" id="em-archive">${I.check}Done</button>` : ''}`}<button class="btn primary small" id="em-reply">${I.msg}Reply</button></div></div>
+    <div class="receipt-line">${stamp('Read', emReadAt[id])}${ours(lastIn.from.email) ? ' · <span class="muted">Last message is yours</span>' : ''}<span class="muted"> · Done archives it in Gmail</span></div>
     <div class="em-thread">${msgs.map((m, i) => `<div class="em-msg ${i < msgs.length - 1 ? 'old' : ''}" data-i="${i}">
       <div class="em-mh"><b>${esc(m.from.name || m.from.email)}</b><span class="muted small">${esc(m.from.email)}</span><span class="t muted small">${esc(fmtWhen(m.at))}</span></div>
       <iframe sandbox="allow-popups allow-popups-to-escape-sandbox" class="em-frame"></iframe>
@@ -239,8 +255,11 @@ async function openEmail(id) {
     el.querySelectorAll('.file-chip.dl').forEach((b) => (b.onclick = async () => { const r = await window.api.emailSaveAttachment(m.id, m.files[+b.dataset.k]); if (r.ok) toast('Saved to ' + r.path.split(/[\\/]/).pop()); else if (r.error) toast(r.error); }));
     if (el.classList.contains('old')) el.querySelector('.em-mh').onclick = () => el.classList.toggle('old');
   });
-  $('em-unread').onclick = async () => { await window.api.emailRead(id, false); if (row) row.unread = true; emOpen = null; renderEmailList(); $('em-pane').innerHTML = ''; toast('Marked unread'); };
-  $('em-archive').onclick = async () => { await window.api.emailArchive(id); emData.items = emData.items.filter((x) => x.id !== id); emOpen = null; renderEmailList(); $('em-pane').innerHTML = ''; toast('Archived', async () => { await window.api.emailArchive(id, true); loadEmails(); }); };
+  if ($('em-more')) $('em-more').onclick = (e) => { e.stopPropagation(); $('em-menu').classList.toggle('hidden'); };
+  if ($('em-spam')) $('em-spam').onclick = async () => { const r = await window.api.emailSpam(id, true); if (r && r.error) return toast(r.error); emData.items = emData.items.filter((x) => x.id !== id); emOpen = null; renderEmailList(); $('em-pane').innerHTML = ''; toast('Moved to Spam', async () => { await window.api.emailSpam(id, false); loadEmails(); }); };
+  if ($('em-notspam')) $('em-notspam').onclick = async () => { const r = await window.api.emailSpam(id, false); if (r && r.error) return toast(r.error); emOpen = null; toast('Moved to Inbox'); loadEmails(); };
+  if ($('em-unread')) $('em-unread').onclick = async () => { const r = await window.api.emailRead(id, false); if (r && r.error) return toast(r.error); delete emReadAt[id]; saveReadAt(); if (row) row.unread = true; emOpen = null; renderEmailList(); $('em-pane').innerHTML = ''; toast('Marked unread'); };
+  if ($('em-archive')) $('em-archive').onclick = async () => { const r = await window.api.emailArchive(id); if (r && r.error) return toast(r.error); emData.items = emData.items.filter((x) => x.id !== id); emOpen = null; renderEmailList(); $('em-pane').innerHTML = ''; toast('Done · archived in Gmail', async () => { await window.api.emailArchive(id, true); loadEmails(); }); };
   $('em-reply').onclick = () => {
     const to = lastIn.sent ? (lastIn.to || '') : lastIn.from.email, subj = /^re:/i.test(msgs[0].subject) ? msgs[0].subject : `Re: ${msgs[0].subject}`;
     const p = patientEmails().find((x) => x.email.toLowerCase() === String(to).toLowerCase());

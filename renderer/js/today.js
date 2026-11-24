@@ -119,9 +119,33 @@ async function loadToday() {
   if (!$('today-list').children.length) $('today-list').innerHTML = '<div class="loading-line"><span class="spinner"></span>Getting your day ready…</div>';
   const d = await loading(gatherToday);
   todayItems = d.items; todaySync = await window.api.syncStatus(); paintTiles(d); paintTodo(d.items); paintVisits(d.range); paintDone(); paintClosing(d);
-  paintStale(todaySync); paintChanges(d.alerts);
+  paintStale(todaySync); paintChanges(d.alerts); paintFresh(todaySync);
   window.api.watchRead();
 }
+
+// Each panel says how fresh it is. While a part is being re-read and what's on screen is older than 10 minutes,
+// the panel is dimmed and says "Updating…", so old information never passes for current. It repaints when done.
+function paintFresh(st) {
+  if (!st || !st.fresh) return;
+  const one = (id, keys) => {
+    const el = $(id); if (!el) return;
+    const ts = keys.map((k) => st.fresh[k]).filter(Boolean), at = ts.length ? Math.min(...ts) : null, run = keys.some((k) => st.running && st.running[k]);
+    const old = !at || Date.now() - at > 10 * 60000, panel = el.closest('.panel');
+    if (panel) panel.classList.toggle('refreshing', run && old);
+    el.className = 'fresh' + (run ? ' run' : !at || Date.now() - at > 30 * 60000 ? ' old' : '');
+    el.innerHTML = run ? '<span class="spinner"></span>Updating…' : at ? `Updated ${esc(fmtTime(new Date(at)))}` : 'Not read yet';
+    el.title = at ? `Last read ${new Date(at).toLocaleString()}` : '';
+  };
+  one('fresh-attn', ['comms', 'rx', 'portal']); one('fresh-visits', ['schedule']);
+}
+let freshPrev = {}, freshT = null;
+window.api.onSync((st) => {
+  if (view !== 'today') { freshPrev = (st && st.running) || {}; return; }
+  paintFresh(st);
+  const finished = Object.keys(freshPrev).some((k) => freshPrev[k] && !(st.running || {})[k]);
+  freshPrev = (st && st.running) || {};
+  if (finished) { clearTimeout(freshT); freshT = setTimeout(loadToday, 400); }
+});
 
 // Why prescriptions aren't showing, in plain words.
 const rxProblem = (rx) => (rx.error === 'signin' ? 'Sign in to RxNT' : rx.error ? 'Couldn\'t read RxNT · retrying' : 'Checking RxNT…');

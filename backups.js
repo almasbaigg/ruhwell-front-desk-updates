@@ -48,7 +48,13 @@ function restore(b) {
   }
   if (b.inbound) {   // reply history: STOP/confirm processing and confirmations
     const now = store.inbound.get();
-    store.inbound.set({ ...b.inbound, ...now, confirmed: { ...(b.inbound.confirmed || {}), ...(now.confirmed || {}) } });
+    // STOPs merge by number: a STOP in either copy stays, unless that number opted back in after it.
+    const optIn = { ...(b.inbound.optIn || {}), ...(now.optIn || {}) }, optOut = {};
+    for (const [ph, v] of [...Object.entries(b.inbound.optOut || {}), ...Object.entries(now.optOut || {})]) {
+      const back = optIn[ph] && v && v.at && new Date(optIn[ph].at) > new Date(v.at);
+      if (!back && (!optOut[ph] || new Date((v && v.at) || 0) > new Date(optOut[ph].at || 0))) optOut[ph] = v || { at: new Date().toISOString() };
+    }
+    store.inbound.set({ ...b.inbound, ...now, optOut, optIn, confirmed: { ...(b.inbound.confirmed || {}), ...(now.confirmed || {}) } });
   }
   if (b.personal) checklist.importAll(b.personal);
   return { patients: Object.keys(b.patients || {}).length, history: (b.history || []).length };
