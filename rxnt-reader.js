@@ -82,7 +82,7 @@ function readSchedule(target, view) {
     }
   }
   const h = document.querySelector('.fc-toolbar h2, .fc-center h2');
-  let pending = 0; try { pending = angular.element(document.body).injector().get('$http').pendingRequests.length; } catch (e) {}
+  let pending = -1; try { pending = angular.element(document.body).injector().get('$http').pendingRequests.length; } catch (e) {}   // -1 = unknown (not "done")
   return { state: 'ok', pending, date: shown, dateLabel: h ? h.innerText.trim() : '', items: Object.values(out), blocks: Object.values(blocks) };
 }
 const scriptFor = (target, view) => `(${readSchedule.toString()})(${JSON.stringify(target || '')}, ${JSON.stringify(view || 'appointment')})`;
@@ -124,7 +124,8 @@ async function waitForSchedule(win, target, timeoutMs = 45000, view) {
       if (sig !== last) { last = sig; stableSince = Date.now(); }
       // "Unchanged for 3 s" only counts when RxNT isn't still loading, or visits are already showing:
       // an empty screen with requests still going is not a confirmed empty day.
-      else if (Date.now() - stableSince > 3000 && (r.pending === 0 || r.items.length)) return r;
+      // If RxNT won't say how many requests are open (-1), an empty screen must stay unchanged a little longer.
+      else if (Date.now() - stableSince > 3000 && (r.pending === 0 || r.items.length || (r.pending < 0 && Date.now() - stableSince > 6000))) return r;
     }
     await sleep(250);
   }
@@ -247,7 +248,9 @@ function readDash(expectChart) {
     guardianFirst: guardian ? guardian.first : '', guardianLast: guardian ? guardian.last : '', guardianRel: guardian ? String(guardian.rel).slice(0, 40) : '',
     patientId: p.PatientId, chart, first, last, age: typeof per.Age === 'number' && per.Age > 0 ? per.Age : null,
     dob: String(pi.DOB || per.DOB || '').replace(/Z$/, '').slice(0, 10),
-    cell: pi.CellPhone || '', home: pi.HomePhone || '', preferred: pi.PreferedNumber || '', emailChecked: true, emailRead: true,
+    cell: pi.CellPhone || '', home: pi.HomePhone || '', preferred: pi.PreferedNumber || '', emailChecked: true,
+    // Only a chart that actually has an email field (filled or blank) can say the email was removed.
+    emailRead: [pi, per].some((o) => o && Object.keys(o).some((k) => /mail/i.test(k))),
     email: ((roots) => { const seen = new Set(), ok = (v) => typeof v === 'string' && /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(v.trim()) && !/@ruhwellmed\.com$/i.test(v.trim()); let out = ''; const skip = /guarant|responsib|guardian|parent|emergency|relation|provider|doctor|physician|practice|staff|user|employer|pharmac|insur|referr/i; const go = (o, d) => { if (out || !o || typeof o !== 'object' || d > 4 || seen.has(o)) return; seen.add(o); for (const [k, v] of Object.entries(o)) if (!out && /mail/i.test(k) && ok(v)) out = v.trim(); for (const [k, v] of Object.entries(o)) if (!out && v && typeof v === 'object' && !skip.test(k)) go(v, d + 1); }; roots.forEach((r) => go(r, 0)); return out; })([pi, per, typeof P !== 'undefined' ? P : null, typeof p !== 'undefined' ? p : null]),
   } };
 }
@@ -353,10 +356,14 @@ function autofillStep(u, pw, submit) {
 // Quiet sign-in with the saved login. Only one attempt per account at a time (start-up, a sign-out noticed by a
 // read, and the start-up timer all share it), so the saved password is never sent twice at once. After a code
 // was asked for, it waits for the user instead of trying again and again. "ok" only after the schedule really loads.
-const autoInflight = {}, codeAskedAt = {};
+// "A code was asked for" is saved (survives restarts) and only cleared when the user signs in themselves, so the
+// saved password is never sent again while RxNT is waiting for a code.
+const autoInflight = {};
+const codeWait = (pid) => !!((store.settings.get().rxntCodeWait || {})[pid]);
+function setCodeWait(pid, v) { const s = store.settings.get(), m = { ...(s.rxntCodeWait || {}) }; if (v) m[pid] = new Date().toISOString(); else delete m[pid]; store.settings.set({ ...s, rxntCodeWait: m }); }
 function autoSignIn(pid) {
-  if (codeAskedAt[pid] && Date.now() - codeAskedAt[pid] < 30 * 60000) return Promise.resolve('code');
-  if (!autoInflight[pid]) autoInflight[pid] = autoSignInOnce(pid).then((r) => { if (r === 'code') codeAskedAt[pid] = Date.now(); else if (r === 'ok') delete codeAskedAt[pid]; return r; }).finally(() => { delete autoInflight[pid]; });
+  if (codeWait(pid)) return Promise.resolve('code');
+  if (!autoInflight[pid]) autoInflight[pid] = autoSignInOnce(pid).then((r) => { if (r === 'code') setCodeWait(pid, true); return r; }).finally(() => { delete autoInflight[pid]; });
   return autoInflight[pid];
 }
 // Signed in for real = RxNT's scheduler shows a day (not just an RxNT address, which could be a notice page).
@@ -377,11 +384,11 @@ async function autoSignInOnce(pid) {
       await sleep(1500);
       const url = win.webContents.getURL();
       if (!AUTH_OK.test(url)) return 'failed';                       // somewhere unexpected: never fill anything
-      if (/app2\.rxnt\.com/i.test(url)) return provenIn(pid, win);
+      if (/app2\.rxnt\.com/i.test(url)) return await provenIn(pid, win);   // await: the window must stay open while it checks
       const look = await call(win, autofillStep, '', '', false);
       if (look.step === 'bad') { markLoginBad(pid); return 'bad'; }
       if (look.step === 'code') return 'code';
-      if (look.step === 'in') return provenIn(pid, win);
+      if (look.step === 'in') return await provenIn(pid, win);
       if ((look.step === 'username' || look.step === 'password') && !done.has(look.step)) {
         done.add(look.step); await call(win, autofillStep, c.u, c.p, true);
       } else if (look.step === 'password' && done.has('password')) { await sleep(3000); const again = await call(win, autofillStep, '', '', false); if (again.step === 'bad') { markLoginBad(pid); return 'bad'; } /* still on the password page: slow, not wrong; keep waiting */ }
@@ -390,7 +397,7 @@ async function autoSignInOnce(pid) {
   } finally { if (!win.isDestroyed()) win.destroy(); }
 }
 
-const clearCodeWait = (pid) => { delete codeAskedAt[pid]; };
+const clearCodeWait = (pid) => setCodeWait(pid, false);
 function signIn(pid, parent) {
   return new Promise((resolve) => {
     const win = makeWindow(pid, true, parent);

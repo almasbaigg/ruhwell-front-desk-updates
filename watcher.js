@@ -83,12 +83,15 @@ async function check({ silent = false } = {}) {
   running = true; onEvent({ type: 'watch-status', running: true });
   try {
     const days = Math.max(1, Math.min(31, settings.watch.daysAhead || 7));
-    const start = new Date(); const cur = {}; let all = [];
+    const start = new Date(); const cur = {}; let all = []; const partial = [];
     for (let i = 0; i < days; i++) {
       const d = new Date(start); d.setDate(d.getDate() + i);
       const r = await loadDay(ymd(d));
       if (r.needsLogin) throw new Error('RxNT signed out. Sign in again to keep alerts running.');
       if (r.error) throw new Error(r.error);
+      // A day missing the Availability view isn't confirmed: show what loaded, but the schedule check counts as failed
+      // (retried shortly) instead of "up to date".
+      if ((r.incomplete || []).length) partial.push(ymd(d));
       for (const a of r.items) { cur[a.appointmentId] = { ...a, date: ymd(d) }; all.push(a); }
     }
     const lastDay = new Date(start); lastDay.setDate(lastDay.getDate() + days - 1);
@@ -164,6 +167,7 @@ async function check({ silent = false } = {}) {
     lastRun = new Date().toISOString(); lastError = null;
     if (stamped.length) { onEvent({ type: 'alerts', events: stamped }); if (!silent) deliver(stamped); }
     if (pending.length || suspect.size) { clearTimeout(recheck); recheck = setTimeout(() => check(), 3 * 60000); }   // confirm soon
+    if (partial.length) return { error: "part of the schedule (Availability view) didn't load", events: stamped.length };
     return { ok: true, events: stamped.length };
   } catch (e) {
     lastError = e.message;
@@ -221,15 +225,18 @@ function targetOf(e) {
   if (e.appt && e.appt.start) return { view: 'visits', date: e.appt.date || ymd(new Date(e.appt.start)) };   // local date (an evening visit isn't tomorrow)
   return { view: 'today' };
 }
+// Desktop pop-ups can show on a locked screen, so they never name a patient or a drug: just what happened and when.
+// The details are in the app, where the click lands.
+const safeLine = (e) => `${TEXT_LABEL[e.kind] || 'Update'}${e.appt && e.appt.start ? ': ' + when(e.appt.start) : ''}`;
 let digest = [];
-setInterval(() => { if (digest.length) { const d = digest; digest = []; popup(d.length === 1 ? (TEXT_LABEL[d[0].kind] || 'Update') : `${d.length} updates`, d.map((e) => e.text), d.length === 1 ? targetOf(d[0]) : { view: 'today' }); } }, 30 * 60000);
+setInterval(() => { if (digest.length) { const d = digest; digest = []; popup(d.length === 1 ? (TEXT_LABEL[d[0].kind] || 'Update') : `${d.length} updates`, d.map(safeLine), d.length === 1 ? targetOf(d[0]) : { view: 'today' }); } }, 30 * 60000);
 
 function deliver(events) {
   const settings = store.settings.get(), prefs = settings.alertPrefs || {}, pid = getProfile();
   const wants = (e, ch) => (prefs[PREF_KEY[e.kind]] || {})[ch];
   const now = events.filter((e) => tierOf(e) === 'now' && wants(e, 'desk'));
   digest.push(...events.filter((e) => tierOf(e) === 'soon' && wants(e, 'desk')));
-  popup(now.length === 1 ? (TEXT_LABEL[now[0].kind] || 'Update') : `${now.length} updates`, now.map((e) => e.text), now.length === 1 ? targetOf(now[0]) : { view: 'today' });
+  popup(now.length === 1 ? (TEXT_LABEL[now[0].kind] || 'Update') : `${now.length} updates`, now.map(safeLine), now.length === 1 ? targetOf(now[0]) : { view: 'today' });
   const text = events.filter((e) => tierOf(e) === 'now' && wants(e, 'text'));
   if (text.length && officeHours() && pid && ringrx.status(pid).connected) ringrx.alertNumber(pid).then((to) => {
     if (!to) return;

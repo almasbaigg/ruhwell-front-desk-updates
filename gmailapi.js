@@ -54,11 +54,14 @@ function signIn() {
         let prof = null;
         try { const pr = await fetch(API + '/profile', { headers: { Authorization: `Bearer ${t.access_token}` }, signal: AbortSignal.timeout(20000) }); prof = pr.ok ? await pr.json() : null; } catch {}
         if (!prof || !prof.emailAddress) { page('Sign-in failed: Gmail could not be read. Try again.'); return finish({ error: 'unverified' }); }
-        if (!/@ruhwellmed\.com$/i.test(prof.emailAddress)) { page(`That was ${prof.emailAddress}. Please sign in with the practice account (@ruhwellmed.com).`); return finish({ error: 'wrong account' }); }
+        const want = String(store.settings.get().gmailAccount || 'admin@ruhwellmed.com').toLowerCase();
+        if (prof.emailAddress.toLowerCase() !== want) { page(`That was ${prof.emailAddress}. Please sign in with ${want}.`); return finish({ error: 'wrong account' }); }
+        // Try the new sign-in on the inbox; keep it only if that works, otherwise put the old one back.
+        const oldTok = store.raw.readSecure(TOKEN, null), oldAccess = access, oldExp = accessExp;
         store.raw.writeSecure(TOKEN, { refresh: t.refresh_token, at: new Date().toISOString() });
         access = t.access_token; accessExp = Date.now() + (Number(t.expires_in) || 3000) * 1000;
         const st = await check();
-        if (st.error) { page('Signed in, but the inbox did not load yet. The app will keep trying.'); return finish({ ok: true, account: prof.emailAddress, pending: true }); }
+        if (st.error) { store.raw.writeSecure(TOKEN, oldTok); access = oldAccess; accessExp = oldExp; await check().catch(() => {}); page('Sign-in failed: the inbox could not be read. Try again.'); return finish({ error: 'unverified' }); }
         page('Gmail is connected');
         finish({ ok: true, account: last.account });
       } catch (e) { page('Sign-in failed'); finish({ error: String(e.message || e) }); }

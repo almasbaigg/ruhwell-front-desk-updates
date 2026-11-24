@@ -23,7 +23,10 @@ assert.ok(/timedOut: true/.test(rx), 'a search that timed out is not "no patient
 assert.ok(/incomplete\.push\('availability'\)/.test(rx), 'a missing Availability view is marked');
 assert.ok(/r\.pending === 0 \|\| r\.items\.length/.test(rx), 'an empty screen still loading is not an empty day');
 // One quiet sign-in at a time, proven by a real schedule read, and paused after a code was asked for.
-assert.ok(/autoInflight\[pid\]/.test(rx) && /provenIn\(pid, win\)/.test(rx) && /codeAskedAt/.test(rx));
+assert.ok(/autoInflight\[pid\]/.test(rx) && /codeWait\(pid\)/.test(rx));
+// The proof read must finish before the window is closed (awaited inside try/finally), on both paths.
+assert.strictEqual((rx.match(/return await provenIn\(pid, win\)/g) || []).length, 2, 'provenIn awaited on both paths');
+assert.ok(!/return provenIn\(pid, win\)/.test(rx));
 // Schedule checks before replacing what's on screen.
 assert.ok(/instead of \$\{date\}/.test(main) && /sudden drop held/.test(main));
 // Signed out on purpose stays signed out.
@@ -32,4 +35,26 @@ assert.ok(/setUserOut\('rxnt', true\)/.test(main) && /setUserOut\('faxes', true\
 assert.ok(/state: 'needs', action: need/.test(main) && /state: 'unconfirmed'/.test(main) && /state: 'offline'/.test(main));
 // Patient list resumes and retries letters that didn't load.
 assert.ok(/cursor/.test(main) && /missed/.test(main));
+// Desktop pop-ups never name a patient (they can show on a locked screen).
+const w = fs.readFileSync(APP + '/watcher.js', 'utf8');
+assert.ok(/d\.map\(safeLine\)/.test(w) && /now\.map\(safeLine\)/.test(w) && !/map\(\(e\) => e\.text\)/.test(w), 'pop-ups use the no-names line');
+assert.ok(!/notify\('Reminder', i\.text/.test(main) && !/\$\{nm\(a\)\}/.test(main), 'reminders and visit pop-ups have no names');
+// A chart with no email field at all can't remove an email (only a chart that has the field, left blank).
+assert.ok(/emailRead: \[pi, per\]\.some/.test(rx));
+// Doximity: "You have no access" is not an empty inbox.
+const fx = fs.readFileSync(APP + '/faxes.js', 'utf8');
+const loadFn = (src, name) => { const i = src.indexOf(`function ${name}(`); let d = 0, j = src.indexOf('{', i); for (; j < src.length; j++) { if (src[j] === '{') d++; else if (src[j] === '}' && --d === 0) break; } return eval('(' + src.slice(i, j + 1) + ')'); };
+const step = loadFn(fx, 'autofillStep');
+global.location = { pathname: '/inbox/faxes', host: 'doximity' }; global.document = { body: { innerText: 'You have no access to this page.' }, querySelector: () => null, querySelectorAll: () => [] };
+assert.notStrictEqual(step('u', 'p', false).step, 'in', 'access denied is not signed in');
+global.document.body.innerText = 'You have no faxes';
+assert.strictEqual(step('u', 'p', false).step, 'in', 'a real empty inbox is signed in');
+// Patient list: finished letters aren't read again, so a slow list still completes a pass.
+assert.ok(/\.filter\(\(L\) => !doneLetters\.has\(L\)\)/.test(main));
+// A timed-out read can't write over a newer one (portal), and code waits survive restarts.
+assert.ok(/superseded by a newer read/.test(main) && /rxntCodeWait/.test(rx) && /codeWaitAt/.test(main));
+// Diagnostics hide anything that could be a name.
+const { scrub } = require(APP + '/diag');
+assert.ok(!/Stone/.test(scrub("Couldn't open chart for Avery Stone (512) 555-0101")), 'names hidden in the log');
+assert.ok(/RxNT timed out/.test(scrub('RxNT timed out after 4 min')), 'app words kept');
 console.log('2.4.0 OK');

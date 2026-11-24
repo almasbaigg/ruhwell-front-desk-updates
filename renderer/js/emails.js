@@ -251,7 +251,7 @@ async function loadEmails(more) {
   const r = await loading(() => window.api.emailList({ folder, q, pageToken: more ? emData.next : '' }));
   if (seq !== emSeq) return;
   if (r.error) { $('em-list').innerHTML = `<p class="muted small" style="padding:12px">Couldn't load email: ${esc(r.error)}</p>`; return; }
-  emData = { items: more ? emData.items.concat(r.items) : r.items, next: r.next, missing: r.missing || 0 };
+  emData = { items: more ? emData.items.concat(r.items) : r.items, next: r.next, missing: (more ? emData.missing || 0 : 0) + (r.missing || 0) };   // missing adds up across pages; Try again reloads from the top
   renderEmailList();
   if (!emOpen) $('em-pane').innerHTML = `<div class="empty-state">${I.mail}<h3>Pick an email</h3><p>Or write a new one.</p></div>`;
 }

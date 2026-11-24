@@ -121,8 +121,8 @@ function paintSync(st) {
   const issue = (st.locked && problem) || accProblem || problem;
   $('status-line').className = 'status-line ' + (issue ? 'warn' : working ? 'busy' : 'on');
   // "Synced" only with a real, confirmed read behind it; until then it says it's still checking.
-  const proven = (st.fresh || {}).schedule;
-  $('status-text').textContent = issue || (working ? 'Syncing…' : !proven ? 'Checking connections…' : `${notSetUp.length ? 'Synced · ' + notSetUp.join(', ') + ' not set up' : 'Synced'} · ${minsAgo(new Date(proven).toISOString())}`);
+  const proven = (st.fresh || {}).schedule, pendingAcc = Object.keys(NAMES).find((k) => ['checking', 'retrying'].includes((A[k] || {}).state));
+  $('status-text').textContent = issue || (working ? 'Syncing…' : !proven ? 'Checking connections…' : pendingAcc ? (A[pendingAcc].short || 'Checking…') : `${notSetUp.length ? 'Synced · ' + notSetUp.join(', ') + ' not set up' : 'Synced'} · ${minsAgo(new Date(proven).toISOString())}`);
 }
 async function paintConnections() { const st = await window.api.syncStatus(); accounts.rxnt.connected = st.rxnt; accounts.ringrx.connected = st.ringrx; paintSync(st); }
 window.api.onSync((st) => { paintSync(st); if (!st.patients.running && view === 'patients') loadPatients(true); if (view === 'settings') paintSyncTimes(); });
@@ -167,7 +167,8 @@ async function syncEverything(only, opts = {}) {
     done++; level();
   })).then(() => {
     const t = card.querySelector('.sc-title');
-    t.textContent = bad.length ? `${bad.length} need${bad.length === 1 ? 's' : ''} attention` : 'All up to date';
+    const soft = card.querySelectorAll('li.off em').length && [...card.querySelectorAll('li.off em')].some((e) => e.textContent && e.textContent !== 'not set up');
+    t.textContent = bad.length ? `${bad.length} need${bad.length === 1 ? 's' : ''} attention` : soft ? 'Still checking' : 'All up to date';
     card.classList.add(bad.length ? 'warn' : 'done');
     paintConnections(); if (view === 'today') loadToday();
     syncTimers.push(setTimeout(syncSmall, bad.length ? 2500 : 1400), setTimeout(() => card.classList.remove('show'), bad.length ? 9000 : 3200));

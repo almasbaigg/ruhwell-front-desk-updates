@@ -7,12 +7,18 @@ const { app } = require('electron');
 
 const dir = () => path.join(app.getPath('userData'), 'Data', 'Logs');
 const day = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const SAFE = new Set(('RxNT RingRx Gmail Google Doximity Availability Front Desk Ruhwell Med Couldn\'t Can\'t Didn\'t Wouldn\'t Isn\'t Check Sign Try Open The A An No Not Can Couldn Retrying Requested Timed Today ' +
+  'Mon Tue Wed Thu Fri Sat Sun Monday Tuesday Wednesday Thursday Friday Saturday Sunday Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec AM PM HTTP OK Error Internal Server Bad Request ' +
+  'Gateway Service Unavailable Too Many Requests Forbidden Unauthorized Network Failed TypeError AbortError TimeoutError Electron Windows Mac Accounts Settings Connections Patient Visits ' +
+  'GET POST GET_FAILED SIGNED_OUT OFFLINE FAILED BAD_LOGIN OTP_REQUIRED Retry Retrying Waiting').split(' '));
 function scrub(v) {
   return String(v == null ? '' : v)
     .replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, '[email]')
     .replace(/\+?\d[\d\s().-]{6,}\d/g, '[number]')
     .replace(/\b(bearer|token|password|secret|cookie|code)\b\s*[:=]?\s*\S+/gi, '$1 [hidden]')
     .replace(/"[^"]{2,80}"/g, '"…"')
+    // Any capitalised word that isn't one of the app's own words could be a name: hidden.
+    .replace(/\b[A-Z][a-zA-Z'’-]+\b/g, (w) => (SAFE.has(w) ? w : '[word]'))
     .slice(0, 400);
 }
 let ready = false;

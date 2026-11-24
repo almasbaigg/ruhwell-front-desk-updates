@@ -68,7 +68,7 @@ function autofillStep(u, pw, submit) {
   const text = (document.body && document.body.innerText || '').toLowerCase();
   if (/inbox\/faxes/.test(location.pathname) && document.querySelector('a[href*="/inbox/faxes/"]')) return { step: 'in' };
   // Signed in with an empty inbox counts as signed in (the same check the inbox reader uses).
-  if (/inbox\/faxes/.test(location.pathname) && /no faxes|inbox is empty|you have no/.test(text)) return { step: 'in' };
+  if (/inbox\/faxes/.test(location.pathname) && /no faxes|inbox is empty|you have no faxes/.test(text) && !/access|denied|not authori[sz]ed|sign in|log in/.test(text)) return { step: 'in' };
   const pass = [...document.querySelectorAll('input[type=password]')].find(vis);
   // A code step first: "incorrect verification code" is about the code, never the saved password.
   if (!pass && /verification code|one-time|authenticator|enter the code|security code|we sent a code/.test(text)) return { step: 'code' };
@@ -147,7 +147,7 @@ function readInbox() {
   if (/signin|sign_in|login/.test(location.pathname) || document.querySelector('input[type=password]')) return { state: 'login' };
   if (!/inbox\/faxes/.test(location.pathname)) return { state: 'elsewhere', url: location.href };
   const links = [...document.querySelectorAll('a[href*="/inbox/faxes/Fax::"]')];
-  if (!links.length) return /no faxes|inbox is empty|you have no/.test(text) ? { state: 'ok', items: [] } : { state: 'wait' };
+  if (!links.length) return /no faxes|inbox is empty|you have no faxes/.test(text) && !/access|denied|not authori[sz]ed/.test(text) ? { state: 'ok', items: [] } : { state: 'wait' };
   const items = [];
   // Walk the page in order so each fax gets the nearest day heading above it.
   const all = [...document.querySelectorAll('.sidebar-list-section-title, a[href*="/inbox/faxes/Fax::"]')];

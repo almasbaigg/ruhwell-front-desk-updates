@@ -44,7 +44,7 @@ const ocr = require('./ocr');
 const gmail = require('./gmail');
 const gapi = require('./gmailapi');
 const outbox = require('./outbox');
-const { diag, prune: pruneDiag, bundle: diagBundle } = require('./diag');
+const { diag, prune: pruneDiag, bundle: diagBundle, scrub } = require('./diag');
 // Email: Google's own sign-in once the key file is loaded (read, reply, send from hello@); before that, the old inbox count.
 const mail = {
   check: () => (gapi.hasKey() ? gapi.check() : gmail.check()),
@@ -223,7 +223,7 @@ ipcMain.handle('checklist:star', (_e, id) => checklist.star(pid(), id));
 ipcMain.handle('checklist:due', (_e, id, due) => checklist.setDue(pid(), id, due));
 ipcMain.handle('checklist:reorder', (_e, ids) => checklist.reorder(pid(), ids));
 ipcMain.handle('checklist:parse', (_e, t) => checklist.parse(t));
-ipcMain.handle('gmail:check', async () => { const g = await mail.check(); send('sync', syncStatus()); return g; });
+ipcMain.handle('gmail:check', async () => { await runPart('gmail', 'manual'); return mail.status(); });   // same shared run as the timer
 ipcMain.handle('notes:get', (_e, day) => checklist.notes.get(pid(), day || checklist.dayKey()));
 ipcMain.handle('notes:set', (_e, day, text) => checklist.notes.set(pid(), day, text));
 ipcMain.handle('notes:pin', (_e, day, on) => checklist.notes.pin(pid(), day, on));
@@ -231,7 +231,7 @@ ipcMain.handle('notes:search', (_e, q) => checklist.notes.search(pid(), q));
 ipcMain.handle('checklist:toggle', (_e, id) => checklist.toggle(pid(), id));
 ipcMain.handle('checklist:remove', (_e, id) => checklist.remove(pid(), id));
 ipcMain.handle('rx:list', () => rxtasks.list());
-ipcMain.handle('rx:refresh', async () => { await refreshRx(); return rxtasks.list(); });
+ipcMain.handle('rx:refresh', async () => { await runPart('rx', 'manual'); return rxtasks.list(); });
 // "Open in RxNT": inside the app, already signed in (the app's own RxNT session).
 const RX_URLS = { todo: 'https://app2.rxnt.com/ehrv9/dashboard', billing: 'https://app2.rxnt.com/BillingV2/#/', messages: 'https://app2.rxnt.com/dashboard/', unsigned: 'https://app2.rxnt.com/ehrv9/legacy/prescriberDashboard#/dashboard/encounters/unsigned' };
 const openRxntIn = (url) => inapp.open('rxnt', rxnt.partitionFor(pid()), url, win) || shell.openExternal(url);
@@ -265,7 +265,7 @@ setInterval(() => {
   const hits = checklist.dueNow(pid()); if (!hits.length) return;
   const pref = { desk: true, text: false, ...((store.settings.get().alertPrefs || {}).task || {}) };
   for (const i of hits) {
-    if (pref.desk) notify('Reminder', i.text, () => { showWindow(); send('nav', 'today'); });
+    if (pref.desk) notify('Reminder', 'A checklist reminder is due.', () => { showWindow(); send('nav', 'today'); });
     if (pref.text) {
       const at = new Date(i.due).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
       ringrx.alertNumber(pid()).then((to) => to && ringrx.sendSms(pid(), to, `Ruhwell Front Desk: a checklist reminder is due (${at}).`)).catch(() => {});
@@ -358,16 +358,20 @@ async function loadDayNow(date, priority) {
       if (keep.length) r = { ...r, items: [...r.items, ...keep].sort((a, b) => String(a.start).localeCompare(String(b.start))) };
     }
     // A day that suddenly lost most of its visits is read again before it's believed (a half-loaded page looks the same).
-    const before = prev && prev.items ? prev.items.length : 0;
-    if (!r.closed && before >= 2 && r.items.length <= Math.floor(before / 2) && !(dropSeen[date] && Date.now() - dropSeen[date] < 20 * 60000)) {
-      dropSeen[date] = Date.now(); diag('schedule', 'sudden drop held', { from: before, to: r.items.length });
-      return { error: 'fewer visits than before; checking again before showing it' };
+    // Believed only when a second read shows exactly the same visits as the first suspicious one.
+    const before = prev && prev.items ? prev.items.length : 0, ids = r.items.map((i) => String(i.appointmentId)).sort().join(',');
+    if (!r.closed && before >= 2 && r.items.length <= Math.floor(before / 2)) {
+      const seen = dropSeen[date];
+      if (!(seen && Date.now() - seen.at < 20 * 60000 && seen.ids === ids)) {
+        dropSeen[date] = { at: Date.now(), ids }; diag('schedule', 'sudden drop held', { from: before, to: r.items.length });
+        return { error: 'fewer visits than before; checking again before showing it' };
+      }
     }
     delete dropSeen[date];
   }
   if (r.items && date === ymd(new Date())) mergeEhrToday(r);
   if (r.items) {
-    setRxntFlag(id, true);
+    if (!userOut('rxnt')) setRxntFlag(id, true);   // a read that finishes after a sign-out doesn't sign back in
     dayCache[date] = { ...r, at: Date.now() }; saveDayCache();
     store.patients.upsert(r.items.filter((i) => i.patientId).map((i) => ({
       patientId: i.patientId, chart: i.chart, first: i.first, last: i.last, dob: i.dob, age: i.age,
@@ -418,7 +422,7 @@ ipcMain.handle('rxnt:range', async (_e, from, days) => {
 });
 
 ipcMain.handle('ringrx:login', async (_e, { username, password, otp }) => {
-  try { const r = { ok: true, ...(await ringrx.login(pid(), username, password, otp)) }; activity.add('RingRx', 'sign-in', {}, true); setTimeout(() => syncComms(true), 500); return r; }
+  try { const r = { ok: true, ...(await ringrx.login(pid(), username, password, otp)) }; activity.add('RingRx', 'sign-in', {}, true); setTimeout(() => runPart('comms', 'sign-in'), 500); return r; }
   catch (e) { activity.add('RingRx', 'sign-in', { reason: e.code || 'failed' }, false); return { ok: false, error: e.message, code: e.code }; }
 });
 ipcMain.handle('ringrx:logout', () => { ringrx.logout(pid()); return true; });
@@ -463,7 +467,7 @@ function historyForChecks() {
     .map((m) => ({ at: m.at, phone: m.phone, ok: true, message: m.body, source: 'ringrx', template: 'Sent from RingRx' }));
   return [...local, ...rr].sort((a, b) => new Date(b.at) - new Date(a.at));
 }
-ipcMain.handle('comms:sync', () => syncComms(true));
+ipcMain.handle('comms:sync', async () => { const o = await runPart('comms', 'manual'); return o.kind === 'verified'; });
 ipcMain.handle('comms:texts', (_e, days) => comms.textThreads(days || 30));
 ipcMain.handle('comms:calls', (_e, days) => comms.callList(days || 30));
 ipcMain.handle('comms:thread', (_e, phone) => comms.thread(phone));
@@ -486,8 +490,10 @@ function retryRingrxReads() { const p = store.callbacks.get().rrPending || []; i
 let portal = { at: null, error: null, me: null, conversations: [] };
 async function refreshPortal() {
   const id = pid(); if (!id || !store.settings.get().rxntConnected?.[id]) return { skipped: 'RxNT not connected' };
+  const gen = runGen.portal || 0;   // a read that timed out (or was replaced by a newer one) must not write over newer data
   try {
     const r = await rxnt.readMessages(id);
+    if (gen !== (runGen.portal || 0)) return { skipped: 'superseded by a newer read' };
     // A failed read keeps what we knew (it's not an empty inbox) and says so.
     if (r.error) { portal = { ...portal, error: r.error, failedAt: new Date().toISOString() }; return portal; }
     const before = new Map(portal.conversations.map((c) => [c.id, c.at])), seeded = portal.seeded;
@@ -511,9 +517,12 @@ const ph10 = (p) => String(p || '').replace(/\D/g, '').slice(-10);
 ipcMain.handle('comms:spam', (_e, phone, on, force) => { const p = ph10(phone); comms.markSpam(p, on !== false, !!force); activity.add('RingRx', on !== false ? 'marked-spam' : 'not-spam', { number: p }); send('sync', syncStatus()); send('comms-updated', true); return true; });
 ipcMain.handle('comms:spamList', () => comms.spamList());
 /* ---------- Faxes (Doximity) ---------- */
-let faxCodeAt = 0;
+// Doximity asked for a code: saved (survives restarts); no quiet sign-in with the saved password until the user
+// signs in themselves (fax:signin clears it).
+let faxCodeAt = Date.parse((store.settings.get().faxes || {}).codeWaitAt || '') || 0;
+function setFaxCodeWait(v) { faxCodeAt = v ? Date.now() : 0; const f = store.settings.get().faxes || {}; store.settings.set({ ...store.settings.get(), faxes: { ...f, codeWaitAt: v ? new Date().toISOString() : null } }); }
 async function syncFaxes() {
-  if (faxCodeAt && Date.now() - faxCodeAt < 30 * 60000 && faxes.status().error === 'code') return { skipped: 'waiting for the Doximity code' };
+  if (faxCodeAt) return { skipped: 'waiting for the Doximity code' };
   const r = await faxes.sync();
   if (r && r.added) {
     for (const f of r.fresh || []) activity.add('Doximity', 'fax-received', { fax: f.id.slice(0, 12), from_number: f.number, pages: f.pages });
@@ -523,7 +532,7 @@ async function syncFaxes() {
   if (r && (r.added || r.downloaded)) send('faxes-updated', true);
   if (r && r.ok && r.failed) diag('faxes', 'files retrying', { n: r.failed });
   // A code is needed: say so once, then stop signing in with the saved password until the user finishes it.
-  if (r && r.needsLogin && faxes.status().error === 'code' && !faxCodeAt) { faxCodeAt = Date.now(); notify('Doximity needs a code', 'Click to finish signing in (one time).', () => { showWindow(); send('nav', 'settings'); }); }
+  if (r && r.needsLogin && faxes.status().error === 'code' && !faxCodeAt) { setFaxCodeWait(true); notify('Doximity needs a code', 'Click to finish signing in (one time).', () => { showWindow(); send('nav', 'settings'); }); }
   send('sync', syncStatus());
   return r;
 }
@@ -556,7 +565,9 @@ ipcMain.handle('fax:save', async (_e, id) => {
 ipcMain.handle('diag:save', async () => {
   const r = await dialog.showSaveDialog(win, { defaultPath: path.join(app.getPath('downloads'), `Ruhwell Front Desk diagnostics ${ymd(new Date())}.txt`), filters: [{ name: 'Text', extensions: ['txt'] }] });
   if (r.canceled || !r.filePath) return { canceled: true };
-  const head = `Ruhwell Front Desk ${app.getVersion()} · ${process.platform} ${process.arch} · saved ${new Date().toISOString()}\nAccounts: ${JSON.stringify(accountHealth())}\n\n`;
+  // Header from safe fields only (state + scrubbed reason), never raw text.
+  const acc = Object.entries(accountHealth()).map(([k, a]) => `  ${k}: ${a.state || a.level}${a.action ? ' (' + a.action + ')' : ''}${a.why ? ' · ' + scrub(a.why) : ''}${a.at ? ' · last confirmed ' + a.at : ''}`).join('\n');
+  const head = `Ruhwell Front Desk ${app.getVersion()} · ${process.platform} ${process.arch} · saved ${new Date().toISOString()}\nAccounts:\n${acc}\n\n`;
   fs.writeFileSync(r.filePath, head + diagBundle(7)); return { ok: true, path: r.filePath };
 });
 ipcMain.handle('fax:read', (_e, id, read) => { try { const f = faxes.update(String(id), { readAt: read === false ? null : new Date().toISOString() }); send('sync', syncStatus()); return !!f; } catch { return false; } });
@@ -564,7 +575,7 @@ ipcMain.handle('fax:mark', (_e, id, st) => { if (!['new', 'notpatient', 'spam', 
 ipcMain.handle('fax:signin', async () => {
   const ok = await faxes.signIn(win);
   activity.add('Doximity', 'sign-in', {}, !!ok);
-  if (ok) { setUserOut('faxes', false); faxCodeAt = 0; const f = store.settings.get().faxes || {}; store.settings.set({ ...store.settings.get(), faxes: { ...f, signedIn: true } }); }
+  if (ok) { setUserOut('faxes', false); setFaxCodeWait(false); const f = store.settings.get().faxes || {}; store.settings.set({ ...store.settings.get(), faxes: { ...f, signedIn: true } }); }
   send('sync', syncStatus()); return ok;
 });
 ipcMain.handle('fax:signout', async () => { await faxes.signOut(); setUserOut('faxes', true); const f = store.settings.get().faxes || {}; store.settings.set({ ...store.settings.get(), faxes: { ...f, signedIn: false } }); send('sync', syncStatus()); return true; });
@@ -658,7 +669,7 @@ ipcMain.handle('alerts:test', async () => {
   if (!to) return { error: 'Add a number first.' };
   try { await ringrx.sendSms(pid(), to, 'Ruhwell Front Desk: alert texts are working.'); return { ok: true }; } catch (e) { return { error: e.message }; }
 });
-ipcMain.handle('watch:check', () => watcher.check());
+ipcMain.handle('watch:check', () => runPart('schedule', 'manual'));   // shared with the timer and Sync now
 ipcMain.handle('watch:alerts', () => watcher.alerts());
 ipcMain.handle('watch:read', () => { watcher.markRead(); return true; });
 ipcMain.handle('watch:handle', (_e, id) => { watcher.handle(id); return true; });
@@ -715,8 +726,10 @@ async function syncPatientsNow() {
     // timed out last time are tried again first. A full pass is complete only when every letter really loaded.
     const prevState = store.syncState.get().patients || {};
     const startAt = Math.max(0, LETTERS.indexOf(prevState.cursor || 'A'));
-    const order = [...new Set([...(prevState.missed || []), ...LETTERS.slice(startAt), ...LETTERS.slice(0, startAt)])];
-    const missed = [], doneLetters = new Set(prevState.cursor ? prevState.doneLetters || [] : []);
+    const doneLetters = new Set(prevState.cursor ? prevState.doneLetters || [] : []), missed = [];
+    // Only letters still outstanding in this pass (missed ones first); finished letters aren't read again.
+    const order = [...new Set([...(prevState.missed || []), ...LETTERS.slice(startAt), ...LETTERS.slice(0, startAt)])].filter((L) => !doneLetters.has(L));
+    let pendingCharts = 0;
     let cursor = null;
     for (const [i, L] of order.entries()) {
       if (Date.now() - started > 30 * 60000) { error = 'took too long; continues next time'; cursor = L; diag('patients', 'time limit', { letter: L }); break; }
@@ -728,7 +741,7 @@ async function syncPatientsNow() {
         if (row.done || !needsDetail(row)) { quick.push(row); continue; }
         let r = await rxQueue((w) => rxnt.openPatient(w, L, ri, row));   // one chart per job
         if (r.needsLogin) { if (await rxntSignedOut(id)) { error = 'RxNT signed out'; cursor = L; break; } r = await rxQueue((w) => rxnt.openPatient(w, L, ri, row)); }
-        if (r.failed || r.needsLogin) { quick.push({ ...row, emailChecked: false }); continue; }   // chart didn't open or didn't match: retried next run
+        if (r.failed || r.needsLogin) { quick.push({ ...row, emailChecked: false }); pendingCharts++; continue; }   // chart didn't open or didn't match: retried next run
         if (r.patient) store.patients.upsert([r.patient]);
         count++;
       }
@@ -739,7 +752,7 @@ async function syncPatientsNow() {
       patientSync.progress = { letter: L, done: i + 1, total: order.length, count }; send('sync', syncStatus());
     }
     const complete = !error && LETTERS.every((L) => doneLetters.has(L));
-    store.syncState.set({ patients: { ...(store.syncState.get().patients || {}), ...(complete ? { at: new Date().toISOString(), cursor: null, doneLetters: [] } : { cursor: cursor || 'A', doneLetters: [...doneLetters] }), missed, error: error || (missed.length ? `${missed.length} letter${missed.length > 1 ? 's' : ''} didn't load; tried again next time` : null) } });
+    store.syncState.set({ patients: { ...(store.syncState.get().patients || {}), pendingCharts, ...(complete ? { at: new Date().toISOString(), cursor: null, doneLetters: [] } : { cursor: cursor || LETTERS.find((L) => !doneLetters.has(L)) || 'A', doneLetters: [...doneLetters] }), missed, error: error || (missed.length ? `${missed.length} letter${missed.length > 1 ? 's' : ''} didn't load; tried again next time` : null) } });
     if (!error && missed.length) error = `${missed.length} letters didn't load`;
   } catch (e) { error = e.message; store.syncState.set({ patients: { ...(store.syncState.get().patients || {}), error } }); }
   patientSync = { running: false, progress: null }; send('sync', syncStatus());
@@ -803,12 +816,12 @@ function outcomeOf(k, r) {
 }
 const normalEvery = (k) => (busyNow() ? PLAN[k][0] : PLAN[k][1]);
 // One run per part at a time: the timer, Sync now, wake and the sync card all share it and get its real result.
-const inflight = {};
+const inflight = {}, runGen = {};   // runGen: bumped when a run starts or times out; late results from an older run are dropped
 function runPart(k, how = 'timer') {
   if (inflight[k]) return inflight[k];
-  syncRunning[k] = true; lastSync[k] = Date.now();
+  syncRunning[k] = true; lastSync[k] = Date.now(); runGen[k] = (runGen[k] || 0) + 1;
   const t0 = Date.now(); let timer;
-  const deadline = new Promise((res) => { timer = setTimeout(() => res({ error: `timed out after ${DEADLINE_MIN[k]} min` }), DEADLINE_MIN[k] * 60000); });
+  const deadline = new Promise((res) => { timer = setTimeout(() => { runGen[k] = (runGen[k] || 0) + 1; res({ error: `timed out after ${DEADLINE_MIN[k]} min` }); }, DEADLINE_MIN[k] * 60000); });
   diag(k, 'start', { how });
   inflight[k] = Promise.race([Promise.resolve().then(RUN[k]).catch((e) => ({ error: String((e && e.message) || e || 'error').slice(0, 120) })), deadline]).then((r) => {
     clearTimeout(timer);
@@ -836,6 +849,7 @@ function runPart(k, how = 'timer') {
   return inflight[k];
 }
 function syncDue(maxAgeMin) {
+  if (!net.isOnline()) return;   // offline: nothing to read; saved data stays on screen and catch-up runs when it's back
   const busy = busyNow(), now = Date.now();
   for (const [k, [b, q]] of Object.entries(PLAN)) {
     if (inflight[k] || !sourceOn(k)) continue;   // never two runs of the same source at once
@@ -898,6 +912,9 @@ function accountHealth() {
     }
     if (retrying.length) return { level: 'grey', state: 'retrying', why: 'retrying…', short: `${name}: retrying`, at: atIso };
     const waiting = keys.filter((k) => !lastOk[k]);
+    // Never confirmed since the app opened, for longer than about three checks: can't confirm (not "checking" forever).
+    const overdue = waiting.filter((k) => now - appStarted > Math.max(3 * normalEvery(k) * 60000, 15 * 60000));
+    if (overdue.length) { const which = overdue.map((k) => NAMES[k] || k).join(' and '); return { level: 'amber', state: 'unconfirmed', why: `${which} not confirmed yet${lastErr[overdue[0]] ? ' · ' + lastErr[overdue[0]] : ''}`, short: `${name}: can't confirm ${which} yet`, at: atIso }; }
     if (waiting.length) return { level: 'grey', state: 'checking', why: `checking ${waiting.map((k) => NAMES[k] || k).join(', ')}…`, short: `${name}: checking…`, at: atIso };
     return { level: 'green', state: 'ok', why: '', short: `${name} · checked ${t(at)}`, at: atIso };
   };
@@ -909,7 +926,7 @@ function accountHealth() {
     ringrx: lvl('RingRx', ['comms'], rr.connected ? '' : rr.needsCode ? 'code' : 'signin'),
     gmail: lvl('Gmail', ['gmail'], g.error === 'signin' || (!g.connected && !lastOk.gmail) ? 'signin' : ''),
     doximity: userOut('faxes') ? { level: 'off', state: 'off', why: 'signed out', short: '' } : !fxSet ? { level: 'off', state: 'off', why: 'not set up', short: '' }
-      : sourceOn('faxes') ? lvl('Doximity', ['faxes'], fx.error === 'code' ? 'code' : fx.error === 'signin' ? 'signin' : '') : { level: 'off', state: 'off', why: 'off', short: '' },
+      : sourceOn('faxes') ? lvl('Doximity', ['faxes'], fx.error === 'code' || faxCodeAt ? 'code' : fx.error === 'signin' ? 'signin' : '') : { level: 'off', state: 'off', why: 'off', short: '' },
   };
 }
 // The schedule hasn't been read for 20+ minutes in office hours: Today shows a banner.
@@ -923,7 +940,8 @@ function catchUp() {
   diag('app', 'wake/online: catching up');
   const t0 = Date.now();
   // Wait until the internet is actually back; while offline, keep waiting (saved sign-ins are untouched).
-  const tryNow = () => { if (net.isOnline()) setTimeout(() => syncDue(0), 3000); else if (Date.now() - t0 < 30 * 60000) setTimeout(tryNow, Date.now() - t0 > 60000 ? 15000 : 3000); };
+  // Once online: everything not read in the last 2 minutes.
+  const tryNow = () => { if (net.isOnline()) setTimeout(() => syncDue(2), 3000); else if (Date.now() - t0 < 30 * 60000) setTimeout(tryNow, Date.now() - t0 > 60000 ? 15000 : 3000); };
   setTimeout(tryNow, 4000);
 }
 app.whenReady().then(() => {
@@ -1025,12 +1043,12 @@ function nudgeCheck() {
     const mins = (start - now) / 60000;
     if (inVisit && mins <= 5 && mins > 3 && !nudged.has('w' + a.appointmentId)) {
       nudged.add('w' + a.appointmentId);
-      notify('Wrap up', `Next visit at ${tm(a.start)}: ${nm(a)}`, () => { showWindow(); send('nav-date', ymd(new Date())); });
+      notify('Wrap up', `Next visit at ${tm(a.start)}.`, () => { showWindow(); send('nav-date', ymd(new Date())); });
     }
     const after = (now - end) / 60000;
     if (after >= 0 && after < 3 && !nudged.has('c' + a.appointmentId)) {
       nudged.add('c' + a.appointmentId);
-      notify('Chart this visit?', `${nm(a)} · ${tm(a.start)} visit ended`, () => openRxntIn('https://app2.rxnt.com/ehrv9/dashboard'));
+      notify('Chart this visit?', `The ${tm(a.start)} visit ended.`, () => openRxntIn('https://app2.rxnt.com/ehrv9/dashboard'));
     }
   }
 }

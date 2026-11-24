@@ -175,6 +175,33 @@
 ### Deferred
 - Splitting main.js into smaller files (no behavior change): saved for a quiet release, so it can't mix with these fixes.
 
+## 2.4.1 (Windows + Mac): fixes from ChatGPT's review of 2.4.0, plus pop-ups without names
+- **RxNT quiet sign-in (important):** 2.4.0 closed the hidden window before the "schedule really loads" check finished, so a sign-in that worked could be reported as "needs you to finish signing in". Fixed (the check now finishes first).
+- **No late overwrite:** a read that timed out can no longer write older data over a newer read (portal), and every new run invalidates older ones.
+- **Patient email:** removed only when the chart actually has an email field left blank. A chart that didn't fully load never deletes a good address.
+- **Schedule:** a day missing the Availability view counts as "can't confirm" (shown, retried) instead of "up to date". A sudden drop is believed only when a second read shows exactly the same visits. If RxNT won't say whether it's still loading, an empty screen must stay unchanged longer before it counts.
+- **Patient list:** finished letters aren't read again, so even a slow list completes a full pass. Charts that didn't open are counted and retried.
+- **Verification codes:** "RxNT/Doximity is waiting for a code" is saved and survives restarts. The saved password isn't used again until you sign in yourself.
+- **Doximity:** "You have no access" is no longer mistaken for an empty inbox.
+- **Same status everywhere:**
+  - The sidebar only says "Synced" when every account is confirmed; otherwise it shows what's still checking.
+  - Today says "Nothing waiting so far · Still checking …" instead of "All caught up" until everything is confirmed.
+  - The sync card says "Still checking" when a part hasn't answered yet.
+  - A part never confirmed since opening shows "can't confirm" after a while, instead of "checking" forever.
+- **Gmail:**
+  - Sign-in must be the practice mailbox (admin@ruhwellmed.com), and the new sign-in is kept only if the inbox really loads; otherwise the old one is put back.
+  - The "emails didn't load" warning adds up across pages.
+- Refresh buttons (Today, prescriptions, texts, email) use the same shared check as the timer, so they always update the status.
+- No syncing while the computer is offline. After waking, only parts not read in the last 2 minutes are read again.
+- **Diagnostics:** any capitalized word that isn't one of the app's own words is hidden, so a name can't end up in the log. The saved file's header lists each account's status without raw text.
+- **Desktop pop-ups never show patient names** (see below).
+
+## Desktop pop-ups never show patient names (in 2.4.1)
+Almas: pop-ups can show on a locked screen, so names stay in the app only.
+- Schedule changes, texts, portal messages, new patients, prescriptions: the pop-up says what happened and when ("New booking: Tue 3:00 PM"). The click opens the details in the app.
+- Checklist reminder: "A checklist reminder is due." (the task text is only in the app).
+- Wrap up / Chart this visit: the time only, no name.
+
 ## 2.4.0 (Windows + Mac): connections stages 1 and 2, from the Codex reliability review
 Stage 2: data is checked before it replaces what's on screen; sign-in is one careful attempt; one status per account.
 - **Schedule:** a day is checked before it's shown. The wrong date is refused. An empty screen still loading is not an empty day. If the Availability view didn't load, visits only it had shown are kept. A day that suddenly loses most of its visits is read once more before it's believed.
