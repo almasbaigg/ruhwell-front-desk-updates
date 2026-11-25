@@ -24,7 +24,7 @@ assert.ok(!/fullName|first|last|name/i.test(pop.replace(/Back from Later/g, ''))
 
 // ALL-CAPS names show in normal case; mixed case is left alone.
 const ctx = {}; vm.createContext(ctx);
-vm.runInContext(core.match(/function niceCase[\s\S]*?\n}\n/)[0], ctx);
+vm.runInContext(core.match(/function niceCase[\s\S]*?\r?\n}\r?\n/)[0], ctx);
 assert.strictEqual(ctx.niceCase('MCDONALD'), 'McDonald');
 assert.strictEqual(ctx.niceCase("O'BRIEN"), "O'Brien");
 assert.strictEqual(ctx.niceCase('SMITH-JONES'), 'Smith-Jones');
