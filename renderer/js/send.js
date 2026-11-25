@@ -10,7 +10,7 @@ function messageModal(src, preset) {
       <div class="meta">${phoneBadge(p, p.rec)}${minorBadge(p, p.rec, false)}</div>
       <div id="mm-comp">${composerHTML(p)}</div>
       ${welcomeRow(p)}
-      <div class="actions"><span class="from-chip">${sendFrom ? `${I.phone}From ${esc(fmtPhone(sendFrom))}` : ''}</span><span style="flex:1"></span><button class="btn" id="mm-cancel">Cancel</button><button class="btn" id="mm-later">${I.clock}Send later</button><button class="btn primary" id="mm-send">${I.send}Send</button></div>`);
+      <div class="actions"><span class="from-chip">${sendFrom ? `${I.phone}From ${esc(fmtPhone(sendFrom))}` : ''}</span><span style="flex:1"></span><button class="btn" id="mm-cancel">Cancel</button><button class="btn" id="mm-later">${I.clock}Send Later</button><button class="btn primary" id="mm-send">${I.send}Send</button></div>`);
     const rebind = () => { $('mm-comp').innerHTML = composerHTML(p); bindComposer($('mm-comp'), p, rebind); };
     bindComposer($('mm-comp'), p, rebind);
     $('mm-cancel').onclick = closeModal;
@@ -96,7 +96,7 @@ async function confirmAndSend(items, after) {
     ${quietNow ? `<div class="warnbox quiet">${I.moon}<span>It's ${esc(fmtTime(new Date()))}, outside sending hours.</span></div>` : ''}
     <div class="send-foot"><button class="btn ghost" id="m-cancel">Cancel</button><span style="flex:1"></span>
       ${quietNow ? `<button class="btn" id="m-now">Send now anyway</button><button class="btn primary" id="m-wait">${I.clock}Send ${esc(fmtWhen(q.next))}</button>`
-        : `<button class="btn" id="m-later">${I.clock}Send later</button><button class="btn primary" id="m-now">${I.send}${flagged.length ? 'Send anyway' : 'Send'}</button>`}</div>`);
+        : `<button class="btn" id="m-later">${I.clock}Send Later</button><button class="btn primary" id="m-now">${I.send}${flagged.length ? 'Send anyway' : 'Send'}</button>`}</div>`);
   const cancel = () => { stop = true; closeModal(); toast('Cancelled. Nothing was sent.'); };
   if ($('m-follow')) $('m-follow').onchange = (e) => { items[0].follow = e.target.value; };
   $('m-x').onclick = $('m-cancel').onclick = cancel;

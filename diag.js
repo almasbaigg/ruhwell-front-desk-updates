@@ -36,9 +36,23 @@ function diag(part, what, info) {
 }
 function prune() { try { const cut = day(new Date(Date.now() - 30 * 864e5)); for (const f of fs.readdirSync(dir())) if (/^\d{4}-\d\d-\d\d\.log$/.test(f) && f.slice(0, 10) < cut) fs.rmSync(path.join(dir(), f), { force: true }); } catch {} }
 // The last `days` days in one text, newest last (Settings → App → Save diagnostics).
+// A short summary of the last days at the top of the saved file: failures by part, slowest reads, odd events.
+function summary(text) {
+  const fails = {}, slow = {}, events = {};
+  for (const line of text.split('\n')) {
+    const m = line.match(/^\d\d:\d\d:\d\d (\S+)\s+(\S+)/); if (!m) continue;
+    const [, part, what] = m;
+    if (what === 'failed') fails[part] = (fails[part] || 0) + 1;
+    const ms = line.match(/ ms=(\d+)/); if (ms && what === 'ok') slow[part] = Math.max(slow[part] || 0, +ms[1]);
+    if (/timers were paused|ended stale run|reader rebuilt|quiet sign-in|layout|error|page scrolls/.test(line)) { const k = `${part} ${line.slice(19).split(' ').slice(0, 3).join(' ')}`; events[k] = (events[k] || 0) + 1; }
+  }
+  const f = (o, unit = '') => Object.entries(o).map(([k, v]) => `${k} ${unit === 's' ? Math.round(v / 1000) + 's' : v}`).join(', ') || 'none';
+  return `Summary: failures: ${f(fails)} · slowest ok read: ${f(slow, 's')}\nNotable: ${Object.entries(events).slice(0, 15).map(([k, v]) => `${k} ×${v}`).join(' · ') || 'none'}\n`;
+}
 function bundle(days = 7) {
   const out = [];
   for (let i = days - 1; i >= 0; i--) { const f = path.join(dir(), `${day(new Date(Date.now() - i * 864e5))}.log`); try { out.push(`===== ${path.basename(f)} =====\n` + fs.readFileSync(f, 'utf8')); } catch {} }
-  return out.join('\n');
+  const all = out.join('\n');
+  return summary(all) + '\n' + all;
 }
 module.exports = { diag, prune, bundle, scrub, dir };

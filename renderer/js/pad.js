@@ -61,10 +61,10 @@ function whenMenu(anchor, pick, hasDue) {
   const P = $('popover'), at = (h, m = 0, add = 0) => { const d = new Date(); d.setDate(d.getDate() + add); d.setHours(h, m, 0, 0); return d.toISOString(); };
   const inH = (h) => new Date(Date.now() + h * 36e5).toISOString();
   const lastVisit = (((dayStore[ymd()] || {}).items) || []).filter((v) => category(v) !== 'cancelled').map((v) => new Date(v.end || new Date(v.start).getTime() + 30 * 60000)).sort((a, b) => b - a)[0];
-  const opts = [['In 1 hour', inH(1)], ['In 3 hours', inH(3)], ...(lastVisit && lastVisit > new Date() ? [['After visits', new Date(lastVisit.getTime() + 5 * 60000).toISOString()]] : []), ['Tomorrow 8 AM', at(8, 0, 1)]];
+  const opts = [['In 1 Hour', inH(1)], ['In 3 Hours', inH(3)], ...(lastVisit && lastVisit > new Date() ? [['After Visits', new Date(lastVisit.getTime() + 5 * 60000).toISOString()]] : []), ['Tomorrow 8 AM', at(8, 0, 1)]];
   P.innerHTML = `<div class="menu when-menu">${opts.map(([l, v]) => `<button data-v="${v}"><i></i>${l}<small>${esc(dueLabel(v))}</small></button>`).join('')}
-    <div class="when-pick"><input type="time" id="wm-time"><button class="btn soft" id="wm-set">Set</button></div>${hasDue ? '<hr><button data-v=""><i></i>No reminder</button>' : ''}</div>`;
-  const r = anchor.getBoundingClientRect(); P.style.top = `${r.bottom + 6}px`; P.style.left = `${Math.max(12, r.right - 230)}px`; P.style.width = '230px'; P.classList.remove('hidden');
+    <div class="when-pick"><input type="time" id="wm-time"><button class="btn soft" id="wm-set">Set</button></div>${hasDue ? '<hr><button data-v=""><i></i>No Reminder</button>' : ''}</div>`;
+  const r = anchor.getBoundingClientRect(); P.style.top = `${r.bottom + 6}px`; P.style.left = `${Math.max(12, r.right - 270)}px`; P.style.width = '270px'; P.classList.remove('hidden');
   P.querySelectorAll('button[data-v]').forEach((b) => (b.onclick = () => { hidePopover(); P.style.width = ''; pick(b.dataset.v || null); }));
   $('wm-set').onclick = () => { const v = $('wm-time').value; if (!v) return; const [h, m] = v.split(':').map(Number); let d = new Date(); d.setHours(h, m, 0, 0); if (d < new Date()) d.setDate(d.getDate() + 1); hidePopover(); P.style.width = ''; pick(d.toISOString()); };
 }
@@ -181,22 +181,27 @@ function paintLinks() {
 }
 
 // Search every day's notes.
+// Search sits inside the Notes card, under its header (not a window in the middle of the screen).
 $('nt-find').onclick = () => {
-  openModal(`<h2>Search notes</h2><label class="search-box"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><input id="ns-q" placeholder="Search all your notes" autocomplete="off"></label><div id="ns-list" class="lines" style="max-height:320px;overflow:auto"></div><div class="actions"><button class="btn" id="ns-close">Close</button></div>`);
+  const card = $('nt-find').closest('.panel, .card') || $('nt-find').parentElement.parentElement;
+  let box = card.querySelector('.nt-search');
+  if (box) { box.remove(); $('nt-find').classList.remove('on'); return; }
+  $('nt-find').classList.add('on');
+  box = document.createElement('div'); box.className = 'nt-search';
+  box.innerHTML = `<label class="search-box"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><input id="ns-q" placeholder="Search notes" autocomplete="off"><button class="icon-btn ns-x" title="Close">×</button></label><div id="ns-list"></div>`;
+  const head = card.querySelector('.panel-head') || card.firstElementChild; head.after(box);
+  const close = () => { box.remove(); $('nt-find').classList.remove('on'); };
+  box.querySelector('.ns-x').onclick = (e) => { e.preventDefault(); close(); };
   let tm = null;
+  $('ns-q').onkeydown = (e) => { if (e.key === 'Escape') close(); };
   $('ns-q').oninput = () => { clearTimeout(tm); tm = setTimeout(async () => {
     const hits = await window.api.notesSearch($('ns-q').value);
     $('ns-list').innerHTML = hits.map((h) => `<button class="line ns-hit" data-d="${esc(h.day)}"><div><strong>${esc(dayTitle(h.day, h.title))}</strong><div class="muted small">${esc(h.snippet)}</div></div></button>`).join('') || ($('ns-q').value.trim() ? '<p class="muted small">No matches</p>' : '');
-    $('ns-list').querySelectorAll('.ns-hit').forEach((b) => (b.onclick = () => { closeModal(); loadNotes(b.dataset.d); }));
+    $('ns-list').querySelectorAll('.ns-hit').forEach((b) => (b.onclick = () => { close(); loadNotes(b.dataset.d); }));
   }, 200); };
-  $('ns-close').onclick = closeModal; setTimeout(() => $('ns-q').focus(), 50);
+  setTimeout(() => $('ns-q').focus(), 30);
 };
 
 // Checklist and Notes share one card on Today: two tabs, the last one used is remembered.
-function showPad(which) {
-  which = which === 'notes' ? 'notes' : 'checklist'; remember('pad-tab', which);
-  document.querySelectorAll('#pad-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.p === which));
-  document.querySelectorAll('.board-col .panel.pad').forEach((p) => p.classList.toggle('on', p.classList.contains(which)));
-}
-document.querySelectorAll('#pad-tabs button').forEach((b) => (b.onclick = () => showPad(b.dataset.p)));
-showPad(recall('pad-tab', 'checklist'));
+// Checklist and Notes are separate cards again (Almas: keep them separate).
+

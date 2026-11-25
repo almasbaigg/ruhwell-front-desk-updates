@@ -23,9 +23,9 @@ function paintTimer(st) {
 $('tm-start').onclick = (e) => {
   const P = $('popover'), r = e.currentTarget.getBoundingClientRect();
   P.innerHTML = `<div class="menu timer-menu"><input id="tmp-label" placeholder="What for? (optional)" maxlength="40" autocomplete="off">
-    <div class="tm-picks">${[5, 10, 15, 25, 45].map((m) => `<button data-m="${m}">${m} min</button>`).join('')}</div>
+    <div class="tm-picks">${[5, 10, 15, 30, 45].map((m) => `<button data-m="${m}">${m} min</button>`).join('')}</div>
     <div class="when-pick"><input id="tmp-min" type="number" min="1" max="240" placeholder="Minutes"><button class="btn soft" id="tmp-go">Start</button></div></div>`;
-  P.style.top = `${r.bottom + 6}px`; P.style.left = `${r.left}px`; P.style.width = '250px'; P.classList.remove('hidden');
+  P.style.top = `${r.bottom + 6}px`; P.style.left = `${Math.max(8, Math.min(r.left, innerWidth - 262))}px`; P.style.width = '250px'; P.classList.remove('hidden');
   const go = async (m) => { if (!(m > 0)) return; const label = $('tmp-label').value; hidePopover(); P.style.width = ''; paintTimer(await window.api.timerStart(m, label)); };
   P.querySelectorAll('[data-m]').forEach((b) => (b.onclick = () => go(+b.dataset.m)));
   $('tmp-go').onclick = () => go(+$('tmp-min').value);

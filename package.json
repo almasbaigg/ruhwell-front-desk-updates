@@ -1,7 +1,7 @@
 {
   "name": "ruhwell-front-desk",
   "productName": "Ruhwell Front Desk",
-  "version": "2.4.1",
+  "version": "3.0.0",
   "description": "Ruhwell Med front desk: visits, alerts and patient messaging",
   "main": "main.js",
   "author": "Ruhwell Medical PLLC",
@@ -10,7 +10,7 @@
     "start": "electron .",
     "dist:win": "electron-builder --win nsis --x64 --publish never",
     "dist:mac": "electron-builder --mac dmg --arm64 --x64",
-    "test": "node test/data.test.js && node test/status.test.js && node test/ringrx.test.js && node test/alerts.test.js && node test/rx.test.js && node test/safety.test.js && node test/reader.test.js && node test/v16.test.js && node test/v20.test.js && node test/v21.test.js && node test/v211.test.js && node test/v231.test.js && node test/v240.test.js && node test/package.test.js"
+    "test": "node test/data.test.js && node test/status.test.js && node test/ringrx.test.js && node test/alerts.test.js && node test/rx.test.js && node test/safety.test.js && node test/reader.test.js && node test/v16.test.js && node test/v20.test.js && node test/v21.test.js && node test/v211.test.js && node test/v231.test.js && node test/v240.test.js && node test/v300.test.js && node test/package.test.js"
   },
   "devDependencies": {
     "electron": "^33.2.0",

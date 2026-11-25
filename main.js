@@ -79,13 +79,18 @@ function createWindow() {
   const bounds = onScreen ? fit(saved) : { width: w0, height: h0, x: wa.x + Math.round((wa.width - w0) / 2), y: wa.y + Math.round((wa.height - h0) / 2) };
   win = new BrowserWindow({
     ...bounds, minWidth: minW, minHeight: minH, show: !startHidden,
-    backgroundColor: '#f6f1eb', title: 'Ruhwell Front Desk', icon: icon(),
+    // Mac: a translucent native sidebar (like Finder and Mail); the content area paints its own background.
+    backgroundColor: isMac ? '#00000000' : '#f1eae1', title: 'Ruhwell Front Desk', icon: icon(),
+    ...(isMac ? { vibrancy: 'sidebar', visualEffectState: 'active' } : {}),
     titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
     titleBarOverlay: isMac ? undefined : { color: '#f6f1eb', symbolColor: '#005758', height: 40 },
     trafficLightPosition: { x: 18, y: 16 },
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, plugins: true },   // plugins: the built-in PDF viewer for fax previews
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  // Mac screens show everything larger than a Windows PC at the same window size; scale the app down a touch
+  // there so it has the same breathing room (Almas: it looked oversized on the MacBook).
+  if (isMac) win.webContents.on('did-finish-load', () => win.webContents.setZoomFactor(store.settings.get().macZoom || 0.9));
   if (startHidden) win.once('ready-to-show', () => win.hide());
   win.webContents.setWindowOpenHandler(({ url }) => { openLink(url); return { action: 'deny' }; });
   win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('file:')) { e.preventDefault(); openLink(url); } });
@@ -96,6 +101,10 @@ function createWindow() {
   let saveT = null;
   const remember = () => { clearTimeout(saveT); saveT = setTimeout(() => { if (!win || win.isDestroyed() || win.isMinimized() || win.isFullScreen()) return; const b = win.isMaximized() ? win.getNormalBounds() : win.getBounds(); store.settings.set({ ...store.settings.get(), windowBounds: b, windowMax: win.isMaximized() }); }, 600); };
   win.on('resize', remember); win.on('move', remember); win.on('maximize', remember); win.on('unmaximize', remember);
+  // Window size and screen scaling in the diagnostics log (helps with layout problems on each computer).
+  let sizeT = null;
+  const logSize = () => { clearTimeout(sizeT); sizeT = setTimeout(() => { if (!win || win.isDestroyed()) return; const [w, h] = win.getSize(), d = screen.getDisplayMatching(win.getBounds()); diag('app', 'window', { w, h, scale: d.scaleFactor, screen: `${d.workArea.width}x${d.workArea.height}`, max: win.isMaximized(), dark: require('electron').nativeTheme.shouldUseDarkColors }); }, 1500); };
+  win.on('resize', logSize); win.once('ready-to-show', logSize);
   if (store.settings.get().windowMax) win.maximize();
 }
 function showWindow() { if (!win || win.isDestroyed()) createWindow(); win.show(); win.focus(); }
@@ -500,7 +509,9 @@ async function refreshPortal() {
     portal = { at: new Date().toISOString(), error: null, me: r.me, conversations: r.conversations, seeded: true };
     if (seeded) {   // after the first successful read, anything new or updated that needs a reply alerts (even if the inbox was empty before)
       const fresh = r.conversations.filter((c) => c.needsReply && c.unread && before.get(c.id) !== c.at);
-      if (fresh.length) watcher.addEvents(fresh.map((c) => ({ kind: 'portal', text: `RxNT portal message from ${c.title}` })));
+      const nowIso = new Date().toISOString();
+    for (const p of fresh) store.patients.update(p.key, { firstSeenAt: nowIso });   // shows a "New" tag in Patients for a week
+    if (fresh.length) watcher.addEvents(fresh.map((c) => ({ kind: 'portal', text: `RxNT portal message from ${c.title}` })));
     }
     send('comms-updated', true); send('sync', syncStatus());
   } catch (e) { portal = { ...portal, error: 'failed', failedAt: new Date().toISOString() }; }
@@ -511,6 +522,14 @@ ipcMain.handle('portal:done', (_e, id) => { comms.markDone('p', String(id)); ret
 ipcMain.handle('portal:refresh', async () => { const o = await runPart('portal', 'manual'); return o.kind === 'verified'; });
 ipcMain.handle('comms:snooze', (_e, key, until) => { comms.snooze(String(key), Number(until)); return true; });
 ipcMain.handle('comms:snoozes', () => comms.snoozes());
+ipcMain.handle('comms:woke', () => comms.woke());
+// Every minute: anything snoozed whose time came back gets a pop-up (no names) and a "Back from Later" tag on Today.
+setInterval(() => { try {
+  const n = comms.snoozeTick(); if (!n) return;
+  diag('snooze', 'back from later', { n });
+  notify(n === 1 ? 'Back from Later' : `${n} items back from Later`, 'Something you postponed is due now. Open Today to see it.', () => { showWindow(); send('nav', 'today'); });
+  send('comms-updated');
+} catch {} }, 60000);
 ipcMain.handle('comms:ignore', (_e, phone, on) => { comms.ignore(String(phone || '').replace(/\D/g, '').slice(-10), on !== false); send('sync', syncStatus()); return true; });
 ipcMain.handle('comms:done', (_e, kind, phone) => { comms.markDone(kind, phone); send('sync', syncStatus()); return true; });
 const ph10 = (p) => String(p || '').replace(/\D/g, '').slice(-10);
@@ -544,11 +563,40 @@ ipcMain.handle('fax:sort', async (_e, id, pages) => {
   try {
     const text = await ocr.read(pages);
     const pats = Object.entries(store.patients.all()).map(([key, p]) => ({ key, first: p.first, last: p.last, dob: p.dob }));
-    const meta = { category: ocr.categorize(text, f.from), suggest: ocr.suggest(text, pats), ocrAt: new Date().toISOString() };
+    const fd = ocr.found(text);
+    const meta = { category: ocr.categorize(text, f.from), suggest: ocr.suggest(text, pats), found: fd.name || fd.dob ? { name: fd.name, dob: fd.dob } : null, senderName: fd.sender || null, sentAt: fd.sentAt || null, ocrAt: new Date().toISOString(), ocrV: 2 };
     faxes.setMeta(String(id), meta); return meta;
   } catch (e) { faxes.setMeta(String(id), { ocrAt: new Date().toISOString(), ocrError: String(e.message || e).slice(0, 80), category: 'Unreadable' }); return null; }
 });
 ipcMain.handle('fax:pdf', (_e, id) => faxes.pdf(String(id)));
+// New referral: the fax names a patient who isn't in RxNT yet. Marked, it becomes a Needs Attention item; the app
+// then looks the patient up in RxNT by last name (quick search, not the full list) until they appear, and says so.
+ipcMain.handle('fax:referral', (_e, id, on) => {
+  const f = faxes.list().find((x) => x.id === String(id)); if (!f) return false;
+  faxes.setMeta(String(id), { referral: on ? { at: new Date().toISOString(), status: 'waiting' } : null, ...(on ? { category: 'Referral' } : {}) });
+  diag('faxes', on ? 'marked new referral' : 'referral cleared'); send('faxes-updated', true); return true;
+});
+const normName = (s) => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
+async function referralCheck(onlyId) {
+  const id = pid(); if (!id || !store.settings.get().rxntConnected?.[id]) return { skipped: 'RxNT not connected' };
+  const open = faxes.list().filter((f) => f.referral && f.referral.status === 'waiting' && f.status === 'new' && f.found && f.found.name && (!onlyId || f.id === onlyId));
+  let ready = 0;
+  for (const f of open) {
+    const parts = f.found.name.split(' '), last = parts[parts.length - 1], first = parts[0];
+    if (!last || last.length < 2) continue;
+    const r = await rxQueue((w) => rxnt.listLetter(w, last)).catch(() => null);
+    if (!r || r.needsLogin || r.timedOut) continue;
+    if (r.rows && r.rows.length) store.patients.upsert(r.rows);
+    const all = Object.entries(store.patients.all()).map(([key, p]) => ({ key, ...p }));
+    const hit = all.find((p) => normName(p.last) === normName(last) && (f.found.dob ? String(p.dob || '').slice(0, 10) === f.found.dob : normName(p.first).startsWith(normName(first).slice(0, 3))));
+    if (hit) { faxes.setMeta(f.id, { referral: { ...f.referral, status: 'ready', key: hit.key, readyAt: new Date().toISOString() } }); ready++; }
+  }
+  if (ready) { notify('A referred patient is in RxNT now', 'Their fax is ready to save to the chart.', () => { showWindow(); send('nav', 'faxes'); }); send('faxes-updated', true); }
+  diag('faxes', 'referral check', { open: open.length, ready });
+  return { ok: true, ready };
+}
+ipcMain.handle('fax:referralCheck', (_e, id) => referralCheck(id ? String(id) : null));
+setInterval(() => { if (busyNow() && faxes.list().some((f) => f.referral && f.referral.status === 'waiting')) referralCheck().catch(() => {}); }, 20 * 60000);
 // Save a copy of a fax wherever Maria picks (the app's own copy stays encrypted). Logged for bookkeeping.
 ipcMain.handle('fax:save', async (_e, id) => {
   const f = faxes.pdf(String(id)); if (!f) return { error: 'notdownloaded' };
@@ -561,6 +609,16 @@ ipcMain.handle('fax:save', async (_e, id) => {
   fs.writeFileSync(r.filePath, Buffer.from(f.data, 'base64'));
   activity.add('Doximity', 'fax-saved', { fax: String(id).slice(0, 12) }, true);
   return { ok: true, path: r.filePath };
+});
+// Notes from the screens (errors, which screen is open, layout problems). Only short plain values go in, and
+// the log's own scrubber hides anything that could be a name or a number.
+ipcMain.on('diag:ui', (_e, what, info) => {
+  const safe = {};
+  for (const [k, v] of Object.entries(info || {}).slice(0, 8)) {
+    if (typeof v === 'number' || typeof v === 'boolean') safe[String(k).slice(0, 20)] = v;
+    else if (typeof v === 'string') safe[String(k).slice(0, 20)] = v.replace(/[^\w .:#>\-\/×,()]/g, '').slice(0, 160);
+  }
+  diag('ui', String(what).replace(/[^\w .:-]/g, '').slice(0, 40), safe);
 });
 ipcMain.handle('diag:save', async () => {
   const r = await dialog.showSaveDialog(win, { defaultPath: path.join(app.getPath('downloads'), `Ruhwell Front Desk diagnostics ${ymd(new Date())}.txt`), filters: [{ name: 'Text', extensions: ['txt'] }] });
@@ -704,6 +762,7 @@ function syncStatus() {
     locked: store.raw.lockedFiles().length > 0,
     health: Object.fromEntries(Object.keys(PLAN).filter((k) => k !== 'patients').map((k) => [k, { ok: lastOk[k] || null, failing: (fails[k] || 0) > 0 }])),
     accounts: accountHealth(),
+    every: (() => { try { return Object.fromEntries(Object.keys(PLAN).map((k) => [k, normalEvery(k)])); } catch { return {}; } })(),   // minutes between checks right now, shown in Settings
     scheduleStale: scheduleStale(),
     faxes: faxes.status(),
     backup: backups.status(),
@@ -817,14 +876,24 @@ function outcomeOf(k, r) {
 const normalEvery = (k) => (busyNow() ? PLAN[k][0] : PLAN[k][1]);
 // One run per part at a time: the timer, Sync now, wake and the sync card all share it and get its real result.
 const inflight = {}, runGen = {};   // runGen: bumped when a run starts or times out; late results from an older run are dropped
+// When a part gives up (time limit or a long sleep), its hidden window is closed so the next run isn't "busy".
+const ABORT = { rx: () => rxnt.abortPending(), faxes: () => faxes.abort(), schedule: () => { if (rx.win && !rx.win.isDestroyed()) rx.win.destroy(); rx.win = null; } };
+// Keep macOS from napping the app while a sync runs (App Nap froze hidden windows for minutes).
+let napBlock = null;
+function napGuard() { const busy = Object.keys(inflight).length > 0; if (busy && napBlock === null) napBlock = powerSaveBlocker.start('prevent-app-suspension'); else if (!busy && napBlock !== null) { try { powerSaveBlocker.stop(napBlock); } catch {} napBlock = null; } }
+const runMeta = {};   // k -> { t0, expire } so a wall-clock check can end runs that a sleep froze
 function runPart(k, how = 'timer') {
   if (inflight[k]) return inflight[k];
   syncRunning[k] = true; lastSync[k] = Date.now(); runGen[k] = (runGen[k] || 0) + 1;
   const t0 = Date.now(); let timer;
-  const deadline = new Promise((res) => { timer = setTimeout(() => { runGen[k] = (runGen[k] || 0) + 1; res({ error: `timed out after ${DEADLINE_MIN[k]} min` }); }, DEADLINE_MIN[k] * 60000); });
+  const deadline = new Promise((res) => {
+    const expire = (why) => { runGen[k] = (runGen[k] || 0) + 1; try { ABORT[k] && ABORT[k](); } catch {} res({ error: why }); };
+    runMeta[k] = { t0, expire };
+    timer = setTimeout(() => expire(`timed out after ${DEADLINE_MIN[k]} min`), DEADLINE_MIN[k] * 60000);
+  });
   diag(k, 'start', { how });
   inflight[k] = Promise.race([Promise.resolve().then(RUN[k]).catch((e) => ({ error: String((e && e.message) || e || 'error').slice(0, 120) })), deadline]).then((r) => {
-    clearTimeout(timer);
+    clearTimeout(timer); delete runMeta[k];
     const o = outcomeOf(k, r), every = normalEvery(k);
     syncRunning[k] = false; delete inflight[k];
     if (o.kind === 'skipped') {
@@ -843,13 +912,25 @@ function runPart(k, how = 'timer') {
       const retry = Math.min([0.67, 2, 5, 10][Math.min(fails[k], 4) - 1], every) * 60000;
       lastSync[k] = Date.now() - every * 60000 + retry;
     }
-    send('sync', syncStatus());
+    send('sync', syncStatus()); napGuard();
     return o;
   });
+  napGuard();
   return inflight[k];
 }
+// Wall-clock check (timers pause while a Mac sleeps): any run older than its limit ends now, so a wake never
+// leaves everything hanging for 15 minutes. Also notices when timers were frozen (sleep or App Nap).
+let lastTick = Date.now(), dozing = false;   // dozing: went to sleep and nobody has used the computer since
+function staleRunCheck(reason) {
+  const now = Date.now();
+  if (now - lastTick > 60000) diag('app', 'timers were paused', { s: Math.round((now - lastTick) / 1000), reason });
+  lastTick = now;
+  for (const [k, m] of Object.entries(runMeta)) if (now - m.t0 > DEADLINE_MIN[k] * 60000) { diag(k, 'ended stale run', { reason, min: Math.round((now - m.t0) / 60000) }); m.expire(`stopped after a sleep (${reason})`); }
+}
+setInterval(() => { staleRunCheck('tick'); if (dozing) { try { if (powerMonitor.getSystemIdleTime() < 120) { dozing = false; diag('app', 'back in use'); syncDue(2); } } catch { dozing = false; } } }, 15000);
 function syncDue(maxAgeMin) {
   if (!net.isOnline()) return;   // offline: nothing to read; saved data stays on screen and catch-up runs when it's back
+  if (dozing) return;            // after a sleep, wait for a real wake (see catchUp)
   const busy = busyNow(), now = Date.now();
   for (const [k, [b, q]] of Object.entries(PLAN)) {
     if (inflight[k] || !sourceOn(k)) continue;   // never two runs of the same source at once
@@ -936,17 +1017,24 @@ const appStarted = Date.now();
 // Waking from sleep or getting the internet back: catch up right away (schedule, texts and portal first).
 let wasOnline = true;
 // After waking or Wi-Fi coming back, wait until the internet actually answers (up to a minute) before syncing.
-function catchUp() {
-  diag('app', 'wake/online: catching up');
+function catchUp(why = 'wake') {
+  staleRunCheck(why);
+  diag('app', 'wake/online: catching up', { why });
   const t0 = Date.now();
   // Wait until the internet is actually back; while offline, keep waiting (saved sign-ins are untouched).
   // Once online: everything not read in the last 2 minutes.
-  const tryNow = () => { if (net.isOnline()) setTimeout(() => syncDue(2), 3000); else if (Date.now() - t0 < 30 * 60000) setTimeout(tryNow, Date.now() - t0 > 60000 ? 15000 : 3000); };
+  // A Mac can wake briefly with the lid closed (Power Nap): don't start syncing then. Wait until someone is
+  // actually using the computer (idle under 2 minutes) or the screen is unlocked.
+  const active = () => { try { return powerMonitor.getSystemIdleTime() < 120; } catch { return true; } };
+  const tryNow = () => { if (net.isOnline() && active()) { dozing = false; setTimeout(() => syncDue(2), 3000); } else if (Date.now() - t0 < 30 * 60000) setTimeout(tryNow, Date.now() - t0 > 60000 ? 15000 : 3000); };
   setTimeout(tryNow, 4000);
 }
 app.whenReady().then(() => {
-  powerMonitor.on('resume', catchUp);
-  powerMonitor.on('unlock-screen', () => syncDue(15));
+  powerMonitor.on('resume', () => catchUp('resume'));
+  powerMonitor.on('unlock-screen', () => { dozing = false; staleRunCheck('unlock'); diag('app', 'unlocked'); syncDue(15); });
+  powerMonitor.on('suspend', () => { dozing = true; diag('app', 'sleep'); });
+  powerMonitor.on('lock-screen', () => diag('app', 'locked'));
+  try { powerMonitor.on('user-did-become-active', () => { dozing = false; staleRunCheck('active'); syncDue(15); }); } catch {}
   setInterval(() => { const on = net.isOnline(); if (on && !wasOnline) catchUp(); wasOnline = on; }, 20000);
   // Mac: keep macOS from napping the app while its window is hidden during office hours, so checks
   // and alerts stay on time. Released outside office hours to save battery.
@@ -1233,13 +1321,37 @@ ipcMain.handle('email:packetReplace', async () => {
 });
 ipcMain.handle('email:packetReset', () => { store.raw.writeSecure(PACKET, null); return true; });
 ipcMain.handle('email:packetOpen', () => { const p = packet(); const f = path.join(app.getPath('temp'), 'Ruhwell welcome packet.pdf'); fs.writeFileSync(f, Buffer.from(p.b64, 'base64')); shell.openPath(f); return true; });
+// Saved files library (Settings → Communication → Emails): any number of files kept encrypted on this
+// computer, attachable from any email or template. The welcome packet stays its own item.
+const FILES_IDX = 'saved-files.bin';
+const savedIdx = () => store.raw.readSecure(FILES_IDX, []) || [];
+const savedLoad = (id) => { const m = savedIdx().find((x) => x.id === id); const b64 = m && store.raw.readSecure(`savedfile-${id}.bin`, null); return m && b64 ? { name: m.name, size: m.size, mime: m.mime, b64 } : null; };
+ipcMain.handle('files:list', () => savedIdx());
+ipcMain.handle('files:add', async () => {
+  const r = await dialog.showOpenDialog(win, { title: 'Save files for emails', properties: ['openFile', 'multiSelections'] });
+  if (r.canceled) return { ok: false };
+  const MIME = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', txt: 'text/plain' };
+  const idx = savedIdx(), skipped = [];
+  for (const f of r.filePaths) {
+    const b = fs.readFileSync(f); if (b.length > 20 * 1024 * 1024) { skipped.push(path.basename(f)); continue; }
+    const id = 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    store.raw.writeSecure(`savedfile-${id}.bin`, b.toString('base64'));
+    idx.push({ id, name: path.basename(f), size: b.length, mime: MIME[path.extname(f).slice(1).toLowerCase()] || 'application/octet-stream', at: new Date().toISOString() });
+  }
+  store.raw.writeSecure(FILES_IDX, idx);
+  return { ok: true, skipped };
+});
+ipcMain.handle('files:remove', (_e, id) => { store.raw.writeSecure(FILES_IDX, savedIdx().filter((x) => x.id !== id)); store.raw.writeSecure(`savedfile-${id}.bin`, null); return true; });
+ipcMain.handle('files:rename', (_e, id, name) => { store.raw.writeSecure(FILES_IDX, savedIdx().map((x) => (x.id === id ? { ...x, name: String(name || x.name).slice(0, 120) } : x))); return true; });
+ipcMain.handle('files:open', (_e, id) => { const f = savedLoad(id); if (!f) return false; const t = path.join(app.getPath('temp'), f.name.replace(/[\\/:*?"<>|]/g, '_')); fs.writeFileSync(t, Buffer.from(f.b64, 'base64')); shell.openPath(t); return true; });
+ipcMain.handle('files:get', (_e, ids) => (ids || []).map(savedLoad).filter(Boolean));
 // Email templates (HTML) and the signature.
 ipcMain.handle('email:templates', () => store.emailTemplates.get());
 ipcMain.handle('email:templatesSave', (_e, list) => { store.emailTemplates.set(list); return true; });
 // Outbox
 const outboxEvent = () => { send('outbox', { pending: outbox.pending(), email: outbox.pending('email'), text: outbox.pending('text') }); send('sync', syncStatus()); };
 async function sendEmailNow(p) {
-  const files = [...(p.files || [])];
+  const files = [...(p.files || []), ...((p.savedFiles || []).map(savedLoad).filter(Boolean))];
   if (p.packet) files.unshift(packet());
   try {
     const r = await gapi.send({ to: p.to, cc: p.cc, subject: p.subject, html: p.html, files, threadId: p.threadId, inReplyTo: p.inReplyTo, refs: p.refs });

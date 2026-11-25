@@ -25,7 +25,7 @@ assert.ok(/r\.pending === 0 \|\| r\.items\.length/.test(rx), 'an empty screen st
 // One quiet sign-in at a time, proven by a real schedule read, and paused after a code was asked for.
 assert.ok(/autoInflight\[pid\]/.test(rx) && /codeWait\(pid\)/.test(rx));
 // The proof read must finish before the window is closed (awaited inside try/finally), on both paths.
-assert.strictEqual((rx.match(/return await provenIn\(pid, win\)/g) || []).length, 2, 'provenIn awaited on both paths');
+assert.strictEqual((rx.match(/return await provenIn\(pid, win, trace\)/g) || []).length, 2, 'provenIn awaited on both paths');
 assert.ok(!/return provenIn\(pid, win\)/.test(rx));
 // Schedule checks before replacing what's on screen.
 assert.ok(/instead of \$\{date\}/.test(main) && /sudden drop held/.test(main));

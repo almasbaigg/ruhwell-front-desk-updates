@@ -3,7 +3,7 @@
 function screen(id) { ['booting', 'onboarding', 'shell'].forEach((s) => $(s).classList.toggle('hidden', s !== id)); }
 async function boot() {
   settings = await window.api.getSettings(); info = await window.api.info();
-  $('s-login-label').textContent = info.platform === 'darwin' ? 'Open at login' : 'Start with Windows';
+  $('s-login-label').textContent = info.platform === 'darwin' ? 'Open at Login' : 'Start With Windows';
   $('app-version').textContent = `Version ${info.version}`;
   $('up-ver').textContent = `Version ${info.version}`;
   $('p-kbd').textContent = isMac ? '⌘F' : 'Ctrl F';
@@ -65,7 +65,21 @@ $('ob-continue').onclick = showShell;
 
 /* ---------- Shell & navigation ---------- */
 let view = 'today', schedMode = 'visits';
+// Opening greeting: logo, "Good morning, Maria" and the day in one line, for about 1.2 s. Click or any key skips it.
+function greet() {
+  if (greet.done) return; greet.done = true;
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const h = new Date().getHours(), n = (settings.userName || '').trim();
+  const word = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+  const el = document.createElement('div'); el.id = 'greet'; el.className = reduce ? 'still' : '';
+  el.innerHTML = `<div class="g-card"><img src="../assets/logo.svg" alt="" class="g-logo"><h1>${esc(word)}${n ? `,<br><em>${esc(n)}</em>` : ''}</h1><p>${esc(new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }))}</p><i class="g-line"></i></div>`;
+  document.body.appendChild(el);
+  const end = () => { if (!el.isConnected || el.classList.contains('out')) return; el.classList.add('out'); setTimeout(() => el.remove(), 420); removeEventListener('keydown', end, true); };
+  el.onclick = end; addEventListener('keydown', end, true); setTimeout(end, reduce ? 700 : 1300);
+  uiLog && uiLog('greet', { shown: true });
+}
 function showShell() {
+  greet();
   screen('shell'); paintConnections(); go('today');
   window.api.spamReview().then((l) => { if (l && l.length) toast(`${l.length === 1 ? 'A number' : l.length + ' numbers'} on your spam list now belong to a patient, so ${l.length === 1 ? 'it was' : 'they were'} taken off: ${l.map(fmtPhone).join(', ')}`); }).catch(() => {});
   window.api.ringrxFrom().then((n) => { sendFrom = n || ''; }).catch(() => {});
@@ -74,6 +88,7 @@ document.querySelectorAll('.nav').forEach((b) => (b.onclick = () => go(b.dataset
 document.querySelectorAll('.sched-toggle button').forEach((b) => (b.onclick = () => { schedMode = b.dataset.mode; if (schedMode === 'calendar') weekStart = mondayOf(currentDate); go(schedMode); }));
 function go(v) {
   if (v === 'alerts' || v === 'desk') v = 'today';
+  if (typeof uiLog === 'function') { uiLog('screen', { name: v }); clearTimeout(go._lc); go._lc = setTimeout(() => layoutCheck(v), 2000); }
   view = v; hidePopover();
   if (v === 'visits' || v === 'calendar') schedMode = v;
   const navKey = v === 'visits' || v === 'calendar' ? 'schedule' : v;
@@ -81,7 +96,7 @@ function go(v) {
   document.querySelectorAll('.sched-toggle button').forEach((b) => b.classList.toggle('on', b.dataset.mode === v));
   document.querySelectorAll('.view').forEach((x) => x.classList.toggle('hidden', x.id !== 'view-' + v));
   $('actionbar').style.display = v === 'visits' ? '' : 'none';
-  $('content').scrollTop = 0;
+  $('content').scrollTop = 0; document.querySelectorAll('.view:not(.hidden) .vscroll').forEach((x) => { x.scrollTop = 0; });
   ({ today: loadToday, visits: () => loadDay(currentDate), calendar: () => loadWeek(weekStart || mondayOf(currentDate)), patients: () => loadPatients(), texts: loadTexts, emails: () => loadEmails(), calls: loadCalls, rx: loadRx, faxes: loadFaxes, settings: loadSettings }[v] || (() => {}))();
 }
 window.api.onNav((v) => go(v));
@@ -134,7 +149,7 @@ const MARK = '<rect y="43.34" width="43.16" height="43.16" rx="2.88"/><rect x="4
 const SYNC_PARTS = [['schedule', 'RxNT schedule'], ['rx', 'Prescriptions & To-Do'], ['portal', 'Portal messages'], ['comms', 'Texts & calls'], ['gmail', 'Email'], ['faxes', 'Faxes']];
 let syncCardBusy = null, syncTimers = [];
 $('side-sync').onclick = async () => { const b = $('side-sync'); if (b.classList.contains('spin')) return; b.classList.add('spin'); try { await syncEverything(null, { big: true }); } finally { b.classList.remove('spin'); } };
-// Big sync card: centered over a soft blur so it's obvious something is happening. "Keep working" (or a click
+// Big sync card: centered over a soft blur so it's obvious something is happening. "Keep Working" (or a click
 // anywhere outside it, or Escape) tucks it into the corner; it never stops you from working.
 function syncSmall() { $('sync-card').classList.remove('big'); $('sync-veil').classList.remove('show'); }
 $('sync-veil').onclick = syncSmall;
@@ -148,7 +163,7 @@ async function syncEverything(only, opts = {}) {
   syncTimers.forEach(clearTimeout); syncTimers = []; card.onclick = null;
   card.innerHTML = `<div class="sc-mark"><svg viewBox="-4 -4 142.5 138.5" aria-hidden="true"><defs><clipPath id="sc-clip">${MARK}</clipPath></defs>
       <g class="sc-base">${MARK}</g><g clip-path="url(#sc-clip)"><g class="sc-fill" style="transform:translateY(131px)"><path class="sc-wave" d="M-140 0 q17.5 -7 35 0 t35 0 t35 0 t35 0 t35 0 t35 0 t35 0 t35 0 V140 H-140Z"/></g></g></svg></div>
-    <div class="sc-body"><b class="sc-title">Syncing…</b><ul>${parts.map(([k, l]) => `<li data-k="${k}"><i></i><span>${l}</span><em></em></li>`).join('')}</ul><button class="btn small sc-keep" type="button">Keep working</button></div>`;
+    <div class="sc-body"><b class="sc-title">Syncing…</b><ul>${parts.map(([k, l]) => `<li data-k="${k}"><i></i><span>${l}</span><em></em></li>`).join('')}</ul><button class="btn small sc-keep" type="button">Keep Working</button></div>`;
   card.className = 'sync-card show' + (opts.big ? ' big' : '');
   $('sync-veil').classList.toggle('show', !!opts.big);
   card.querySelector('.sc-keep').onclick = (e) => { e.stopPropagation(); syncSmall(); };
@@ -179,20 +194,20 @@ async function syncEverything(only, opts = {}) {
 
 /* ---------- Date popover ---------- */
 let popMonth = null;
-const knownDays = {};
-function hidePopover() { $('popover').classList.add('hidden'); }
+const knownDays = {}, knownCancels = {};   // visits per day (dots) and days with cancellations, from what the app has read
+function hidePopover() { $('popover').classList.add('hidden'); $('popover').classList.remove('cal-pop'); }
 function showDatePopover(anchor) {
   const [y, m] = popMonth.split('-').map(Number), first = new Date(y, m - 1, 1), start = new Date(first); start.setDate(1 - ((first.getDay() + 6) % 7));
-  let cells = ''; for (let i = 0; i < 42; i++) { const d = new Date(start); d.setDate(start.getDate() + i); const s = ymd(d); cells += `<button data-d="${s}" class="${d.getMonth() !== m - 1 ? 'out' : ''} ${s === ymd() ? 'today' : ''} ${s === currentDate ? 'sel' : ''}">${d.getDate()}${knownDays[s] > 0 ? '<i></i>' : ''}</button>`; }
+  let cells = ''; for (let i = 0; i < 42; i++) { const d = new Date(start); d.setDate(start.getDate() + i); const s = ymd(d); cells += `<button data-d="${s}" class="${d.getMonth() !== m - 1 ? 'out' : ''} ${s === ymd() ? 'today' : ''} ${s === currentDate ? 'sel' : ''} ${d.getDay() === 0 || d.getDay() === 6 ? 'wkend' : ''} ${knownCancels[s] ? 'has-cancel' : ''}">${d.getDate()}${knownDays[s] > 0 ? `<span class="dots">${'<i></i>'.repeat(Math.min(3, Math.ceil(knownDays[s] / 3)))}</span>` : ''}</button>`; }
   const P = $('popover');
   P.innerHTML = `<div class="mini-head"><button id="pm-prev"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button><b>${first.toLocaleDateString([], { month: 'long', year: 'numeric' })}</b><button id="pm-next"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button></div>
     <div class="mini-grid">${['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map((x) => `<span>${x}</span>`).join('')}${cells}</div>
-    <div class="popover-actions"><button class="btn link" id="pm-today">Today</button><button class="btn link" id="pm-tomorrow">Tomorrow</button></div>`;
+    <div class="popover-actions"><button class="btn link" id="pm-today">Today</button></div>`;
+  P.firstElementChild.closest('#popover').classList.add('cal-pop');
   const r = anchor.getBoundingClientRect(); P.style.top = `${r.bottom + 6}px`; P.style.left = `${Math.max(12, r.left + r.width / 2 - 134)}px`; P.classList.remove('hidden');
   $('pm-prev').onclick = () => { popMonth = ymd(new Date(y, m - 2, 1)).slice(0, 7); showDatePopover(anchor); };
   $('pm-next').onclick = () => { popMonth = ymd(new Date(y, m, 1)).slice(0, 7); showDatePopover(anchor); };
   $('pm-today').onclick = () => { hidePopover(); loadDay(ymd()); };
-  $('pm-tomorrow').onclick = () => { hidePopover(); loadDay(addDays(ymd(), 1)); };
   P.querySelectorAll('.mini-grid button').forEach((b) => (b.onclick = () => { hidePopover(); loadDay(b.dataset.d); }));
 }
 document.addEventListener('mousedown', (e) => { if (!$('popover').contains(e.target) && !e.target.closest('#day-pick')) hidePopover(); });
@@ -235,6 +250,11 @@ function paintClock() {
   const a = hm(sy.busyStart, '08:00'), b = hm(sy.busyEnd, '17:00'), cur = now.getHours() * 60 + now.getMinutes(), pct = Math.max(0, Math.min(1, (cur - a) / Math.max(1, b - a)));
   $('day-fill').style.width = `${pct * 100}%`; $('day-track').classList.toggle('off', cur < a || cur > b || [0, 6].includes(now.getDay()));
   $('day-track').title = cur < a ? 'Before office hours' : cur > b ? 'After office hours' : `${Math.round(pct * 100)}% through office hours`;
+  // Visit ticks along the day line: sage once seen, teal still to come, terracotta for the next one.
+  const dayVisits = (((typeof dayStore !== 'undefined' && dayStore[ymd()]) || {}).items || []).filter((v) => category(v) !== 'cancelled');
+  const nextV = dayVisits.filter((v) => ['booked', 'confirmed'].includes(stateOf(v)) && new Date(v.start) > now - 5 * 60000).sort((x, y) => new Date(x.start) - new Date(y.start))[0];
+  const ticks = dayVisits.map((v) => { const t = new Date(v.start), m = t.getHours() * 60 + t.getMinutes(), p = (m - a) / Math.max(1, b - a); if (p < 0 || p > 1) return ''; return `<u class="${v === nextV ? 'nx' : category(v) === 'seen' || t < now ? 'dn' : ''}" style="left:${(p * 100).toFixed(1)}%"></u>`; }).join('');
+  const tk = $('day-track'); let tb = tk.querySelector('.ticks'); if (!tb) { tb = document.createElement('span'); tb.className = 'ticks'; tk.appendChild(tb); } if (tb.innerHTML !== ticks) tb.innerHTML = ticks;
   const next = (((typeof dayStore !== 'undefined' && dayStore[ymd()]) || {}).items || [])
     .filter((v) => ['booked', 'confirmed'].includes(stateOf(v)) && new Date(v.start) > now - 5 * 60000)
     .sort((a, b) => new Date(a.start) - new Date(b.start))[0];
@@ -249,3 +269,11 @@ function paintClock() {
 }
 paintClock();
 setInterval(paintClock, 10000);
+
+// Narrow windows: clicking a row in a list opens the item full width; "← Back" returns to the list.
+document.querySelectorAll('.split.comms, #view-patients .split').forEach((sp) => {
+  const back = document.createElement('button'); back.className = 'pane-back'; back.type = 'button'; back.innerHTML = '<svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>Back';
+  back.onclick = () => sp.classList.remove('open-item'); sp.appendChild(back);
+  const list = sp.firstElementChild;
+  list.addEventListener('click', (e) => { if (e.target.closest('button[data-id], .trow-btn, .em-row, [data-key], [data-phone], .pt-row')) sp.classList.add('open-item'); });
+});

@@ -3,6 +3,7 @@
 // in memory, so we read it straight from the page — no clicking through charts.
 const { BrowserWindow, session } = require('electron');
 const store = require('./store');
+const { diag } = require('./diag');
 const fs = require('fs');
 
 const partitionFor = (pid) => `persist:rxnt-${pid}`;
@@ -367,32 +368,49 @@ function autoSignIn(pid) {
   return autoInflight[pid];
 }
 // Signed in for real = RxNT's scheduler shows a day (not just an RxNT address, which could be a notice page).
-async function provenIn(pid, win) {
-  await win.loadURL(SCHEDULER).catch(() => {});
-  const r = await waitForSchedule(win, localDate(), 30000);
-  if (r.state === 'ok') { await keepSignedIn(pid); return 'ok'; }
-  if (r.state === 'login') return 'failed';
-  return 'step';   // signed in, but RxNT is showing something else first (security check, notice, "continue")
+const hostOf = (u) => { try { return new URL(u).host + new URL(u).pathname.split('/').slice(0, 2).join('/'); } catch { return '?'; } };
+async function provenIn(pid, win, trace = []) {
+  // RxNT sometimes needs a moment after sign-in before the scheduler opens: try twice before deciding.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    await win.loadURL(SCHEDULER).catch(() => {});
+    const r = await waitForSchedule(win, localDate(), 30000);
+    trace.push(`proof${attempt}:${r.state}@${hostOf(win.webContents.getURL())}`);
+    if (r.state === 'ok') { await keepSignedIn(pid); return 'ok'; }
+    if (r.state !== 'login') return 'step';   // signed in, but RxNT is showing something else first (security check, notice, "continue")
+    await sleep(4000);
+  }
+  return 'failed';
 }
+// Every step is written to the diagnostics log (page address without any details, step, result), so a failed
+// quiet sign-in says exactly where it stopped.
 async function autoSignInOnce(pid) {
-  const c = savedLogin(pid); if (!c || c.bad) return 'failed';
+  const trace = [], t0 = Date.now();
+  const r = await autoSignInSteps(pid, trace).catch((e) => { trace.push('error:' + String((e && e.message) || e).slice(0, 60)); return 'failed'; });
+  diag('rxnt', 'quiet sign-in steps', { result: r, ms: Date.now() - t0, steps: trace.join(' > ').slice(0, 380) });
+  return r;
+}
+async function autoSignInSteps(pid, trace) {
+  const c = savedLogin(pid); if (!c || c.bad) { trace.push(c ? 'saved-login-marked-bad' : 'no-saved-login'); return 'failed'; }
   const win = makeWindow(pid, false);
   try {
-    await win.loadURL('https://auth.rxnt.com/auth/login').catch(() => {});
+    await win.loadURL('https://auth.rxnt.com/auth/login').catch((e) => trace.push('load-error:' + String((e && e.code) || '').slice(0, 30)));
     const end = Date.now() + 60000, done = new Set();
+    let last = '';
     while (Date.now() < end && !win.isDestroyed()) {
       await sleep(1500);
       const url = win.webContents.getURL();
-      if (!AUTH_OK.test(url)) return 'failed';                       // somewhere unexpected: never fill anything
-      if (/app2\.rxnt\.com/i.test(url)) return await provenIn(pid, win);   // await: the window must stay open while it checks
+      if (!AUTH_OK.test(url)) { trace.push('left-rxnt:' + hostOf(url)); return 'failed'; }   // somewhere unexpected: never fill anything
+      if (/app2\.rxnt\.com/i.test(url)) { trace.push('landed:' + hostOf(url)); return await provenIn(pid, win, trace); }   // await: the window must stay open while it checks
       const look = await call(win, autofillStep, '', '', false);
+      const here = `${hostOf(url)}:${look.step}`; if (here !== last) { trace.push(here); last = here; }
       if (look.step === 'bad') { markLoginBad(pid); return 'bad'; }
       if (look.step === 'code') return 'code';
-      if (look.step === 'in') return await provenIn(pid, win);
+      if (look.step === 'in') return await provenIn(pid, win, trace);
       if ((look.step === 'username' || look.step === 'password') && !done.has(look.step)) {
         done.add(look.step); await call(win, autofillStep, c.u, c.p, true);
       } else if (look.step === 'password' && done.has('password')) { await sleep(3000); const again = await call(win, autofillStep, '', '', false); if (again.step === 'bad') { markLoginBad(pid); return 'bad'; } /* still on the password page: slow, not wrong; keep waiting */ }
     }
+    trace.push('gave-up-after-60s');
     return 'failed';
   } finally { if (!win.isDestroyed()) win.destroy(); }
 }
@@ -564,6 +582,7 @@ async function dashCounts(win, ms, labels = DASH_LABELS, anchor, required) {
 
 // 1) Counts from the EHR dashboard (opening the EHR from RxNT's home page if needed).
 // 2) Names from the prescriber dashboard tabs that have anything: Pending, Pharmacy Requests, Recent (sent) and Voided.
+let billingVia = 'link', billingLast = null;   // how Billing opened last time, and its last result
 async function readPending(win) {
   await win.loadURL(EHR_DASH).catch(() => {});
   const REQ = ['pending', 'refill', 'failed'];
@@ -585,19 +604,28 @@ async function readPending(win) {
     }
   }
   // Billing: the biller's unbilled queue (information) and patient payments not yet posted to a visit (Maria's part).
-  let payments = null;
-  try {
+  // Billing changes slowly: read it at most every 25 minutes (reuse the last result in between), and go the way
+  // that worked last time (the direct link often bounces, which used to cost 15 s every read).
+  let payments = billingLast ? billingLast.payments : null;
+  if (billingLast && Date.now() - billingLast.at < 25 * 60000) Object.assign(counts, billingLast.counts);
+  else try {
     const B = { 'Unbilled Encounters': 'unbilled', 'Unposted Patient Payments': 'unposted', 'Pending Statements': 'statements' };
-    await win.loadURL('https://app2.rxnt.com/BillingV2/#/').catch(() => {});
-    let b = await dashCounts(win, 15000, B, 'Unbilled Encounters');
-    if (b.state === 'timeout' && !win.isDestroyed()) {
+    const viaCard = async () => {
       await win.loadURL('https://app2.rxnt.com/dashboard/').catch(() => {});
       for (let i = 0; i < 20 && !win.isDestroyed(); i++) { await sleep(600); if ((await call(win, clickCard, 'Billing')) === true) break; }
-      b = await dashCounts(win, 20000, B, 'Unbilled Encounters');
+      return dashCounts(win, 20000, B, 'Unbilled Encounters');
+    };
+    let b;
+    if (billingVia === 'card') b = await viaCard();
+    else {
+      await win.loadURL('https://app2.rxnt.com/BillingV2/#/').catch(() => {});
+      b = await dashCounts(win, 15000, B, 'Unbilled Encounters');
+      if (b.state === 'timeout' && !win.isDestroyed()) { b = await viaCard(); if (b.state === 'ready') billingVia = 'card'; }
     }
     if (b.state === 'ready') {
       Object.assign(counts, b.counts);
-      if (counts.unposted > 0) payments = await readPayments(win);
+      payments = counts.unposted > 0 ? await readPayments(win) : null;
+      billingLast = { at: Date.now(), counts: b.counts, payments };
     }
   } catch {}
   let extras = {};
@@ -886,16 +914,18 @@ async function uploadToChart(pid, internalId, pdfBase64, { fileName, title, cate
 }
 
 // One read in a throwaway hidden window, capped at 150 seconds.
-let rxBusy = false;
+let rxBusy = false, rxWin = null, rxAbort = null;
 async function readPendingOnce(pid) {
   if (rxBusy) return { error: 'busy' };
   rxBusy = true;
   let win, timer;
   try {
-    win = openReader(pid);   // inside try, so a failure here can't leave rxBusy stuck
-    return await Promise.race([readPending(win), new Promise((r) => { timer = setTimeout(() => r({ error: 'timeout' }), 210000); })]);
-  } finally { clearTimeout(timer); rxBusy = false; if (win && !win.isDestroyed()) win.destroy(); }
+    win = rxWin = openReader(pid);   // inside try, so a failure here can't leave rxBusy stuck
+    return await Promise.race([readPending(win), new Promise((r) => { rxAbort = r; timer = setTimeout(() => r({ error: 'timeout' }), 210000); })]);
+  } finally { clearTimeout(timer); rxBusy = false; rxAbort = null; rxWin = null; if (win && !win.isDestroyed()) win.destroy(); }
 }
+// Called when the app gives up on a prescriptions read (time limit, wake): end it now and free the reader.
+function abortPending() { if (rxAbort) rxAbort({ error: 'cancelled' }); if (rxWin && !rxWin.isDestroyed()) rxWin.destroy(); }
 
 /* ---------- Staying signed in ----------
    RxNT's sign-in lives in "session" cookies, which a browser throws away when it closes, so every
@@ -906,7 +936,8 @@ async function keepSignedIn(pid) {
   try {
     const cookies = await ses.cookies.get({});
     const until = Math.floor(Date.now() / 1000) + 30 * 86400;
-    for (const c of cookies.filter((x) => x.session && /rxnt\.com$/.test(x.domain.replace(/^\./, '')))) {
+    // Every RxNT host (auth, app2, …): session-only cookies become 30-day cookies, so a restart doesn't sign out.
+    for (const c of cookies.filter((x) => x.session && /(^|\.)rxnt\.com$/i.test(String(x.domain || '').replace(/^\./, '')))) {
       await ses.cookies.set({
         url: `https://${c.domain.replace(/^\./, '')}${c.path || '/'}`, name: c.name, value: c.value, path: c.path,
         domain: c.hostOnly ? undefined : c.domain, secure: c.secure, httpOnly: c.httpOnly, sameSite: c.sameSite, expirationDate: until,
@@ -959,4 +990,4 @@ async function readMessages(pid) {
   return { me: { id: me.id, name: (me.profile && me.profile.name) || '' }, conversations: out };
 }
 
-module.exports = { clearCodeWait, partitionFor, sameChart, verifyInChart, findChart, uploadToChart, autoSignIn, savedLogin, forgetLogin, argCode, readMessages, keepSignedIn, ping, fetchDay, openReader, listLetter, openPatient, localDate, signIn, status, logout, readPendingOnce };
+module.exports = { abortPending, clearCodeWait, partitionFor, sameChart, verifyInChart, findChart, uploadToChart, autoSignIn, savedLogin, forgetLogin, argCode, readMessages, keepSignedIn, ping, fetchDay, openReader, listLetter, openPatient, localDate, signIn, status, logout, readPendingOnce };

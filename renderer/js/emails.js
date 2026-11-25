@@ -1,5 +1,5 @@
 /* Emails: the practice Gmail (read, reply, write), the email composer (formatting, templates, attachments,
-   preview, signature), "Send later" + quiet hours for texts and emails, and the Scheduled list.
+   preview, signature), "Send Later" + quiet hours for texts and emails, and the Scheduled list.
    Patients always get email from hello@ruhwellmed.com. */
 // When an email was opened here (Gmail doesn't keep that), so "Read 9:42 PM" works like texts and faxes.
 const emReadAt = (() => { try { return JSON.parse(localStorage.getItem('rfd-em-read') || '{}'); } catch { return {}; } })();
@@ -38,7 +38,7 @@ const patientEmails = () => patients.filter((p) => p.email || p.emailTyped).map(
 /* ---------- When to send: quick picks, custom time, quiet hours ---------- */
 // A small dialog on top of whatever is open (the composer keeps its text and buttons underneath).
 function subDialog(html) { const w = document.createElement('div'); w.className = 'sub-overlay'; w.innerHTML = `<div class="modal sub-modal">${html}</div>`; document.body.append(w); return w; }
-async function pickSendTime(title = 'Send later') {
+async function pickSendTime(title = 'Send Later') {
   const q = await window.api.outboxQuiet();
   const at = (days, h) => { const d = new Date(); d.setDate(d.getDate() + days); d.setHours(h, 0, 0, 0); return d; };
   const mon = (() => { const d = new Date(); d.setDate(d.getDate() + ((8 - d.getDay()) % 7 || 7)); d.setHours(9, 0, 0, 0); return d; })();
@@ -119,8 +119,8 @@ async function scheduledModal(e) {
       <span class="sk">${x.kind === 'email' ? I.mail : I.msg}</span>
       <div class="sb"><b>${esc(x.to || x.label)}</b><span class="muted small">${esc(x.label)}${x.preview && x.preview !== x.label ? ' · ' + esc(String(x.preview).replace(/<[^>]+>/g, '').slice(0, 70)) : ''}</span>
         <span class="small ${ST[x.status][1]}">${esc(ST[x.status][0])} · ${esc(x.status === 'scheduled' ? fmtWhen(x.sendAt) : fmtWhen(x.doneAt || x.sendAt))}${x.error ? ' · ' + esc(x.error) : ''}</span></div>
-      <div class="row-gap">${x.status === 'scheduled' ? '<button class="btn small sc-now">Send now</button><button class="btn small sc-time">Change time</button><button class="icon-btn sc-cancel" title="Cancel">' + I.x + '</button>' : x.status === 'uncertain' || x.status === 'failed' ? '<button class="btn small sc-ok">Got it</button>' : ''}</div>
-    </div>`).join('')}</div>` : '<p class="muted" style="padding:16px 4px">Nothing scheduled. Use <b>Send later</b> on any text or email.</p>'}
+      <div class="row-gap">${x.status === 'scheduled' ? '<button class="btn small sc-now">Send Now</button><button class="btn small sc-time">Change Time</button><button class="icon-btn sc-cancel" title="Cancel">' + I.x + '</button>' : x.status === 'uncertain' || x.status === 'failed' ? '<button class="btn small sc-ok">Got it</button>' : ''}</div>
+    </div>`).join('')}</div>` : '<p class="muted" style="padding:16px 4px">Nothing scheduled. Use <b>Send Later</b> on any text or email.</p>'}
     <div class="actions"><button class="btn primary" id="sc-done">Done</button></div>`);
   $('sc-x').onclick = $('sc-done').onclick = closeModal;
   // Refresh only if this Scheduled window is still the one open (never over a composer opened since).
@@ -131,7 +131,7 @@ async function scheduledModal(e) {
     // Each action reports what actually happened (it may already be sending), then the list shows the real state.
     const gone = "Too late: it's already being sent. See its status below.";
     if (q('.sc-now')) q('.sc-now').onclick = async () => { const ok = await window.api.outboxSendNow(id); toast(ok ? 'Sending now' : gone); again(ok ? 1500 : 0); };
-    if (q('.sc-time')) q('.sc-time').onclick = async () => { const d = await pickSendTime('Change time'); if (d) { const ok = await window.api.outboxReschedule(id, d.toISOString()); toast(ok ? `Moved to ${fmtWhen(d)}` : gone); } scheduledModal(); };
+    if (q('.sc-time')) q('.sc-time').onclick = async () => { const d = await pickSendTime('Change Time'); if (d) { const ok = await window.api.outboxReschedule(id, d.toISOString()); toast(ok ? `Moved to ${fmtWhen(d)}` : gone); } scheduledModal(); };
     if (q('.sc-cancel')) q('.sc-cancel').onclick = async () => { const ok = await window.api.outboxCancel(id); toast(ok ? 'Cancelled. It will not be sent.' : gone); again(0); };
     if (q('.sc-ok')) q('.sc-ok').onclick = async () => { await window.api.outboxDismiss(id); scheduledModal(); };
   });
@@ -141,43 +141,46 @@ window.api.onOutbox(paintSchedCount);
 
 /* ---------- Composer ---------- */
 const COLORS = [['#005758', 'Teal'], ['#45818e', 'Soft teal'], ['#93c47d', 'Green'], ['#a3b18a', 'Sage'], ['#e4926e', 'Terracotta'], ['#1f2a2a', 'Black']];
+let savedFiles = [];
 async function emailCompose(o = {}) {
   const st = await window.api.emailStatus();
   if (!st.connected) { toast('Connect Gmail first (Settings → Email).'); go('settings'); return; }
   emTemplates = emTemplates || await window.api.emailTemplates();
   const packet = await window.api.emailPacketInfo();
+  savedFiles = await window.api.filesList().catch(() => []);
   const sig = settings.emailSignature || '';
-  const c = { to: o.to || '', cc: o.cc || '', subject: o.subject || '', files: [], packet: false, threadId: o.threadId || '', inReplyTo: o.inReplyTo || '', refs: o.refs || '', who: o.who || {}, templateId: null, templateName: o.threadId ? 'Reply' : 'Email' };
+  const c = { to: o.to || '', cc: o.cc || '', subject: o.subject || '', files: [], saved: [], packet: false, threadId: o.threadId || '', inReplyTo: o.inReplyTo || '', refs: o.refs || '', who: o.who || {}, templateId: null, templateName: o.threadId ? 'Reply' : 'Email' };
   const body0 = (o.html || '<p><br></p>') + (sig ? `<div data-sig="1"><br>${sig}</div>` : '');
   openModal(`<div class="em-compose">
     ${o.who && o.who.phone && !o.threadId ? channelTabs('email', { ...o.who, rec: o.who }) : ''}
-    <div class="send-head"><h2>${o.threadId ? 'Reply' : o.who && o.who.first ? esc(`${o.who.first} ${o.who.last || ''}`.trim()) : 'New email'}</h2><button class="icon-btn" id="ec-x">${I.x}</button></div>
+    <div class="send-head"><h2>${o.threadId ? 'Reply' : o.who && o.who.first ? esc(`${o.who.first} ${o.who.last || ''}`.trim()) : 'New Email'}</h2><button class="icon-btn" id="ec-x">${I.x}</button></div>
     <div class="ec-fields">
       <label><span>From</span><b class="ec-from">${esc(st.sendAs && st.sendAs.email || 'hello@ruhwellmed.com')}</b>${!st.error && st.at && !(st.sendAs && st.sendAs.ok) ? '<em class="bad small">not set up as a Send-as address in Gmail</em>' : ''}</label>
       <label><span>To</span><div class="ec-to-wrap"><input id="ec-to" value="${esc(c.to)}" placeholder="Patient name or email" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="ec-sugg"><div class="ec-sugg hidden" id="ec-sugg" role="listbox"></div></div><button class="linkbtn" id="ec-ccbtn">Cc</button></label>
       <label class="${c.cc ? '' : 'hidden'}" id="ec-ccrow"><span>Cc</span><input id="ec-cc" value="${esc(c.cc)}"></label>
-      <label><span>Subject</span><input id="ec-subject" value="${esc(c.subject)}"></label>
+      <label><span>Subject</span><input id="ec-subject" value="${esc(c.subject)}" placeholder="What is this about?"></label>
     </div>
     ${emTemplates.length && !o.threadId ? `<div class="tpl-bar"><span>Templates</span>${emTemplates.map((t) => `<button type="button" class="tpl-chip" data-t="${esc(t.id)}">${I.plus}${esc(t.name)}</button>`).join('')}</div>` : ''}
     <div class="ec-tools">
       <button data-c="bold" title="Bold"><b>B</b></button><button data-c="italic" title="Italic"><i>I</i></button><button data-c="underline" title="Underline"><u>U</u></button>
       <span class="sep"></span>${COLORS.map(([v, n]) => `<button class="sw" data-color="${v}" title="${n}" style="--c:${v}"></button>`).join('')}
-      <span class="sep"></span><button data-c="h" title="Heading">H</button><button data-c="insertOrderedList" title="Numbered list">1.</button><button data-c="insertUnorderedList" title="Bullet list">•</button><button data-c="link" title="Link">Link</button><button data-c="removeFormat" title="Clear formatting">Tx</button>
+      <span class="sep"></span><button data-c="h" title="Heading"><svg viewBox="0 0 24 24"><path d="M6 5v14M18 5v14M6 12h12"/></svg></button><button data-c="insertOrderedList" title="Numbered list"><svg viewBox="0 0 24 24"><path d="M10 6h10M10 12h10M10 18h10M4 6h1v4M4 10h2M4 14.5c.6-.6 2-.6 2 .5 0 .8-2 1.6-2 3h2.2"/></svg></button><button data-c="insertUnorderedList" title="Bullet list"><svg viewBox="0 0 24 24"><path d="M10 6h10M10 12h10M10 18h10"/><circle cx="5" cy="6" r="1"/><circle cx="5" cy="12" r="1"/><circle cx="5" cy="18" r="1"/></svg></button><button data-c="link" title="Add a link"><svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg></button><button data-c="removeFormat" title="Clear formatting"><svg viewBox="0 0 24 24"><path d="M6 5h12M12 5l-3 14M15 15l5 5M20 15l-5 5"/></svg></button>
     </div>
     <div class="ec-body" id="ec-body" contenteditable="true">${cleanHtml(body0)}</div>
     <div class="ec-files" id="ec-files"></div>
-    <div class="actions"><button class="btn" id="ec-attach">${I.plus}Attach</button><button class="btn" id="ec-preview">Preview</button><span style="flex:1"></span><button class="btn" id="ec-later">${I.clock}Send later</button><button class="btn primary" id="ec-send">${I.send}Send</button></div>
+    <div class="actions"><button class="btn" id="ec-attach">${I.plus}Attach</button><button class="btn" id="ec-preview">Preview</button><span style="flex:1"></span><button class="btn" id="ec-later">${I.clock}Send Later</button><button class="btn primary" id="ec-send">${I.send}Send</button></div>
   </div>`);
   const body = $('ec-body');
   if (o.who && o.who.phone) bindChannelTabs({ ...o.who, rec: o.who });
   const paintFiles = () => {
-    $('ec-files').innerHTML = (c.packet ? [{ name: packet.name, size: packet.size, packet: true }] : []).concat(c.files).map((f, i) => `<span class="file-chip">${I.mail.replace('<svg', '<svg class="fi"')}<b>${esc(f.name)}</b><em>${esc(fmtSize(f.size || 0))}</em><button data-i="${f.packet ? 'p' : i - (c.packet ? 1 : 0)}" title="Remove">${I.x}</button></span>`).join('');
-    $('ec-files').querySelectorAll('button').forEach((b) => (b.onclick = () => { if (b.dataset.i === 'p') c.packet = false; else c.files.splice(+b.dataset.i, 1); paintFiles(); }));
+    const savedChips = c.saved.map((id) => savedFiles.find((x) => x.id === id)).filter(Boolean).map((f) => `<span class="file-chip saved">${I.mail.replace('<svg', '<svg class="fc-ic"')}<b>${esc(f.name)}</b><em>${esc(fmtSize(f.size))}</em><button type="button" title="Remove" data-s="${esc(f.id)}">×</button></span>`).join('');
+    $('ec-files').innerHTML = savedChips + (c.packet ? [{ name: packet.name, size: packet.size, packet: true }] : []).concat(c.files).map((f, i) => `<span class="file-chip">${I.mail.replace('<svg', '<svg class="fi"')}<b>${esc(f.name)}</b><em>${esc(fmtSize(f.size || 0))}</em><button data-i="${f.packet ? 'p' : i - (c.packet ? 1 : 0)}" title="Remove">${I.x}</button></span>`).join('');
+    $('ec-files').querySelectorAll('button').forEach((b) => (b.onclick = () => { if (b.dataset.s) c.saved = c.saved.filter((x) => x !== b.dataset.s); else if (b.dataset.i === 'p') c.packet = false; else c.files.splice(+b.dataset.i, 1); paintFiles(); }));
   };
   const useTemplate = (t) => {
     const who = c.who.first ? c.who : onlyPatient($('ec-to').value) || {};
     $('ec-subject').value = t.subject; body.innerHTML = cleanHtml(fillEmail(t.html, who) + (sig ? `<div data-sig="1"><br>${sig}</div>` : ''));
-    c.packet = !!t.packet; c.templateId = t.id; c.templateName = t.name; paintFiles();
+    c.packet = !!t.packet; c.saved = (t.files || []).filter((id) => savedFiles.some((x) => x.id === id)); c.templateId = t.id; c.templateName = t.name; paintFiles();
   };
   if (o.templateId) { const t = emTemplates.find((x) => x.id === o.templateId); if (t) useTemplate(t); }
   paintFiles();
@@ -198,7 +201,15 @@ async function emailCompose(o = {}) {
     document.execCommand(k);
   }));
   body.addEventListener('paste', (e) => { const h = e.clipboardData.getData('text/html'); if (h) { e.preventDefault(); document.execCommand('insertHTML', false, cleanHtml(h)); } });
-  $('ec-attach').onclick = async () => { const f = await window.api.emailPickFiles(); c.files.push(...f); paintFiles(); };
+  // Attach: from the saved files library, or any file on this computer.
+  $('ec-attach').onclick = async (e) => {
+    if (!savedFiles.length) { const f = await window.api.emailPickFiles(); c.files.push(...f); paintFiles(); return; }
+    const P = $('popover'), r = e.currentTarget.getBoundingClientRect();
+    P.innerHTML = `<div class="menu attach-menu"><div class="menu-title">Saved Files</div>${savedFiles.map((f) => `<button data-s="${esc(f.id)}" ${c.saved.includes(f.id) ? 'disabled' : ''}>${esc(f.name)}<em>${esc(fmtSize(f.size))}</em></button>`).join('')}<div class="menu-sep"></div><button data-pc="1">From This Computer…</button></div>`;
+    P.style.left = `${r.left}px`; P.style.top = `${Math.max(8, r.top - 8 - Math.min(320, 44 + savedFiles.length * 36 + 50))}px`; P.style.width = '280px'; P.classList.remove('hidden');
+    P.querySelectorAll('[data-s]').forEach((b) => (b.onclick = () => { c.saved.push(b.dataset.s); hidePopover(); P.style.width = ''; paintFiles(); }));
+    P.querySelector('[data-pc]').onclick = async () => { hidePopover(); P.style.width = ''; const f = await window.api.emailPickFiles(); c.files.push(...f); paintFiles(); };
+  };
   const collect = () => {
     const to = $('ec-to').value.trim(), cc = ($('ec-cc') || {}).value || '', subject = $('ec-subject').value.trim();
     const html = cleanHtml(body.innerHTML.replace(/<div data-sig="1">/, '<div>'));
@@ -206,7 +217,7 @@ async function emailCompose(o = {}) {
     if (!subject) { toast('Add a subject.'); return null; }
     if (/\{first\}|Hello\s+_,/i.test(html)) { toast('The greeting still has a blank name.'); return null; }
     const who = c.who.email && c.who.email.toLowerCase() === to.toLowerCase() ? c.who : onlyPatient(to) || {};
-    return { to, cc: cc.trim(), subject, html: `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222">${html}</div>`, files: c.files, packet: c.packet, threadId: c.threadId, inReplyTo: c.inReplyTo, refs: c.refs,
+    return { to, cc: cc.trim(), subject, html: `<style>@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap');h1,h2,h3{font-family:'DM Serif Display',Georgia,serif;font-weight:400}</style><div style="font-family:'Plus Jakarta Sans',Helvetica,Arial,sans-serif;font-size:15px;line-height:1.55;color:#102b2a">${html}</div>`, files: c.files, savedFiles: c.saved, packet: c.packet, threadId: c.threadId, inReplyTo: c.inReplyTo, refs: c.refs,
       patientKey: who.key || '', name: who.first ? `${who.first || ''} ${who.last || ''}`.trim() : '', phone: who.phone || '', templateId: c.templateId, templateName: c.templateName };
   };
   $('ec-preview').onclick = () => {
@@ -265,12 +276,36 @@ function bindConnect() {
   if (k) k.onclick = async () => { const r = await window.api.emailLoadKey(); if (r.error) toast(r.error); else if (r.ok) toast('Key file loaded'); view === 'emails' ? loadEmails() : loadSettings(); };
   if (c) c.onclick = async () => { c.disabled = true; c.textContent = 'Waiting for Google…'; const r = await window.api.emailConnect(); c.disabled = false; c.textContent = 'Sign in with Google'; if (r.ok) { toast(`Gmail connected${r.account ? ' · ' + r.account : ''}`); paintConnections(); } else toast(r.error === 'timeout' ? 'Google sign-in timed out.' : `Sign-in didn't finish${r.error ? ' (' + r.error + ')' : ''}.`); view === 'emails' ? loadEmails() : loadSettings(); };
 }
+// Categories, worked out here on the computer from the sender and subject (nothing is sent anywhere).
+// Appointments come first so booking emails (ZocDoc and the like) are never missed.
+const EM_CATS = [
+  ['appt', 'Appointments', (m, t) => /zocdoc|zoc doc|psychologytoday|headway|alma\.|sondermind|grow ?therapy|appointment|\bappt\b|schedul|book(ed|ing)?\b|reschedul|cancel(l?ed|lation)?|availability|new patient|be seen|consult(ation)?|request(ing)? (an? )?(visit|appointment)|first visit|telehealth visit/i.test(t)],
+  ['delivery', 'Delivery Problems', (m, t) => /mailer-daemon|postmaster/i.test(m.from.email || '') || /delivery (status|incomplete|failure|has failed)|undeliverable|returned mail|couldn.t be delivered/i.test(t)],
+  ['patients', 'Patients', (m) => !!onlyPatient(m.from.email)],
+  ['pharmacy', 'Pharmacy & Rx', (m, t) => /pharmacy|cvs|walgreens|heb\b|kroger|surescripts|covermymeds|prior auth|refill|prescription|\brx\b/i.test(t)],
+  ['billing', 'Insurance & Billing', (m, t) => /insurance|claim|\beob\b|billing|invoice|payment|statement|aetna|cigna|bcbs|blue ?cross|united ?health|uhc|humana|medicaid|medicare|availity|tricare|copay/i.test(t)],
+  ['records', 'Records & Labs', (m, t) => /records?\b|\blabs?\b|results?\b|referral|labcorp|quest diag/i.test(t)],
+  ['updates', 'Updates', (m, t) => /no-?reply|newsletter|unsubscribe|digest|webinar|weekly|monthly|summary|announcement/i.test(t)],
+];
+function emCatOf(m) {
+  if (m._cat) return m._cat;
+  const t = `${m.from.name || ''} ${m.from.email || ''} ${decodeEnt(m.subject || '')} ${decodeEnt(m.snippet || '')}`;
+  const hit = EM_CATS.find(([, , f]) => f(m, t));
+  return (m._cat = hit ? hit[0] : 'other');
+}
+let emCat = recall('em-cat', 'all');
 function renderEmailList() {
   // Needs you: Inbox threads where the last word is from someone else (archive = Done, like Gmail).
   const rows = emFolder === 'needs' ? emData.items.filter((m) => !ours(m.from.email)) : emData.items;
   filterCounts('em-filter', { needs: emFolder === 'needs' || emFolder === 'all' ? emData.items.filter((m) => !ours(m.from.email)).length : 0, unread: (lastSync && lastSync.gmail && lastSync.gmail.unread) || 0 });
   // Newest first, grouped by day like Faxes; initials, the person's name (a patient's name when we know the address).
-  const sorted = rows.slice().sort((x, y) => new Date(y.at) - new Date(x.at));
+  // Category chips with counts (all visible, wrapping); "All" first, then Appointments.
+  const counts = {}; rows.forEach((m) => { const c = emCatOf(m); counts[c] = (counts[c] || 0) + 1; });
+  const chips = [['all', 'All', rows.length], ...EM_CATS.map(([k, l]) => [k, l, counts[k] || 0]), ['other', 'Other', counts.other || 0]].filter(([k, , n]) => k === 'all' || k === 'appt' || n);
+  if (!chips.some(([k]) => k === emCat)) emCat = 'all';
+  $('em-cats').innerHTML = chips.map(([k, l, n]) => `<button class="cat-chip c-${k} ${emCat === k ? 'on' : ''}" data-c="${k}">${esc(l)}<em>${n}</em></button>`).join('');
+  $('em-cats').querySelectorAll('.cat-chip').forEach((b) => (b.onclick = () => { emCat = b.dataset.c; remember('em-cat', emCat); renderEmailList(); }));
+  const sorted = rows.filter((m) => emCat === 'all' || emCatOf(m) === emCat).sort((x, y) => new Date(y.at) - new Date(x.at));
   const dayOf = (iso) => { const d = new Date(iso), t = new Date(), y = new Date(); y.setDate(t.getDate() - 1); return d.toDateString() === t.toDateString() ? 'Today' : d.toDateString() === y.toDateString() ? 'Yesterday' : Date.now() - d < 6 * 864e5 ? d.toLocaleDateString([], { weekday: 'long' }) : d.toLocaleDateString([], { month: 'short', day: 'numeric' }); };
   const nameFor = (a) => { const p = onlyPatient(a.email); return p ? `${p.first || ''} ${p.last || ''}`.trim() : a.name || a.email; };
   let lastDay = '';
@@ -282,12 +317,21 @@ function renderEmailList() {
       <span class="em-subj">${esc(decodeEnt(m.subject))}</span><span class="tr-snip">${esc(decodeEnt(m.snippet))}</span></span></button>`;
   }).join('')
     : emData.missing ? '' : `<div class="all-clear small-clear">${I.check}<b>${{ needs: emData.next ? 'Nothing waiting in these emails' : 'Nothing waiting for you', sent: 'Nothing sent', spam: 'No spam' }[emFolder] || 'No emails'}</b></div>`;
-  if (emData.next) $('em-list').insertAdjacentHTML('beforeend', '<button class="btn small em-more" id="em-loadmore">Load older emails</button>');
+  if (emData.next) $('em-list').insertAdjacentHTML('beforeend', '<button class="btn small em-more" id="em-loadmore">Load Older Emails</button>');
   // Never a quietly shorter list: say when some emails didn't load.
-  if (emData.missing) $('em-list').insertAdjacentHTML('afterbegin', `<div class="stale-line">${I.bell}<span>${emData.missing} email${emData.missing > 1 ? 's' : ''} didn't load from Gmail. <button class="linkbtn" id="em-reload">Try again</button></span></div>`);
+  if (emData.missing) $('em-list').insertAdjacentHTML('afterbegin', `<div class="stale-line">${I.bell}<span>${emData.missing} email${emData.missing > 1 ? 's' : ''} didn't load from Gmail. <button class="linkbtn" id="em-reload">Try Again</button></span></div>`);
   if ($('em-reload')) $('em-reload').onclick = () => loadEmails();
   $('em-list').querySelectorAll('.em-row').forEach((b) => (b.onclick = () => openEmail(b.dataset.id)));
   if ($('em-loadmore')) $('em-loadmore').onclick = () => loadEmails(true);
+}
+// Email text that's too light to read on white (pale teal/green/grey) is darkened, keeping its hue; bright blue
+// links become teal. The email's layout is untouched.
+function readable(html) {
+  const lum = (h) => { h = h.replace('#', ''); if (h.length === 3) h = h.split('').map((x) => x + x).join(''); const [r, g, b] = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+  const darken = (h) => { h = h.replace('#', ''); if (h.length === 3) h = h.split('').map((x) => x + x).join(''); const mix = (i) => Math.round(parseInt(h.slice(i, i + 2), 16) * 0.45 + [16, 43, 42][i / 2] * 0.55).toString(16).padStart(2, '0'); return '#' + mix(0) + mix(2) + mix(4); };
+  return String(html || '')
+    .replace(/(color\s*:\s*)(#[0-9a-f]{6}|#[0-9a-f]{3})\b/gi, (m, p, c) => (lum(c) > 0.3 && lum(c) < 0.9 ? p + darken(c) : m))
+    .replace(/(color\s*:\s*)(#1155cc|#0000ee|#0563c1|blue)\b/gi, '$1#005758');
 }
 let emResize = null;
 async function openEmail(id) {
@@ -307,7 +351,7 @@ async function openEmail(id) {
   const canDone = row && row.inbox !== false && emFolder !== 'sent' && emFolder !== 'spam';
   $('em-pane').innerHTML = `<div class="em-read-head">
       <h2>${esc(decodeEnt(msgs[0].subject) || '(no subject)')}</h2>
-      <div class="row-gap">${emFolder === 'spam' ? '<button class="btn small" id="em-notspam">Not spam</button>' : `${canDone ? `<button class="icon-btn em-done" id="em-archive" title="Done (archives it in Gmail)">${I.check}</button>` : ''}<div class="more-wrap"><button class="icon-btn row-more" id="em-more" title="More">⋯</button><div class="more-menu hidden" id="em-menu"><button id="em-unread">Mark unread</button><button id="em-spam">Report spam</button></div></div>`}<button class="btn primary small" id="em-reply">${I.msg}Reply</button></div></div>
+      <div class="row-gap">${emFolder === 'spam' ? '<button class="btn small" id="em-notspam">Not Spam</button>' : `${canDone ? `<button class="icon-btn em-done" id="em-archive" title="Done (archives it in Gmail)">${I.check}</button>` : ''}<div class="more-wrap"><button class="icon-btn row-more" id="em-more" title="More">⋯</button><div class="more-menu hidden" id="em-menu"><button id="em-unread">Mark Unread</button><button id="em-spam">Report Spam</button></div></div>`}<button class="btn primary small" id="em-reply">${I.msg}Reply</button></div></div>
     <div class="em-thread">${msgs.map((m, i) => `<article class="em-msg ${i < msgs.length - 1 ? 'old' : ''}" data-i="${i}">
       <button type="button" class="em-mh" aria-expanded="${i < msgs.length - 1 ? 'false' : 'true'}"><span class="em-av">${esc(initialsOf(m.from.name || m.from.email))}</span><span class="em-from"><b>${esc(m.from.name || m.from.email)}</b><span class="muted small">${esc(m.from.email)}</span></span><span class="t muted small" title="${emReadAt[rk] && i === msgs.length - 1 ? 'Read ' + esc(fmtWhen(new Date(emReadAt[rk]))) : ''}">${esc(fmtWhen(m.at))}</span></button>
       <iframe sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" class="em-frame" title="Email"></iframe>
@@ -315,7 +359,7 @@ async function openEmail(id) {
   $('em-pane').querySelectorAll('.em-msg').forEach((el) => {
     const m = msgs[+el.dataset.i], fr = el.querySelector('iframe');
     const html = m.html ? cleanHtml(m.html) : `<pre style="white-space:pre-wrap;font:14px Arial">${esc(m.text)}</pre>`;
-    fr.srcdoc = `<!doctype html><meta charset="utf-8"><base target="_blank"><style>html,body{margin:0;overflow:hidden}body{padding:4px 2px 8px;font:14.5px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#1d2b2a}img{max-width:100%;height:auto}table{max-width:100%}</style><body>${html}</body>`;
+    fr.srcdoc = `<!doctype html><meta charset="utf-8"><base target="_blank"><style>html,body{margin:0;overflow:hidden}body{padding:4px 2px 8px;max-width:680px;font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#102b2a}a{color:#005758}img{max-width:100%;height:auto}table{max-width:100%}</style><body>${readable(html)}</body>`;
     // The message takes its natural height (no box with its own scrollbar); the pane scrolls as a whole.
     const fit = () => { try { fr.style.height = (fr.contentDocument.documentElement.scrollHeight + 4) + 'px'; } catch { fr.style.height = '480px'; } };
     fr.onload = () => { fit(); setTimeout(fit, 300); setTimeout(fit, 1200); };

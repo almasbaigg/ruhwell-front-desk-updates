@@ -8,12 +8,12 @@ async function loadSettings() {
   $('s-rxnt-state').textContent = accounts.rxnt.connected ? 'Connected' : 'Not connected';
   window.api.syncStatus().then((st) => { if (accounts.rxnt.connected && st.rxntUser) $('s-rxnt-state').textContent = `Signed in as ${st.rxntUser}`; });
   $('s-ringrx-state').textContent = accounts.ringrx.connected ? `Signed in as ${accounts.ringrx.username || 'you'}` : 'Not connected';
-  $('s-ringrx-out').textContent = accounts.ringrx.connected ? 'Sign out' : 'Sign in';
+  $('s-ringrx-out').textContent = accounts.ringrx.connected ? 'Sign Out' : 'Sign In';
   $('s-from').textContent = accounts.ringrx.connected ? 'Finding sending number…' : '';
   window.api.ringrxFrom().then((n) => { sendFrom = n || ''; $('s-from').textContent = accounts.ringrx.connected ? (n ? `Texts send from ${fmtPhone(n)}` : 'Sending number not available from RingRx') : ''; });
   const G = accounts.gmail || {};
   $('s-gmail-state').textContent = G.connected ? `Signed in${G.account ? ' as ' + G.account : ''}${G.unread != null ? ` · ${G.unread} unread` : ''}` : 'Not connected';
-  $('s-gmail-connect').textContent = G.connected ? 'Reconnect' : 'Sign in';
+  $('s-gmail-connect').textContent = G.connected ? 'Reconnect' : 'Sign In';
   $('s-gmail-out').classList.toggle('hidden', !G.connected);
   // Alerts: the cell that gets alert texts
   const cell = (draft.alertCells || {})[settings.currentProfile] || '';
@@ -54,19 +54,19 @@ async function paintHealth() {
     // Same words as everywhere else: the one status the app keeps per account.
     pill.textContent = { ok: 'Working', retrying: 'Retrying', checking: 'Checking…', needs: 'Needs you', unconfirmed: "Can't confirm", offline: 'Offline', off: 'Off' }[h.state] || HEALTH_TEXT[h.level] || '';
     pill.title = h.why || '';
-    if (btn && $(btn)) { $(btn).classList.toggle('hidden', h.level === 'green' || h.level === 'grey' || h.level === 'off'); $(btn).textContent = h.level === 'red' ? ({ code: 'Enter code', step: 'Finish signing in', password: 'Sign in again' }[h.action] || 'Sign in') : 'Reconnect'; }
+    if (btn && $(btn)) { $(btn).classList.toggle('hidden', h.level === 'green' || h.level === 'grey' || h.level === 'off'); $(btn).textContent = h.level === 'red' ? ({ code: 'Enter Code', step: 'Finish Signing In', password: 'Sign In Again' }[h.action] || 'Sign In') : 'Reconnect'; }
   };
   window.api.rxntHasLogin().then((has) => {
     const el = $('s-rxnt-saved'); if (!el) return;
-    el.innerHTML = has === 'ok' ? `Sign-in saved, so the app signs itself back in. <button class="link-btn" id="s-rxnt-forget">Forget it</button>`
-      : has === 'bad' ? `<span class="warn-text">The saved sign-in stopped working (password changed?). Reconnect to save the new one.</span> <button class="link-btn" id="s-rxnt-forget">Forget it</button>`
+    el.innerHTML = has === 'ok' ? `Sign-in saved, so the app signs itself back in. <button class="link-btn" id="s-rxnt-forget">Forget It</button>`
+      : has === 'bad' ? `<span class="warn-text">The saved sign-in stopped working (password changed?). Reconnect to save the new one.</span> <button class="link-btn" id="s-rxnt-forget">Forget It</button>`
       : 'Sign in once and the app remembers it.';
     if (has) $('s-rxnt-forget').onclick = async () => { const ok = await window.api.rxntForgetLogin(); toast(ok ? 'Saved RxNT sign-in removed' : "Couldn't remove the saved sign-in. Try again."); paintHealth(); };
   });
   window.api.faxLoginState().then((has) => {
     const el = $('s-dox-saved'); if (!el) return;
-    el.innerHTML = has === 'ok' ? `Sign-in saved, so the app signs itself back in. <button class="link-btn" id="s-dox-forget">Forget it</button>`
-      : has === 'bad' ? `<span class="warn-text">The saved sign-in stopped working. Sign in again to save the new one.</span> <button class="link-btn" id="s-dox-forget">Forget it</button>`
+    el.innerHTML = has === 'ok' ? `Sign-in saved, so the app signs itself back in. <button class="link-btn" id="s-dox-forget">Forget It</button>`
+      : has === 'bad' ? `<span class="warn-text">The saved sign-in stopped working. Sign in again to save the new one.</span> <button class="link-btn" id="s-dox-forget">Forget It</button>`
       : 'Sign in once and the app remembers it.';
     if (has) $('s-dox-forget').onclick = async () => { const ok = await window.api.faxForgetLogin(); toast(ok ? 'Saved Doximity sign-in removed' : "Couldn't remove it. Try again."); paintHealth(); };
   });
@@ -75,7 +75,7 @@ async function paintHealth() {
   set('gmail', A.gmail, 's-gmail-connect');
   set('doximity', A.doximity, 's-dox-connect');
   const doxSetUp = !(A.doximity && A.doximity.why === 'not set up');
-  if (!doxSetUp) { $('s-dox-connect').classList.remove('hidden'); $('s-dox-connect').textContent = 'Sign in'; $('s-doximity-health').textContent = 'Not set up'; }
+  if (!doxSetUp) { $('s-dox-connect').classList.remove('hidden'); $('s-dox-connect').textContent = 'Sign In'; $('s-doximity-health').textContent = 'Not set up'; }
   $('s-dox-out').classList.toggle('hidden', !doxSetUp);
   $('s-dox-on').closest('.switch').classList.toggle('hidden', !doxSetUp);
   document.querySelector('[data-check="faxes"]').classList.toggle('hidden', !doxSetUp);
@@ -100,7 +100,7 @@ function renderTemplates() {
   $('t-list').innerHTML = draft.templates.map((t, i) => {
     const open = tplOpen === t.id, isDef = draft.defaultTemplate === t.id;
     return `<div class="tpl ${open ? 'open' : ''}" data-i="${i}">
-      <button class="tpl-row" type="button"><b>${esc(t.name || 'Untitled')}</b>${isDef ? '<span class="pill">★ Default</span>' : ''}<span class="tpl-aud">${esc(AUD_LABEL[audienceOf(t)] || '')}</span><span class="tpl-prev">${esc(String(t.text || '').split('\n')[0].slice(0, 90))}</span><span class="chev"></span></button>
+      <button class="tpl-row" type="button"><b>${esc(t.name || 'Untitled')}</b>${isDef ? '<span class="tpl-star" title="Default for checked-in patients">★</span>' : ''}<i class="info" tabindex="0" data-tip="${esc(`${AUD_LABEL[audienceOf(t)] || ''} · ${String(t.text || '').split('\n')[0].slice(0, 120)}`)}">i</i><span class="tpl-aud hidden"></span><span class="tpl-prev hidden"></span><span class="chev"></span></button>
       ${open ? `<div class="tpl-edit">
         <div class="tpl-top"><input type="text" class="t-name" value="${esc(t.name)}" placeholder="Template name">
           <select class="t-aud" title="Where this template is offered">${AUD.map(([k, l]) => `<option value="${k}" ${audienceOf(t) === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
@@ -194,7 +194,7 @@ $('b-auto-restore').onclick = async () => {
   const list = await window.api.backupList();
   openModal(`<h2>Restore an automatic backup</h2><p class="muted small">Adds back patients, history and settings from that day. Nothing you have now is deleted.</p>
     ${list.length ? `<div class="lines">${list.map((b) => `<div class="line"><strong>${esc(new Date(b.date + 'T12:00').toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }))}</strong><button class="btn" data-f="${esc(b.file)}">Restore</button></div>`).join('')}</div>` : '<div class="empty-state" style="padding:20px">No automatic backups yet. The first one is made a minute after the app opens.</div>'}
-    <div class="actions"><button class="btn" id="ab-now">Back up now</button><span style="flex:1"></span><button class="btn" id="ab-close">Close</button></div>`);
+    <div class="actions"><button class="btn" id="ab-now">Back Up Now</button><span style="flex:1"></span><button class="btn" id="ab-close">Close</button></div>`);
   $('ab-close').onclick = closeModal;
   $('ab-now').onclick = async () => { const r = await window.api.backupNow(); toast(r.ok ? 'Backup saved' : 'Backup failed'); closeModal(); loadSettings(); };
   $('modal').querySelectorAll('button[data-f]').forEach((b) => (b.onclick = async () => {
@@ -218,10 +218,11 @@ async function paintSyncTimes() {
   const st = await window.api.syncStatus(), A = st.accounts || {};
   const line = (h, extra) => !h ? '' : h.level === 'off' ? 'Off' : `${h.at ? 'Last read ' + minsAgo(h.at) : 'Not read yet'}${h.why && h.level !== 'green' ? ' · ' + h.why : ''}${extra || ''}`;
   const fx = st.faxes || {};
-  $('sx-rxnt').textContent = line(A.rxnt);
-  $('sx-comms').textContent = line(A.ringrx);
-  $('sx-gmail').textContent = line(A.gmail);
-  $('sx-dox').textContent = line(A.doximity, fx.lastNewAt ? ` · last new fax ${minsAgo(fx.lastNewAt)}` : '');
+  const ev = st.every || {}, mins = (n) => n ? (n >= 60 ? `${Math.round(n / 60)} h` : `${n} min`) : '';
+  $('sx-rxnt').textContent = line(A.rxnt, ev.schedule ? ` · checks every ${mins(ev.schedule)}` : '');
+  $('sx-comms').textContent = line(A.ringrx, ev.comms ? ` · checks every ${mins(ev.comms)}` : '');
+  $('sx-gmail').textContent = line(A.gmail, ev.gmail ? ` · checks every ${mins(ev.gmail)}` : '');
+  $('sx-dox').textContent = line(A.doximity, `${ev.faxes ? ` · checks every ${mins(ev.faxes)}` : ''}${fx.lastNewAt ? ` · last new fax ${minsAgo(fx.lastNewAt)}` : ''}`);
   $('sx-pat').textContent = (st.patients || {}).running ? 'Syncing…' : `${((st.patients || {}).total || 0).toLocaleString()} patients · ${(st.patients || {}).at ? 'updated ' + minsAgo(st.patients.at) : 'not yet'}`;
 }
 $('sy-now').onclick = async () => { $('sy-now').disabled = true; await syncEverything(); $('sy-now').disabled = false; paintSyncTimes(); paintHealth(); };
@@ -232,7 +233,7 @@ $('b-contacts').onclick = async () => { const r = await window.api.backupContact
 $('s-activity').onclick = async () => {
   const draw = async () => {
     const src = $('al-src').value, rows = await window.api.activityList({ source: src || undefined });
-    const LBL = { sync: 'Checked', 'sign-in': 'Signed in', 'auto-sign-in': 'Signed back in', 'fax-received': 'Fax received', 'fax-filed': 'Fax filed to chart', 'fax-marked': 'Fax marked', 'marked-spam': 'Marked spam', 'not-spam': 'Not spam' };
+    const LBL = { sync: 'Checked', 'sign-in': 'Signed in', 'auto-sign-in': 'Signed back in', 'fax-received': 'Fax received', 'fax-filed': 'Fax filed to chart', 'fax-marked': 'Fax marked', 'marked-spam': 'Marked spam', 'not-spam': 'Not Spam' };
     const det = (r) => Object.entries(r).filter(([k]) => !['at', 'source', 'type', 'ok'].includes(k)).map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`).join(' · ');
     $('al-list').innerHTML = rows.slice(0, 400).map((r) => `<div class="al-row ${r.ok ? '' : 'bad'}"><time>${esc(new Date(r.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</time><b>${esc(r.source)}</b><span>${esc(LBL[r.type] || r.type)}${r.ok ? '' : ' · failed'}</span><em>${esc(det(r))}</em></div>`).join('') || '<p class="muted small">Nothing yet.</p>';
   };
@@ -246,7 +247,7 @@ $('s-activity').onclick = async () => {
 $('s-spam').onclick = async () => {
   const draw = async () => {
     const list = await window.api.spamList();
-    $('sp-list').innerHTML = list.map((x) => `<div class="line"><div><strong>${esc(fmtPhone(x.phone))}</strong><div class="muted small">${x.who && x.who.name ? esc(x.who.name) + ' · ' : ''}marked ${esc(new Date(x.at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }))}</div></div><button class="btn" data-p="${esc(x.phone)}">Not spam</button></div>`).join('') || '<p class="muted small">No spam numbers.</p>';
+    $('sp-list').innerHTML = list.map((x) => `<div class="line"><div><strong>${esc(fmtPhone(x.phone))}</strong><div class="muted small">${x.who && x.who.name ? esc(x.who.name) + ' · ' : ''}marked ${esc(new Date(x.at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }))}</div></div><button class="btn" data-p="${esc(x.phone)}">Not Spam</button></div>`).join('') || '<p class="muted small">No spam numbers.</p>';
     $('sp-list').querySelectorAll('button[data-p]').forEach((b) => (b.onclick = async () => { await window.api.markSpam(b.dataset.p, false); toast('Removed from spam'); draw(); }));
   };
   openModal(`<h2>Spam numbers</h2><p class="muted small">Calls, voicemails and texts from these go straight to Spam, with no alerts.</p><div class="lines" id="sp-list" style="max-height:340px;overflow:auto"></div><div class="actions"><button class="btn" id="sp-close">Close</button></div>`);

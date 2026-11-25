@@ -30,7 +30,7 @@ const kindCls = (c) => c.voicemail ? 'k-vm' : c.missed ? 'k-missed' : c.inbound 
 function callStatus(c) {
   if (c.spam) return '<span class="rstat">Spam</span>';
   if (c.voicemail && !c.heardAt) return '<span class="rstat new">New voicemail</span>';
-  if (c.inbound && (c.missed || c.voicemail)) return c.answer ? `<span class="rstat ok">${esc(c.answer.how.charAt(0).toUpperCase() + c.answer.how.slice(1) + " " + fmtTime(new Date(c.answer.at)))}</span>` : '<span class="rstat wait">Not called back</span>';
+  if (c.inbound && (c.missed || c.voicemail)) return c.answer ? `<span class="rstat ok">${esc(c.answer.how.charAt(0).toUpperCase() + c.answer.how.slice(1) + " " + fmtTime(new Date(c.answer.at)))}</span>` : '<span class="rstat wait">Not Called Back</span>';
   return '';
 }
 // Back-and-forth with the same number within an hour (missed → voicemail → you call back) is one card.
@@ -50,7 +50,7 @@ function callRow(c, due, group) {
   const h = hoursSince(c.at), urg = due ? ` u-${h >= 4 ? 'red' : h >= 1 ? 'amber' : 'green'}` : '';
   const trail = calls.length > 1 ? `<div class="c-trail">${calls.slice().reverse().map((x) => `<span class="${kindCls(x)}">${callIcon(x)}<b>${esc(fmtTime(new Date(x.at)))}</b> ${esc(callDetail(x))}</span>`).join('')}</div>` : '';
   return `<div class="call-row ${due ? 'due' : ''}${urg}" data-id="${esc(c.id)}">
-    <div class="c-time"><b>${esc(fmtTime(new Date((calls.length > 1 ? first : c).at)))}</b><span>${esc(due ? 'waiting ' + waitLabel(c.at) : calls.length > 1 ? calls.length + ' calls' : dayLabel(c.at))}</span></div>
+    <div class="c-time"><b>${esc(fmtTime(new Date((calls.length > 1 ? first : c).at)))}</b><span>${esc(due ? waitLabel(c.at) : calls.length > 1 ? calls.length + ' calls' : dayLabel(c.at))}</span></div>
     <div class="who">
       <div class="c-name"><b>${esc(whoName(c.who, c.phone))}</b>${c.voicemail && !c.heardAt && !c.spam ? '<i class="dot-new"></i>' : ''}${whoTag(c.who)}${callStatus(c)}</div>
       <div class="c-sub">${whoName(c.who, c.phone) === fmtPhone(c.phone) ? '' : `<span class="c-phone">${esc(fmtPhone(c.phone))}</span>`}${calls.length > 1 ? '' : `<span class="c-kind ${kindCls(c)}">${callIcon(c)}${esc(callDetail(c))}</span>`}${c.voicemail && c.heardAt ? (c.heardAt === 'ringrx' ? '<span class="stamp">Listened in RingRx</span>' : stamp('Listened', c.heardAt)) : ''}${c.doneAt ? stamp('Done', c.doneAt) : ''}</div>
@@ -58,7 +58,7 @@ function callRow(c, due, group) {
       ${c.transcription ? `<em class="vm">“${esc(c.transcription)}”</em>` : ''}
       ${c.voicemail ? '<div class="vm-player"></div>' : ''}
     </div>
-    <div class="acts">${c.inbound && c.who.kind !== 'patient' ? (c.spam ? '<button class="btn act-block">Block in RingRx</button><button class="btn act-notspam">Not spam</button>' : `<button class="icon-btn ghost act-spam" title="Mark as spam">${I.x}</button>`) : ''}${unknown ? `<button class="icon-btn ghost act-who" title="Who is this?">${I.user}</button>` : ''}${due ? `<button class="icon-btn ghost act-done" title="Called back / done">${I.check}</button>` : ''}${c.voicemail && c.vmId ? `<button class="btn act-play" title="Play voicemail"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>Play</button>` : ''}${!(c.who.dnt) && !c.spam ? `<button class="btn outline-teal act-text">${I.msg}Text</button>` : ''}</div>
+    <div class="acts">${c.inbound && c.who.kind !== 'patient' ? (c.spam ? '<button class="btn act-block">Block in RingRx</button><button class="btn act-notspam">Not Spam</button>' : `<button class="icon-btn ghost act-spam" title="Spam / not relevant">${I.x}</button>`) : ''}${unknown ? `<button class="icon-btn ghost act-who" title="Save as a patient contact">${I.user}</button>` : ''}${due ? `<button class="icon-btn ghost act-done" title="Done (called back)">${I.check}</button>` : ''}${c.voicemail && c.vmId ? `<button class="btn act-play" title="Play voicemail"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>Play</button>` : ''}${!(c.who.dnt) && !c.spam ? `<button class="btn outline-teal act-text">${I.msg}Text</button>` : ''}</div>
   </div>`;
 }
 function renderCalls() {
@@ -90,7 +90,7 @@ function bindCallRows() {
     const w = el.querySelector('.act-who'); if (w) w.onclick = () => whoIsThis(c.phone, loadCalls);
     const sp = el.querySelector('.act-spam'); if (sp) sp.onclick = () => markSpamFlow(c, loadCalls);
     const bl = el.querySelector('.act-block'); if (bl) bl.onclick = () => { window.api.openRingrx('block'); toast('Opened RingRx. Add the number to your block list there.'); };
-    const ns = el.querySelector('.act-notspam'); if (ns) ns.onclick = async () => { await window.api.markSpam(c.phone, false); toast('Not spam'); loadCalls(); };
+    const ns = el.querySelector('.act-notspam'); if (ns) ns.onclick = async () => { await window.api.markSpam(c.phone, false); toast('Not Spam'); loadCalls(); };
     const pl = el.querySelector('.act-play'); if (pl) pl.onclick = () => playVoicemail(c, el.querySelector('.vm-player'), pl);
     const tr = el.querySelector('em.vm'); if (tr) tr.onclick = () => { tr.classList.toggle('full'); if (c.voicemail && !c.heardAt) { window.api.markHeard(c.id, true, c.vmId); c.heardAt = Date.now(); } };
     const d = el.querySelector('.act-done'); if (d) d.onclick = async () => { await window.api.markDone('c', c.phone); bumpDone(); toast('Marked done'); loadCalls(); };

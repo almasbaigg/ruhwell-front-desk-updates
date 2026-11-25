@@ -1,3 +1,4 @@
+if (/Mac/i.test(navigator.platform)) { const m = () => document.body.classList.add('mac'); if (document.body) m(); else document.addEventListener('DOMContentLoaded', m); }
 /* Ruhwell Front Desk — shared helpers, state, templates, patients index and statuses.
    Loaded first; every other screen file builds on these. */
 const $ = (id) => document.getElementById(id);
@@ -5,7 +6,12 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const digits = (s) => String(s || '').replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '');
 const fmtPhone = (s) => { const d = digits(s); return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : (s || ''); };
 const initials = (p) => (((p.first || p.last || '?')[0]) + (((p.first && p.last) ? p.last[0] : '') || '')).toUpperCase();
-const fullName = (p) => `${p.first || ''} ${p.last || ''}`.trim() || fmtPhone(p.phone) || 'Unknown';
+// RxNT sometimes stores names in ALL CAPS: show them in normal case (McDonald, O'Brien, Smith-Jones kept right).
+function niceCase(s) {
+  s = String(s || '').trim(); if (!s || s !== s.toUpperCase() || !/[A-Z]{2}/.test(s)) return s;
+  return s.toLowerCase().replace(/(^|[\s\-'’])([a-z])/g, (m, a, b) => a + b.toUpperCase()).replace(/\bMc([a-z])/g, (m, c) => 'Mc' + c.toUpperCase());
+}
+const fullName = (p) => `${niceCase(p.first)} ${niceCase(p.last)}`.trim() || fmtPhone(p.phone) || 'Unknown';
 const fmtTime = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
 const shortWhen = (iso) => { const d = new Date(iso); return d.toDateString() === new Date().toDateString() ? fmtTime(d) : d.toLocaleDateString([], { month: 'short', day: 'numeric' }); };
 const fmtDateShort = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }); };
@@ -55,7 +61,7 @@ let currentDate = ymd(), weekStart = null, weekData = {}, activePatient = null, 
 
 // Texts, Emails, Calls and Faxes share one set of filters: To do · All · Sent (Done for faxes) · Spam.
 // Unread shows in the list itself (dot + bold), not as a separate filter.
-const FILTER_LABEL = { needs: 'To do' };
+const FILTER_LABEL = { needs: 'To Do' };
 function filterCounts(id, counts) { for (const [k, n] of Object.entries(counts)) { const b = document.querySelector(`#${id} [data-f="${k}"]`); if (b) b.innerHTML = `${FILTER_LABEL[k] || b.textContent.replace(/\d+$/, '')}${n ? `<b>${n}</b>` : ''}`; } }
 const fixFilter = (v, allowed) => (allowed.includes(v) ? v : v === 'inbox' || v === 'unanswered' || v === 'in' ? 'all' : v === 'out' ? 'sent' : 'needs');
 // Read and Done carry a time everywhere ("Read 9:42 PM", "Done 9:50 PM").
@@ -63,7 +69,27 @@ const stamp = (label, at) => (at ? `<span class="stamp">${esc(label)} ${esc(shor
 
 document.addEventListener('click', () => document.querySelectorAll('.more-menu').forEach((m) => m.classList.add('hidden')));
 // Toasts. With an undo function they get an Undo button and stay a little longer (misclicks happen when rushing).
+// iOS-style action feedback: a small centred card with an animated icon, plus the open list row sliding away.
+// Picked from the toast text so every action gets it; respects Reduce Motion.
+const HUD = {
+  send: { re: /^(Sent|Text sent|Scheduled)/, label: 'Sent', svg: '<path class="plane" d="M21 3 3 10.5l7 2.5 2.5 7L21 3Zm-11 10 5-5"/>' },
+  done: { re: /^(Marked done|Done)\b/, label: 'Done', svg: '<path class="draw" d="M5 12.5l4.5 4.5L19 7.5"/>' },
+  spam: { re: /^(Marked as spam|Moved to Spam)/, label: 'Spam', svg: '<circle cx="12" cy="12" r="8"/><path class="draw" d="M6.5 6.5l11 11"/>' },
+  snooze: { re: /^Snoozed/, label: 'Later', svg: '<circle cx="12" cy="13" r="7.5"/><path class="hand" d="M12 13V9M12 13l3 2"/><path d="M9 3h6"/>' },
+  file: { re: /^Filed to/, label: 'Filed', svg: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path class="draw" d="M8.5 13l2.5 2.5 4.5-4.5"/>' },
+  todo: { re: /^(Moved to Inbox|Back to To Do|Moved back)/, label: 'Back to To Do', svg: '<path class="draw" d="M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3"/>' },
+};
+function hud(kind) {
+  const h = HUD[kind]; if (!h) return;
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const row = document.querySelector('.view:not(.hidden) .list-pane .active, .view:not(.hidden) .list-pane .on.open-item');
+  if (row && kind !== 'send' && !reduce) row.classList.add('fx-' + kind);
+  let el = $('hud'); if (!el) { el = document.createElement('div'); el.id = 'hud'; document.body.appendChild(el); }
+  el.className = 'hud k-' + kind + (reduce ? ' still' : ''); el.innerHTML = `<svg viewBox="0 0 24 24">${h.svg}</svg><b>${h.label}</b>`;
+  void el.offsetWidth; el.classList.add('show'); clearTimeout(hud.t); hud.t = setTimeout(() => el.classList.remove('show'), 950);
+}
 function toast(msg, undo) {
+  try { const k = Object.keys(HUD).find((x) => HUD[x].re.test(String(msg))); if (k) hud(k); } catch {}
   const t = $('toast'); t.innerHTML = ''; t.append(document.createTextNode(msg));
   if (undo) { const b = document.createElement('button'); b.className = 'toast-undo'; b.textContent = 'Undo'; b.onclick = async () => { t.classList.add('hidden'); await undo(); }; t.append(b); }
   t.classList.remove('hidden'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add('hidden'), undo ? 6000 : 3200);
@@ -212,20 +238,20 @@ function linkMoves(items, pool) {
 }
 const movedLabel = (to, from) => { const d = new Date(to), same = new Date(from).toDateString() === d.toDateString(); return `Cancelled · moved to ${same ? fmtTime(d) : d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}`; };
 function category(v) { const s = statusOf(v); return s === 'seen' ? 'seen' : (s === 'noshow' || s === 'cancelled' || s === 'moved') ? 'cancelled' : 'pending'; }
-// What a visit looks like right now: a booking whose time has passed without check-in is "Not checked in".
+// What a visit looks like right now: a booking whose time has passed without check-in is "Not Checked In".
 function stateOf(v) {
   const s = statusOf(v);
   if (s === 'booked' || s === 'confirmed') { const end = new Date(v.end || v.start); if (!isNaN(end) && end < new Date()) return 'notin'; }
   return s;
 }
 const STATE = {
-  seen: { label: 'Checked in', icon: 'okc' }, booked: { label: 'Booked', icon: 'clock' }, confirmed: { label: 'Confirmed', icon: 'chatok' },
-  notin: { label: 'Not checked in', icon: 'clockd' }, cancelled: { label: 'Cancelled', icon: 'xc' }, noshow: { label: 'No-show', icon: 'noshow' }, moved: { label: 'Rescheduled', icon: 'move' },
+  seen: { label: 'Checked In', icon: 'okc' }, booked: { label: 'Booked', icon: 'clock' }, confirmed: { label: 'Confirmed', icon: 'chatok' },
+  notin: { label: 'Not Checked In', icon: 'clockd' }, cancelled: { label: 'Cancelled', icon: 'xc' }, noshow: { label: 'No-show', icon: 'noshow' }, moved: { label: 'Rescheduled', icon: 'move' },
 };
 const stateTag = (st, extra = '') => `<span class="st-tag st-${st}">${I[STATE[st].icon]}${STATE[st].label}${extra}</span>`;
 const typeTag = (t) => !t ? '' : `<span class="type-tag">${/new/i.test(t) ? I.newp : I.follow}${esc(t)}</span>`;
 const blockIcon = (label) => /out of office|vacation|leave/i.test(label) ? I.suitcase : /closed/i.test(label) ? I.lock : I.moon;
-const CAT = { seen: 'Checked in', pending: 'Booked', cancelled: 'Cancelled / no-show' };
+const CAT = { seen: 'Checked In', pending: 'Booked', cancelled: 'Cancelled / no-show' };
 const isReview = (h) => h.templateId === 'review' || /^review/i.test(h.template || '') || (h.direction !== 'in' && settings.reviewLink && String(h.message || '').includes(settings.reviewLink));
 const lastReview = (phone) => { const d = digits(phone); const h = history.find((x) => x.ok && x.direction !== 'in' && isReview(x) && digits(x.phone) === d); return h && Date.now() - new Date(h.at) < 90 * 864e5 ? new Date(h.at) : null; };
 const sentSince = (phone, since) => { const t = parseYmd(since).getTime() - 864e5; return history.filter((h) => h.ok && h.direction !== 'in' && digits(h.phone) === digits(phone) && new Date(h.at).getTime() >= t); };
@@ -277,7 +303,7 @@ function missingFields(tplText, p, msg) {
 }
 function itemFor(p) {
   const warn = [], t = tplById(p.templateId) || {}, aud = audienceOf(t);
-  if (p.cat === 'pending' && aud === 'after') warn.push('Not checked in');
+  if (p.cat === 'pending' && aud === 'after') warn.push('Not Checked In');
   if (p.cat === 'cancelled' && aud !== 'cancelled' && aud !== 'any') warn.push('Cancelled / no-show');
   if (p.templateId && aud === 'after') { const rv = lastReview(p.phone); if (rv) warn.push(`Review already asked ${rv.toLocaleDateString([], { month: 'short', day: 'numeric' })}`); }
   const rec = p.rec || (p.key ? p : null);
@@ -298,3 +324,33 @@ function lastCall(phone) { const d = digits(phone); return callsCache.items.find
 
 // "Scheduled emails" in Emails, "Scheduled texts" in Texts; each opens only its own kind.
 function paintSchedCount(d) { document.querySelectorAll('.sched-count').forEach((b) => { const k = b.dataset.kind, n = (d && d[k]) || 0, w = k === 'email' ? 'Scheduled emails' : 'Scheduled texts'; b.textContent = n ? `${w} · ${n}` : w; }); }
+
+/* ---------- Diagnostics from the screens (no patient details: only names of parts, sizes, counts) ---------- */
+const uiLog = (what, info) => { try { window.api.diagUi(what, info); } catch {} };
+window.addEventListener('error', (e) => uiLog('error', { msg: String(e.message || '').slice(0, 100), at: `${String(e.filename || '').split('/').pop()}:${e.lineno}` }));
+window.addEventListener('unhandledrejection', (e) => uiLog('error', { msg: String((e.reason && e.reason.message) || e.reason || '').slice(0, 100), kind: 'promise' }));
+try {
+  const mq = (q) => window.matchMedia(q).matches;
+  uiLog('display', { w: innerWidth, h: innerHeight, dpr: devicePixelRatio, reduceMotion: mq('(prefers-reduced-motion: reduce)'), dark: mq('(prefers-color-scheme: dark)') });
+} catch {}
+// Layout checker: after a screen settles, note anything spilling out of the window or squeezed so tightly that
+// text breaks letter by letter. Logged by part name (CSS class), never by content.
+const partName = (el) => { const bits = []; for (let n = el, i = 0; n && i < 3 && n !== document.body; n = n.parentElement, i++) { const c = (n.id ? '#' + n.id : '') || (typeof n.className === 'string' ? '.' + n.className.trim().split(/\s+/)[0] : n.tagName.toLowerCase()); bits.unshift(c); } return bits.join('>'); };
+function layoutCheck(screenName) {
+  try {
+    const issues = [];
+    const doc = document.scrollingElement || document.documentElement;
+    if (doc.scrollHeight > innerHeight + 2) issues.push(`page scrolls ${doc.scrollHeight - innerHeight}px`);
+    const root = document.querySelector('.view:not(.hidden)') || document.body;
+    for (const el of root.querySelectorAll('*')) {
+      if (issues.length > 6) break;
+      const r = el.getBoundingClientRect(); if (!r.width || !r.height) continue;
+      if (r.right > innerWidth + 2 && getComputedStyle(el).position !== 'fixed') { issues.push(`off right ${partName(el)}`); continue; }
+      // Letter-by-letter wrapping: a narrow element with text taking 3+ lines.
+      if (el.children.length === 0 && (el.textContent || '').trim().length > 6 && r.width < 70) { const lh = parseFloat(getComputedStyle(el).lineHeight) || 18; if (r.height > lh * 2.6) issues.push(`squeezed ${partName(el)}`); }
+    }
+    if (issues.length) uiLog('layout', { screen: screenName, w: innerWidth, h: innerHeight, issues: issues.join(' | ') });
+  } catch {}
+}
+let layoutT = null;
+window.addEventListener('resize', () => { clearTimeout(layoutT); layoutT = setTimeout(() => layoutCheck((typeof view !== 'undefined' && view) || '?'), 1200); });

@@ -74,4 +74,24 @@ function suggest(text, patients) {
   return out.sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
-module.exports = { read, categorize, suggest };
+// What the fax itself says: the patient's name and DOB (from labels like "Patient:", "Name:", "Regarding:",
+// "DOB:"), and who sent it (the cover page "From:"). Kept with the fax on this computer only.
+function found(text) {
+  const t = String(text || '').replace(/\r/g, '');
+  const clean = (v) => String(v || '').replace(/[^A-Za-z ,.'\-]/g, ' ').replace(/\s+/g, ' ').trim();
+  const nameRe = [/(?:patient(?:\s*name)?|pt(?:\s*name)?|regarding|re)\s*[:\-]\s*([A-Za-z][A-Za-z ,.'\-]{3,40})/i, /\bname\s*[:\-]\s*([A-Za-z][A-Za-z ,.'\-]{3,40})/i, /\bPATIENT\s*\n\s*([A-Z][A-Z ,.'\-]{3,40})/];
+  let name = '';
+  for (const re of nameRe) { const m = t.match(re); if (m) { name = clean(m[1]).split(/\s{2,}| (?:DOB|D\.O\.B|Date|Sex|Age|MRN|Phone)\b/i)[0].trim(); if (name.split(' ').length >= 2) break; name = ''; } }
+  if (/,/.test(name)) { const [l, f] = name.split(',').map((x) => x.trim()); name = `${f} ${l}`.trim(); }
+  name = name.split(' ').slice(0, 4).map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+  const dm = t.match(/(?:DOB|D\.O\.B\.?|date\s*of\s*birth|birth\s*date)\s*[:\-]?\s*(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})/i);
+  let dob = '';
+  if (dm) { let [, mo, d, y] = dm; y = y.length === 2 ? (Number(y) > 30 ? '19' : '20') + y : y; if (+mo <= 12 && +d <= 31) dob = `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
+  const fm = t.match(/\bfrom\s*[:\-]\s*([^\n]{3,60})/i);
+  const sender = fm ? clean(fm[1]).replace(/\b(phone|fax|date|to)\b.*$/i, '').trim().slice(0, 50) : '';
+  // When the fax was sent, from the cover page ("Sent: 09/21/2026 12:59", "Date: 07/31/2026"), for faxes whose date Doximity didn't show.
+  const sm = t.match(/\b(?:sent|date)\s*[:\-]?\s*(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})(?:\s+(\d{1,2}):(\d{2}))?/i);
+  const sentAt = sm && +sm[1] <= 12 ? new Date(+sm[3], +sm[1] - 1, +sm[2], +(sm[4] || 12), +(sm[5] || 0)).toISOString() : '';
+  return { name: name.length >= 5 ? name : '', dob, sender, sentAt };
+}
+module.exports = { read, categorize, suggest, found };

@@ -175,6 +175,127 @@
 ### Deferred
 - Splitting main.js into smaller files (no behavior change): saved for a quiet release, so it can't mix with these fixes.
 
+## Logged for later (not built)
+- Speed up the schedule read (all 7 days in one pass, Availability only for today and tomorrow) and the Prescriptions read further.
+- Week view: side-by-side layout for visits at the same time.
+- **RxNT authenticator codes filled in automatically.** Almas: one-time setup, then no typing. Plan:
+  - The user re-sets up RxNT's authenticator and pastes the setup key into Settings → Accounts → RxNT. It's stored encrypted, like the password.
+  - When RxNT asks for a code, the app makes the 6-digit code and finishes signing in. The phone authenticator keeps working (same key).
+  - Trade-off accepted for later: the password and code key live on the same computer.
+- If RingRx or Doximity ask for codes: handle them the same way once we know how the codes arrive.
+- Optionally: tick "Remember this device" automatically on sign-in pages.
+- Optionally: a one-time "copy sign-ins from my other computer" step.
+- **Future project:** a browser/iPhone companion served by an always-on computer (e.g. a Mac mini), reached privately (e.g. Tailscale). Start read-only (Today, texts, alerts). Cloud hosting was ruled out for now (about $50–150/month on AWS doing the security ourselves, or $550+/month on a managed medical host, and RxNT sign-ins from a data center).
+- Connections stage 3: "Check connections" self-test, office-hours watchdog, stricter diagnostics.
+
+## 3.0.0 (Windows + Mac): one big release of everything from testing 2.4.1
+**RxNT sign-in and syncing**
+- Quiet RxNT sign-in now logs each step (page host only), proves itself with a second schedule read, and keeps the session cookies for every rxnt.com host so it survives restarts.
+- Code waits are remembered across restarts; an authenticator request says "needs a code", not "failed".
+- Mac sleep fixes:
+  - No catch-up during a dark wake; syncing waits until you're actually using the computer.
+  - Wall-clock time limits: a run that's too old after wake is cancelled at once.
+  - Hidden reader windows are closed when a run is cancelled, so nothing stays "busy".
+  - App Nap is blocked only while a sync runs.
+- Billing is read at most every 25 minutes and remembers which route worked (faster Prescriptions).
+- Timer runs are labelled "timer", not "catch-up".
+
+**Layout**
+- The window never scrolls. Every screen fits, and each panel scrolls on its own with slim scrollbars.
+- Narrow windows: the sidebar becomes an icon rail below 1280 px; lists open items full width with a Back button; names never wrap mid-word.
+- A sensible minimum window size.
+- Checked at 1040×660, 1280×720, 1440×900, 1512×982 and 1728×1117.
+- Mac: translucent sidebar, tighter scale (90%), proper spacing around the window buttons.
+
+**Look and colour**
+- One colour system across the app:
+  - terracotta: urgent or late only
+  - teal: patients and normal actions
+  - sage: done
+  - grey: information
+- Patient names stay dark.
+- Darker text, stronger cards and fields (no more pale on pale), readable tags and buttons, a single clean outline on every search bar, hover colours fixed.
+- Title Case and spelling fixed throughout.
+
+**Today**
+- Checklist and Notes are separate cards again.
+- Before You Go is a terracotta card with a clickable chip per item.
+- Changes Today is coloured by type, and the "While disconnected" prefix is replaced by a small tag.
+- Visit strip coloured by status.
+- Notes search sits inside the Notes card.
+- **Do Later follow-through:**
+  - A pop-up (no names) when a snoozed item is due.
+  - A "Back from Later" tag.
+  - A Later section listing what's snoozed and until when, with Bring Back Now and Change Time.
+  - The count shows "3 · 1 later".
+- Reminder and Later menus: one line per option, label left, time right.
+
+**Clock and timer**
+- The timer moves to the top right as a pill.
+- The clock's day line shows visit dots: sage for done, teal for to come, terracotta for next.
+- The next visit is a highlighted card that turns terracotta in the last 5 minutes.
+
+**Texts, Emails, Calls, Faxes**
+- Wider lists so full names fit. The search bar is at the top in Calls.
+- Answered threads show "Replied 9:07 PM". Conversations that just end ("thanks!") get a Mark Done hint and don't count as needing a reply.
+- Emails:
+  - Category chips: Appointments (incl. ZocDoc), Patients, Pharmacy, Insurance & Billing, Records & Labs, Delivery Problems, Updates, Other.
+  - Readable reading pane on a paper card (capped line length, darker text, teal links).
+  - Sent emails use the official fonts.
+- **Saved Files library:**
+  - Keep any number of files.
+  - Templates choose which files they attach.
+  - The composer's Attach menu offers them.
+- Faxes:
+  - Category chips wrap so all are visible.
+  - The sender is taken from the cover page when Doximity only shows a city.
+  - The received time is read more reliably.
+- Save to Chart:
+  - Suggestions from the name and DOB on the fax, with match strength.
+  - **Mark as New Referral**: the app checks RxNT every 20 minutes during office hours and offers to file the fax once the new patient appears.
+  - "Done · No Chart Needed".
+  - A tidier ⋯ menu (File / Sort / Junk).
+
+**Schedule**
+- One date pill with arrows built in, a Today button, and the Day/Week switch.
+- No separate refresh button.
+- A week strip under the header (date, visit count, cancellation dot); arrow keys move days or weeks.
+- Week labels: This Week / Next Week / Last Week.
+- Date picker:
+  - Teal header.
+  - Weekends tinted.
+  - Today ringed in terracotta.
+  - Visit dots; "Tomorrow" removed.
+- One split Send button per row.
+- Selected rows have a teal edge.
+- The summary strip is evenly spaced, with Select All Who Need a Text outside it.
+- A visit moved within the same day shows once.
+- A second real visit gets a "2nd visit today" note.
+
+**Patients**
+- Sort by First Name (default), Last Name or DOB, remembered; names always show First Last.
+- Letter headers and an A–Z jump strip.
+- ALL-CAPS names shown in normal case.
+- A "New" tag for a week on patients who just signed up.
+
+**Settings**
+- Alerts redesigned: grouped Patients / Schedule / Work, labelled Pop-up and Text toggles, and a Your Cell block.
+- Template rows show just the name, ★ for the default and an (i).
+- The Patient List sits inside the RxNT row.
+- Each account shows how often it's checked right now.
+
+**Motion**
+- An opening greeting (logo, "Good evening, Maria", date; about 1.3 s, click or any key skips).
+- iOS-style feedback for Sent / Done / Spam / Later / Filed / Back to To Do: a small centred card with an animated icon, and the row slides away.
+- The date picker springs in.
+- Everything respects Reduce Motion.
+
+**Diagnostics** (still no patient details)
+- Logged: sign-in steps, power and wake events, window size and display, screens and buttons used, renderer errors, and a layout checker that logs anything cut off or overflowing.
+- The saved file starts with a summary.
+
+**Tests:** new 3.0 test (snooze wake-up, nameless pop-up, name case, sort, alert keys, no window scroll).
+
 ## 2.4.1 (Windows + Mac): fixes from ChatGPT's review of 2.4.0, plus pop-ups without names
 - **RxNT quiet sign-in (important):** 2.4.0 closed the hidden window before the "schedule really loads" check finished, so a sign-in that worked could be reported as "needs you to finish signing in". Fixed (the check now finishes first).
 - **No late overwrite:** a read that timed out can no longer write older data over a newer read (portal), and every new run invalidates older ones.

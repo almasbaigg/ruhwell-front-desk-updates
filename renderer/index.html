@@ -42,32 +42,32 @@
 
 <!-- App -->
 <div id="shell" class="shell hidden">
-  <aside class="sidebar">
-    <div class="clock" id="clock"><div class="clock-face"><b id="clock-time"></b><sup id="clock-ampm"></sup></div><span id="clock-date"></span><div class="day-track" id="day-track" title=""><i id="day-fill"></i></div><em id="clock-next"></em></div>
-    <div class="timer" id="timer">
-      <button class="timer-start" id="tm-start" title="Start a timer for what you're doing"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2M9 2h6"/></svg>Start a timer</button>
+  <div class="top-timer" id="top-timer"><div class="timer" id="timer">
+      <button class="timer-start" id="tm-start" title="Start a timer for what you're doing"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2M9 2h6"/></svg><span>Timer</span></button>
       <div class="timer-run hidden" id="tm-run">
         <div class="disc" id="tm-disc"></div>
         <div class="timer-side"><span class="timer-label" id="tm-label"></span><b class="timer-left" id="tm-left"></b>
           <div class="timer-btns"><button class="tbtn" id="tm-pause" title="Pause"></button><button class="tbtn" id="tm-add" title="Add 5 minutes">+5</button><button class="tbtn" id="tm-stop" title="Stop the timer"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button></div></div>
       </div>
-    </div>
-    <div class="new-split"><button class="btn primary" id="new-msg"><svg viewBox="0 0 24 24"><path d="M4 6h16v10H8l-4 4z"/></svg>New text</button><button class="btn primary" id="new-email-side"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>New email</button></div>
+    </div></div>
+  <aside class="sidebar">
+    <div class="clock" id="clock"><div class="clock-face"><b id="clock-time"></b><sup id="clock-ampm"></sup></div><span id="clock-date"></span><div class="day-track" id="day-track" title=""><i id="day-fill"></i></div><em id="clock-next"></em></div>
+    <div class="new-split"><button class="btn primary" id="new-msg"><svg viewBox="0 0 24 24"><path d="M4 6h16v10H8l-4 4z"/></svg>New Text</button><button class="btn primary" id="new-email-side"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>New Email</button></div>
     <nav>
-      <button class="nav" data-view="today"><svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></svg>Today<span class="badge hidden" id="nb-today"></span></button>
+      <button class="nav" data-view="today"><svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></svg><span class="nl">Today</span><span class="badge hidden" id="nb-today"></span></button>
       <p class="nav-label">Inbox</p>
-      <button class="nav" data-view="texts"><svg viewBox="0 0 24 24"><path d="M4 20l1.2-4A8 8 0 1 1 8 19z"/></svg>Texts<span class="badge hidden" id="nb-texts"></span></button>
-      <button class="nav" data-view="emails"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>Emails<span class="badge hidden" id="nb-emails"></span></button>
-      <button class="nav" data-view="calls"><svg viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/></svg>Calls<span class="badge hidden" id="nb-calls"></span></button>
-      <button class="nav" data-view="faxes"><svg viewBox="0 0 24 24"><path d="M7 9V4h10v5"/><rect x="3" y="9" width="18" height="9" rx="2"/><path d="M7 14h10v6H7z"/></svg>Faxes<span class="badge hidden" id="nb-faxes"></span></button>
-      <button class="nav" data-view="rx"><svg viewBox="0 0 24 24"><rect x="4" y="9" width="16" height="7" rx="3.5" transform="rotate(-45 12 12.5)"/><path d="M9.5 10l5 5"/></svg>RxNT<span class="badge hidden" id="nb-rx"></span></button>
+      <button class="nav" data-view="texts"><svg viewBox="0 0 24 24"><path d="M4 20l1.2-4A8 8 0 1 1 8 19z"/></svg><span class="nl">Texts</span><span class="badge hidden" id="nb-texts"></span></button>
+      <button class="nav" data-view="emails"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg><span class="nl">Emails</span><span class="badge hidden" id="nb-emails"></span></button>
+      <button class="nav" data-view="calls"><svg viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/></svg><span class="nl">Calls</span><span class="badge hidden" id="nb-calls"></span></button>
+      <button class="nav" data-view="faxes"><svg viewBox="0 0 24 24"><path d="M7 9V4h10v5"/><rect x="3" y="9" width="18" height="9" rx="2"/><path d="M7 14h10v6H7z"/></svg><span class="nl">Faxes</span><span class="badge hidden" id="nb-faxes"></span></button>
+      <button class="nav" data-view="rx"><svg viewBox="0 0 24 24"><rect x="4" y="9" width="16" height="7" rx="3.5" transform="rotate(-45 12 12.5)"/><path d="M9.5 10l5 5"/></svg><span class="nl">RxNT</span><span class="badge hidden" id="nb-rx"></span></button>
       <p class="nav-label">Look up</p>
-      <button class="nav" data-view="schedule"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>Schedule</button>
-      <button class="nav" data-view="patients"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .7 3.2 2.5 3.5 5.2"/></svg>Patients</button>
+      <button class="nav" data-view="schedule"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg><span class="nl">Schedule</span></button>
+      <button class="nav" data-view="patients"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .7 3.2 2.5 3.5 5.2"/></svg><span class="nl">Patients</span></button>
     </nav>
     <div class="side-foot">
-      <button class="nav nav-settings" data-view="settings"><svg viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>Settings</button>
-      <div class="side-sync-row"><div class="status-line" id="status-line"><span class="dot"></span><span id="status-text">Starting…</span></div><button class="side-sync" id="side-sync" title="Sync everything now"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>Sync now</button></div>
+      <button class="nav nav-settings" data-view="settings"><svg viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg><span class="nl">Settings</span></button>
+      <div class="side-sync-row"><div class="status-line" id="status-line"><span class="dot"></span><span id="status-text">Starting…</span></div><button class="side-sync" id="side-sync" title="Sync everything now"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>Sync Now</button></div>
       <button class="update-ready hidden" id="update-ready"></button>
       <div class="brand-foot"><img src="../assets/logo.svg" alt="Ruhwell Med"><p class="version" id="app-version"></p></div>
     </div>
@@ -89,6 +89,7 @@
           <button class="icon-btn" id="refresh" title="Refresh from RxNT"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></button>
         </div>
       </header>
+      <div class="week-strip" id="week-strip"></div>
       <div class="summary" id="summary"></div>
       <div id="visit-list" class="list"></div>
       <div class="actionbar" id="actionbar">
@@ -107,10 +108,10 @@
             <button class="icon-btn" id="wk-prev" aria-label="Previous week"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
             <button class="icon-btn" id="wk-next" aria-label="Next week"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
           </div>
-          <button class="btn" id="wk-today">This week</button>
+          <button class="btn" id="wk-today">This Week</button>
         </div>
       </header>
-      <div class="legend"><span class="lg seen"></span>Checked in<span class="lg pending"></span>Booked<span class="lg notin"></span>Not checked in<span class="lg cancelled"></span>Cancelled / no-show<span class="lg block"></span>Closed<span class="lg open"></span>Open</div>
+      <div class="legend"><span class="lg seen"></span>Checked In<span class="lg pending"></span>Booked<span class="lg notin"></span>Not Checked In<span class="lg cancelled"></span>Cancelled / no-show<span class="lg block"></span>Closed<span class="lg open"></span>Open</div>
       <div class="week" id="week"></div>
     </section>
 
@@ -119,8 +120,8 @@
       <header class="head">
         <div><p class="eyebrow" id="p-sub"></p><h1>Patients</h1></div>
         <div class="head-actions">
-          <div class="seg-toggle" id="p-tabs"><button data-tab="contacts" class="on">All</button><button data-tab="dnt">Do not text</button></div>
-          <button class="btn" id="add-patient"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New patient</button>
+          <div class="seg-toggle" id="p-tabs"><button data-tab="contacts" class="on">All</button><button data-tab="dnt">Do Not Text</button></div>
+          <button class="btn" id="add-patient"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New Patient</button>
         </div>
       </header>
       <div class="split">
@@ -145,17 +146,16 @@
       <div class="tiles" id="today-tiles"></div>
       <div class="board">
         <section class="panel attn">
-          <div class="panel-head"><h2 class="ph"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 16.5v.5"/><circle cx="12" cy="12" r="9"/></svg>Needs attention</h2><span class="fresh" id="fresh-attn"></span><span class="count" id="todo-count"></span></div>
+          <div class="panel-head"><h2 class="ph"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 16.5v.5"/><circle cx="12" cy="12" r="9"/></svg>Needs Attention</h2><span class="fresh" id="fresh-attn"></span><span class="count" id="todo-count"></span></div>
           <div id="today-list" class="todo-list scroll"></div>
         </section>
         <section class="panel visits">
-          <div class="panel-head"><h2 class="ph"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>Today's visits</h2><span class="fresh" id="fresh-visits"></span><button class="link-btn" id="tv-open">Schedule</button></div>
+          <div class="panel-head"><h2 class="ph"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>Today's Visits</h2><span class="fresh" id="fresh-visits"></span><button class="link-btn" id="tv-open">Schedule</button></div>
           <div id="today-visits" class="scroll"></div>
           <details class="changes-today" id="today-changes"></details>
         </section>
         <div class="board-col">
-          <div class="seg-toggle pad-tabs" id="pad-tabs"><button data-p="checklist" class="on">Checklist<b id="pad-cl-count" class="hidden"></b></button><button data-p="notes">Notes</button></div>
-          <section class="panel pad checklist on">
+          <section class="panel pad checklist">
             <div class="panel-head"><h2 class="ph"><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1.2 1.2L7 5M3.5 12l1.2 1.2L7 11M3.5 18l1.2 1.2L7 17"/></svg>Checklist</h2><span class="count" id="cl-left"></span></div>
             <form id="cl-form"><span class="cl-plus"><svg viewBox="0 0 24 24"><path d="M12 6v12M6 12h12"/></svg></span><input id="cl-input" placeholder="Add a task…" maxlength="300" autocomplete="off"><button type="button" class="icon-btn cl-when" id="cl-when" title="Remind me"><svg viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg></button></form>
             <p class="cl-hint hidden" id="cl-hint"></p>
@@ -177,10 +177,10 @@
       <header class="head">
         <div><p class="eyebrow" id="tx-range-label"></p><h1>Texts</h1></div>
         <div class="head-actions">
-          <div class="seg-toggle comm-filter" id="tx-filter"><button data-f="needs" class="on">To do</button><button data-f="all">All</button><button data-f="sent">Sent</button><button data-f="spam">Spam</button></div>
+          <div class="seg-toggle comm-filter" id="tx-filter"><button data-f="needs" class="on">To Do</button><button data-f="all">All</button><button data-f="sent">Sent</button><button data-f="spam">Spam</button></div>
           <button class="btn sched-count" data-kind="text">Scheduled texts</button>
           <button class="icon-btn tpl-open" data-tab="messages" title="Templates &amp; settings"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
-          <button class="btn primary" id="tx-new"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New text</button>
+          <button class="btn primary" id="tx-new"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New Text</button>
         </div>
       </header>
       <div class="split comms">
@@ -197,15 +197,16 @@
       <header class="head">
         <div><p class="eyebrow" id="em-sub">Gmail</p><h1>Emails</h1></div>
         <div class="head-actions">
-          <div class="seg-toggle comm-filter" id="em-filter"><button data-f="needs" class="on">To do</button><button data-f="all">All</button><button data-f="sent">Sent</button><button data-f="spam">Spam</button></div>
+          <div class="seg-toggle comm-filter" id="em-filter"><button data-f="needs" class="on">To Do</button><button data-f="all">All</button><button data-f="sent">Sent</button><button data-f="spam">Spam</button></div>
           <button class="btn sched-count" data-kind="email">Scheduled emails</button>
           <button class="icon-btn tpl-open" data-tab="messages" title="Templates &amp; settings"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
-          <button class="btn primary" id="em-new"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New email</button>
+          <button class="btn primary" id="em-new"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New Email</button>
         </div>
       </header>
       <div class="split comms">
         <div class="pane list-pane">
           <label class="search-box"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><input id="em-search" placeholder="Search email"></label>
+          <div class="cat-chips" id="em-cats"></div>
           <div id="em-list" class="tlist"></div>
         </div>
         <div class="pane convo" id="em-pane"></div>
@@ -217,13 +218,15 @@
       <header class="head">
         <div><p class="eyebrow" id="cl-range-label"></p><h1>Calls</h1></div>
         <div class="head-actions">
-          <div class="seg-toggle comm-filter" id="ca-filter"><button data-f="needs" class="on">To do</button><button data-f="all">All</button><button data-f="sent">Outgoing</button><button data-f="spam">Spam</button></div>
+          <div class="seg-toggle comm-filter" id="ca-filter"><button data-f="needs" class="on">To Do</button><button data-f="all">All</button><button data-f="sent">Outgoing</button><button data-f="spam">Spam</button></div>
           <select id="ca-range"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option></select>
         </div>
       </header>
+      <label class="search-box"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><input id="ca-search" placeholder="Search name or number"></label>
+      <div class="vscroll" data-scroll="view-calls">
       <div id="ca-due"></div>
-      <label class="search-box" style="margin-bottom:10px"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><input id="ca-search" placeholder="Search name or number"></label>
       <div id="ca-list" class="list"></div>
+    </div>
     </section>
 
     <!-- Faxes (Doximity) -->
@@ -231,7 +234,7 @@
       <header class="head">
         <div><p class="eyebrow" id="fx-sub">From Doximity</p><h1>Faxes</h1></div>
         <div class="head-actions">
-          <div class="seg-toggle comm-filter" id="fx-filter"><button data-f="needs" class="on">To do</button><button data-f="all">All</button><button data-f="done">Done</button><button data-f="spam">Spam</button></div>
+          <div class="seg-toggle comm-filter" id="fx-filter"><button data-f="needs" class="on">To Do</button><button data-f="all">All</button><button data-f="done">Done</button><button data-f="spam">Spam</button></div>
           <button class="icon-btn" id="fx-refresh" title="Check for new faxes"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></button>
         </div>
       </header>
@@ -244,46 +247,51 @@
         <div><p class="eyebrow" id="rx-sub"></p><h1>RxNT</h1></div>
         <div class="head-actions"><button class="btn" id="rx-open"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>Open RxNT</button></div>
       </header>
+      <div class="vscroll" data-scroll="view-rx">
       <div id="rx-groups"></div>
       <details class="history" id="rx-history"><summary><span>History</span><em id="rx-hist-sum"></em></summary><div id="rx-hist"></div></details>
+    </div>
     </section>
 
     <!-- Settings -->
     <section class="view hidden" id="view-settings">
-      <header class="head"><div><p class="eyebrow">Preferences</p><h1>Settings</h1></div><div class="head-actions"><div class="seg-toggle" id="set-tabs"><button data-t="connections">Accounts</button><button data-t="alerts">You &amp; alerts</button><button data-t="messages">Communication</button><button data-t="app">App</button></div><span class="muted small" id="s-saved"></span><button class="btn primary" id="s-save">Save</button></div></header>
+      <header class="head"><div><p class="eyebrow">Preferences</p><h1>Settings</h1></div><div class="head-actions"><div class="seg-toggle" id="set-tabs"><button data-t="connections">Accounts</button><button data-t="alerts">You &amp; Alerts</button><button data-t="messages">Communication</button><button data-t="app">App</button></div><span class="muted small" id="s-saved"></span><button class="btn primary" id="s-save">Save</button></div></header>
+      <div class="vscroll" data-scroll="view-settings">
 
       <div class="card conn-card" data-tab="connections">
         <div class="card-head"><h3>Accounts <i class="info" tabindex="0" data-tip="Each account is checked every 5 minutes during office hours and every 10 minutes after. A green dot means the last check worked. Sign-ins are saved, encrypted, on this computer only.">i</i></h3><button class="btn hidden" id="sy-now">Check everything now</button></div>
-        <div class="conn-row"><span class="health" id="s-rxnt-health"></span><div class="conn-main"><strong>RxNT</strong><span class="muted small" id="s-rxnt-state"></span><span class="muted small" id="s-rxnt-saved"></span><span class="sx" id="sx-rxnt"></span></div><div class="row-gap"><button class="btn small" id="s-rxnt-connect">Reconnect</button><div class="more-wrap"><button class="icon-btn row-more" title="More">⋯</button><div class="more-menu hidden"><button data-check="schedule,rx,portal">Check now</button><button id="s-rxnt-out">Sign out</button></div></div></div></div>
-        <div class="conn-row"><span class="health" id="s-ringrx-health"></span><div class="conn-main"><strong>RingRx</strong><span class="muted small" id="s-ringrx-state"></span><span class="from-line" id="s-from"></span><span class="sx" id="sx-comms"></span></div><div class="row-gap"><div class="more-wrap"><button class="icon-btn row-more" title="More">⋯</button><div class="more-menu hidden"><button data-check="comms">Check now</button><button id="s-ringrx-out">Sign out</button></div></div></div></div>
-        <div class="conn-row"><span class="health" id="s-gmail-health"></span><div class="conn-main"><strong>Gmail</strong><span class="muted small" id="s-gmail-state"></span><span class="sx" id="sx-gmail"></span></div><div class="row-gap"><button class="btn small" id="s-gmail-connect">Sign in</button><div class="more-wrap"><button class="icon-btn row-more" title="More">⋯</button><div class="more-menu hidden"><button data-check="gmail">Check now</button><button id="s-gmail-out">Sign out</button></div></div></div></div>
+        <div class="conn-row"><span class="health" id="s-rxnt-health"></span><div class="conn-main"><strong>RxNT</strong><span class="muted small" id="s-rxnt-state"></span><span class="muted small" id="s-rxnt-saved"></span><span class="sx" id="sx-rxnt"></span><span class="conn-sub"><span class="health" id="s-pat-health"></span><b>Patient List</b><span id="sx-pat"></span><em>checks every 4 hours</em></span></div><div class="row-gap"><button class="btn small" id="s-rxnt-connect">Reconnect</button><div class="more-wrap"><button class="icon-btn row-more" title="More">⋯</button><div class="more-menu hidden"><button data-check="schedule,rx,portal">Check now</button><button id="s-rxnt-out">Sign Out</button></div></div></div></div>
+        <div class="conn-row"><span class="health" id="s-ringrx-health"></span><div class="conn-main"><strong>RingRx</strong><span class="muted small" id="s-ringrx-state"></span><span class="from-line" id="s-from"></span><span class="sx" id="sx-comms"></span></div><div class="row-gap"><div class="more-wrap"><button class="icon-btn row-more" title="More">⋯</button><div class="more-menu hidden"><button data-check="comms">Check now</button><button id="s-ringrx-out">Sign Out</button></div></div></div></div>
+        <div class="conn-row"><span class="health" id="s-gmail-health"></span><div class="conn-main"><strong>Gmail</strong><span class="muted small" id="s-gmail-state"></span><span class="sx" id="sx-gmail"></span></div><div class="row-gap"><button class="btn small" id="s-gmail-connect">Sign In</button><div class="more-wrap"><button class="icon-btn row-more" title="More">⋯</button><div class="more-menu hidden"><button data-check="gmail">Check now</button><button id="s-gmail-out">Sign Out</button></div></div></div></div>
         <div id="es-conn"></div>
-        <div class="conn-row"><span class="health" id="s-doximity-health"></span><div class="conn-main"><strong>Doximity <small class="muted">faxes</small></strong><span class="muted small" id="s-dox-state"></span><span class="muted small" id="s-dox-saved"></span><span class="sx" id="sx-dox"></span><label class="muted small dox-back">First import: <select id="s-dox-back"><option value="0">whole inbox</option><option value="1">today</option><option value="3">last 3 days</option><option value="7">last 7 days</option></select></label></div><div class="row-gap"><label class="switch" title="Check for faxes"><input type="checkbox" id="s-dox-on"><span></span></label><button class="btn small" id="s-dox-connect">Sign in</button><div class="more-wrap"><button class="icon-btn row-more" title="More">⋯</button><div class="more-menu hidden"><button data-check="faxes">Check now</button><button id="s-dox-out">Sign out</button></div></div></div></div>
-        <div class="conn-row"><span class="health" id="s-pat-health"></span><div class="conn-main"><strong>Patient list</strong><span class="sx" id="sx-pat"></span></div><span class="muted small">every 4 hours</span></div>
+        <div class="conn-row"><span class="health" id="s-doximity-health"></span><div class="conn-main"><strong>Doximity <small class="muted">faxes</small></strong><span class="muted small" id="s-dox-state"></span><span class="muted small" id="s-dox-saved"></span><span class="sx" id="sx-dox"></span><label class="muted small dox-back">First import: <select id="s-dox-back"><option value="0">whole inbox</option><option value="1">today</option><option value="3">last 3 days</option><option value="7">last 7 days</option></select></label></div><div class="row-gap"><label class="switch" title="Check for faxes"><input type="checkbox" id="s-dox-on"><span></span></label><button class="btn small" id="s-dox-connect">Sign In</button><div class="more-wrap"><button class="icon-btn row-more" title="More">⋯</button><div class="more-menu hidden"><button data-check="faxes">Check now</button><button id="s-dox-out">Sign Out</button></div></div></div></div>
         <span class="hidden" id="sx-rx"></span>
       </div>
 
       <div class="card" data-tab="alerts">
         <h3>You</h3>
-        <div class="row-line first"><div><strong>Name</strong></div><input id="s-name" placeholder="e.g. Maria" style="width:210px" maxlength="30"></div>
-        <div class="row-line"><div><strong>Office hours <i class="info" tabindex="0" data-tip="Weekdays. Alert texts only go out in these hours, and the end-of-day check runs at closing.">i</i></strong></div><div class="row-gap"><input type="time" id="sy-start" class="w-time"><span class="muted small">to</span><input type="time" id="sy-end" class="w-time"></div></div>
-        <div class="row-line"><div><strong>Watch the schedule <i class="info" tabindex="0" data-tip="How far ahead the app watches RxNT for new, cancelled and moved visits.">i</i></strong></div><select id="w-days"><option value="3">3 days ahead</option><option value="7">7 days ahead</option><option value="14">14 days ahead</option></select></div>
-        <div class="row-line"><div><strong>Morning summary <i class="info" tabindex="0" data-tip="A pop-up with the day's schedule.">i</i></strong></div><div class="row-gap"><input type="time" id="s-sum-time" class="w-time"><label class="switch"><input type="checkbox" id="s-sum-on"><span></span></label></div></div>
-        <div class="row-line"><div><strong>Reminders nudge <i class="info" tabindex="0" data-tip="A pop-up reminding you to send tomorrow's appointment reminders.">i</i></strong></div><div class="row-gap"><input type="time" id="s-nudge-time" class="w-time"><label class="switch"><input type="checkbox" id="s-nudge-on"><span></span></label></div></div>
+        <div class="row-line first"><div><strong>Your Name <i class="info" tabindex="0" data-tip="Used in the greeting when the app opens.">i</i></strong></div><input id="s-name" placeholder="e.g. Maria" style="width:210px" maxlength="30"></div>
+        <div class="row-line"><div><strong>Office Hours <i class="info" tabindex="0" data-tip="Weekdays. Alert texts only go out in these hours, and the end-of-day check runs at closing.">i</i></strong></div><div class="row-gap"><input type="time" id="sy-start" class="w-time"><span class="muted small">to</span><input type="time" id="sy-end" class="w-time"></div></div>
+        <div class="row-line"><div><strong>Watch the Schedule <i class="info" tabindex="0" data-tip="How far ahead the app watches RxNT for new, cancelled and moved visits.">i</i></strong></div><select id="w-days"><option value="3">3 days ahead</option><option value="7">7 days ahead</option><option value="14">14 days ahead</option></select></div>
+        <div class="row-line"><div><strong>Morning Summary <i class="info" tabindex="0" data-tip="A pop-up with the day's schedule.">i</i></strong></div><div class="row-gap"><input type="time" id="s-sum-time" class="w-time"><label class="switch"><input type="checkbox" id="s-sum-on"><span></span></label></div></div>
+        <div class="row-line"><div><strong>Reminders Nudge <i class="info" tabindex="0" data-tip="A pop-up reminding you to send tomorrow's appointment reminders.">i</i></strong></div><div class="row-gap"><input type="time" id="s-nudge-time" class="w-time"><label class="switch"><input type="checkbox" id="s-nudge-on"><span></span></label></div></div>
       </div>
       <div class="card" data-tab="alerts">
         <h3>Alerts <i class="info" tabindex="0" data-tip="Pop-up shows on this computer. Text goes to your cell. Alert texts never include patient names.">i</i></h3>
-        <div class="row-line first"><div><strong>Your cell</strong></div><div class="row-gap"><input id="s-cell" placeholder="Practice number if empty" style="width:210px"><button class="btn" id="s-cell-test">Test</button></div></div>
-        <div class="alert-grid">
-          <span></span><b>Pop-up</b><b>Text</b>
-          <span>Schedule changes</span><label class="check"><input type="checkbox" data-k="schedule" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="schedule" data-c="text"><span></span></label>
-          <span>Patient messages</span><label class="check"><input type="checkbox" data-k="reply" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="reply" data-c="text"><span></span></label>
-          <span>New fax</span><label class="check"><input type="checkbox" data-k="fax" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="fax" data-c="text"><span></span></label>
-          <span>New patient</span><label class="check"><input type="checkbox" data-k="newpatient" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="newpatient" data-c="text"><span></span></label>
-          <span>Prescriptions waiting 1 h+</span><label class="check"><input type="checkbox" data-k="rx" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="rx" data-c="text"><span></span></label>
-          <span>Wrap-up &amp; chart reminders</span><label class="check"><input type="checkbox" data-k="nudge" data-c="desk"><span></span></label><span class="muted center-text">–</span>
-          <span>Checklist reminders</span><label class="check"><input type="checkbox" data-k="task" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="task" data-c="text"><span></span></label>
-          <span>Visit in <select id="w-soon"><option value="10">10</option><option value="15">15</option><option value="30">30</option></select> min</span><label class="check"><input type="checkbox" data-k="soon" data-c="desk"><span></span></label><label class="check"><input type="checkbox" data-k="soon" data-c="text"><span></span></label>
+        <div class="al-cell"><div><strong>Your Cell</strong><span>Alert texts go here. They never include patient names.</span></div><div class="row-gap"><input id="s-cell" placeholder="Practice number if empty" style="width:200px"><button class="btn" id="s-cell-test">Send Test</button></div></div>
+        <div class="al-groups">
+          <h4 class="al-h">Patients</h4>
+          <div class="al-row"><div class="al-l"><strong>Patient Messages</strong><span>Texts and emails from patients</span></div><label class="al-tg"><input type="checkbox" data-k="reply" data-c="desk"><span>Pop-up</span></label><label class="al-tg"><input type="checkbox" data-k="reply" data-c="text"><span>Text</span></label></div>
+          <div class="al-row"><div class="al-l"><strong>New Patient</strong><span>Someone signs up in RxNT</span></div><label class="al-tg"><input type="checkbox" data-k="newpatient" data-c="desk"><span>Pop-up</span></label><label class="al-tg"><input type="checkbox" data-k="newpatient" data-c="text"><span>Text</span></label></div>
+          <div class="al-row"><div class="al-l"><strong>New Fax</strong><span>A fax arrives in Doximity</span></div><label class="al-tg"><input type="checkbox" data-k="fax" data-c="desk"><span>Pop-up</span></label><label class="al-tg"><input type="checkbox" data-k="fax" data-c="text"><span>Text</span></label></div>
+          <h4 class="al-h">Schedule</h4>
+          <div class="al-row"><div class="al-l"><strong>Schedule Changes</strong><span>New, cancelled and moved visits</span></div><label class="al-tg"><input type="checkbox" data-k="schedule" data-c="desk"><span>Pop-up</span></label><label class="al-tg"><input type="checkbox" data-k="schedule" data-c="text"><span>Text</span></label></div>
+          <div class="al-row"><div class="al-l"><strong>Visit Soon</strong><span>A visit starts in <select id="w-soon"><option value="10">10</option><option value="15">15</option><option value="30">30</option></select> min</span></div><label class="al-tg"><input type="checkbox" data-k="soon" data-c="desk"><span>Pop-up</span></label><label class="al-tg"><input type="checkbox" data-k="soon" data-c="text"><span>Text</span></label></div>
+          <h4 class="al-h">Work</h4>
+          <div class="al-row"><div class="al-l"><strong>Prescriptions Waiting</strong><span>Waiting 1 hour or more</span></div><label class="al-tg"><input type="checkbox" data-k="rx" data-c="desk"><span>Pop-up</span></label><label class="al-tg"><input type="checkbox" data-k="rx" data-c="text"><span>Text</span></label></div>
+          <div class="al-row"><div class="al-l"><strong>Checklist Reminders</strong><span>Items with a reminder time</span></div><label class="al-tg"><input type="checkbox" data-k="task" data-c="desk"><span>Pop-up</span></label><label class="al-tg"><input type="checkbox" data-k="task" data-c="text"><span>Text</span></label></div>
+          <div class="al-row"><div class="al-l"><strong>Wrap-Up &amp; Chart Reminders</strong><span>End of day and unsigned charts</span></div><label class="al-tg"><input type="checkbox" data-k="nudge" data-c="desk"><span>Pop-up</span></label><span class="al-tg ghost"></span></div>
+        </div>
         </div>
       </div>
 
@@ -298,28 +306,30 @@
         <div class="card-head"><h3>Emails <i class="info" tabindex="0" data-tip="Patients always get email from hello@ruhwellmed.com.">i</i></h3><button class="btn small" id="es-tpl-add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Template</button></div>
         <div class="row-line first"><div><strong>Sender name <i class="info" tabindex="0" data-tip="What patients see next to hello@ruhwellmed.com.">i</i></strong></div><input id="es-name" placeholder="Ruhwell Med" style="width:240px" maxlength="60"></div>
         <div class="row-line"><div><strong>Welcome packet <i class="info" tabindex="0" data-tip="Attached to the Welcome email.">i</i></strong><span class="muted small" id="es-packet-sub"></span><span class="hidden" id="es-packet-name"></span></div><div class="row-gap"><button class="btn small" id="es-packet-open">Open</button><button class="btn small" id="es-packet-replace">Replace</button><button class="btn ghost small hidden" id="es-packet-reset">Use original</button></div></div>
+        <div class="row-line files-head"><div><strong>Saved Files <i class="info" tabindex="0" data-tip="Files kept on this computer that you can attach to any email or template (forms, policies, directions).">i</i></strong></div><button class="btn small" id="es-files-add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add Files</button></div>
+        <div class="file-list" id="es-files"></div>
         <h4 class="sub-h">Signature</h4>
         <div class="ec-body small-body" id="es-sig" contenteditable="true" data-placeholder="Your sign-off for emails, e.g. Warm regards, Ruhwell Med · (979) 000-0000"></div>
         <h4 class="sub-h">Templates</h4>
         <div id="es-tpls"></div>
       </div>
       <div class="card" data-tab="messages">
-        <h3>Sending hours <i class="info" tabindex="0" data-tip="Texts and emails to patients wait for these hours. You can still choose Send now anyway.">i</i></h3>
+        <h3>Sending Hours <i class="info" tabindex="0" data-tip="Texts and emails to patients wait for these hours. You can still choose Send now anyway.">i</i></h3>
         <div class="row-line first"><div><strong>Hours</strong></div><div class="row-gap"><select id="qh-start"></select><span class="muted small">to</span><select id="qh-end"></select></div></div>
         <div class="row-line"><div><strong>Days</strong></div><div class="day-chips" id="qh-days" style="margin:0"></div></div>
       </div>
 
       <div class="card" data-tab="app">
         <div class="card-head"><h3>Updates</h3><button class="btn small" id="up-check">Check</button></div>
-        <div class="row-line first"><div><strong id="up-ver"></strong><span class="muted small" id="up-msg"></span></div><button class="btn primary hidden" id="up-restart">Restart to update</button></div>
+        <div class="row-line first"><div><strong id="up-ver"></strong><span class="muted small" id="up-msg"></span></div><button class="btn primary hidden" id="up-restart">Restart to Update</button></div>
       </div>
       <div class="card" data-tab="app">
-        <h3>This computer</h3>
+        <h3>This Computer</h3>
         <div class="toggles">
-          <label class="switch"><input type="checkbox" id="s-login"><span></span><b id="s-login-label">Start with Windows</b></label>
-          <label class="switch"><input type="checkbox" id="s-close"><span></span><b>Keep running when closed</b></label>
-          <label class="switch"><input type="checkbox" id="s-min"><span></span><b>Minimize to tray</b></label>
-          <label class="switch"><input type="checkbox" id="s-sound"><span></span><b>Alert sound</b></label>
+          <label class="switch"><input type="checkbox" id="s-login"><span></span><b id="s-login-label">Start With Windows</b></label>
+          <label class="switch"><input type="checkbox" id="s-close"><span></span><b>Keep Running When Closed</b></label>
+          <label class="switch"><input type="checkbox" id="s-min"><span></span><b>Minimize to Tray</b></label>
+          <label class="switch"><input type="checkbox" id="s-sound"><span></span><b>Alert Sound</b></label>
         </div>
       </div>
       <div class="card" data-tab="app">
@@ -330,9 +340,10 @@
         <div class="row-line"><div><strong>Keep sent history</strong></div><select id="s-keep"><option value="forever">Forever</option><option value="2y">2 years</option><option value="1y">1 year</option></select></div>
         <div class="row-line"><div><strong>Activity log <i class="info" tabindex="0" data-tip="What the app did with RxNT, Doximity and RingRx. 90 days, no patient names.">i</i></strong></div><button class="btn small" id="s-activity">View</button></div>
         <div class="row-line"><div><strong>Spam numbers</strong><span class="muted small" id="s-spam-line"></span></div><button class="btn small" id="s-spam">Manage</button></div>
-        <div class="row-line"><div><strong>Diagnostics <i class="info" tabindex="0" data-tip="A technical log of syncs, sign-ins and errors (no patient details). Save it to send when something isn&#39;t working.">i</i></strong></div><button class="btn small" id="s-diag">Save diagnostics</button></div>
+        <div class="row-line"><div><strong>Diagnostics <i class="info" tabindex="0" data-tip="A technical log of syncs, sign-ins and errors (no patient details). Save it to send when something isn&#39;t working.">i</i></strong></div><button class="btn small" id="s-diag">Save Diagnostics</button></div>
         <div class="row-line"><div><strong>Data folder</strong><span class="muted small mono" id="data-path"></span></div><button class="btn small" id="open-data">Open</button></div>
       </div>
+    </div>
     </section>
   </main>
 </div>

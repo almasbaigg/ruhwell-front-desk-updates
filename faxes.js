@@ -234,14 +234,16 @@ function scrollInbox() {
   return { n: document.querySelectorAll('a[href*="/inbox/faxes/Fax::"]').length };
 }
 
-let running = false;
+let running = false, syncWin = null, syncAbort = null;
+// Called when the app gives up on a fax read (time limit, wake): close its hidden window so the next read starts fresh.
+function abort() { if (syncWin && !syncWin.isDestroyed()) syncWin.destroy(); }
 async function sync() {
   if (running) return { busy: true };
   if ((store.settings.get().faxes || {}).enabled === false) return { off: true };
   running = true;
   let win;
   try {
-    win = makeWindow(false);   // inside try: if making the window fails, `running` is still released
+    win = syncWin = makeWindow(false);   // inside try: if making the window fails, `running` is still released
     await win.loadURL(INBOX).catch(() => {});
     const readAll = async () => {
       let r = { state: 'wait' };
@@ -305,7 +307,7 @@ async function sync() {
   } catch (e) {
     last = { ...last, error: 'failed', at: new Date().toISOString() };
     return { error: 'failed' };
-  } finally { running = false; if (win && !win.isDestroyed()) win.destroy(); }
+  } finally { running = false; syncWin = null; if (win && !win.isDestroyed()) win.destroy(); }
 }
 // One retry right now (the "Retry download" button).
 async function retryDownload(id) {
@@ -327,7 +329,7 @@ function repairOnce() {
   saveIndex({ ...ix, ignored: [], seeded: null, v: 4 });   // bring in the whole inbox once
 }
 
-function setMeta(id, meta) { const allowed = ['category', 'suggest', 'ocrAt', 'ocrError', 'textHint']; const m = Object.fromEntries(Object.entries(meta || {}).filter(([k]) => allowed.includes(k))); return update(id, m); }
+function setMeta(id, meta) { const allowed = ['category', 'suggest', 'ocrAt', 'ocrError', 'textHint', 'found', 'senderName', 'ocrV', 'referral', 'sentAt']; const m = Object.fromEntries(Object.entries(meta || {}).filter(([k]) => allowed.includes(k))); return update(id, m); }
 // A download cut off by a crash or power loss can leave a temporary copy: removed at every start.
 function cleanTmp() { try { const d = store.raw.file(''); for (const f of fs.readdirSync(d)) if (/^tmp-fax-/.test(f)) fs.rmSync(path.join(d, f), { force: true }); } catch {} }
-module.exports = { cleanTmp, setMeta, sniff, retryDownload, faxUrl, repairOnce, PART, sync, status, list, pdf, update, signIn, signOut, autoSignIn, forgetLogin, loginState, savedLogin, prune, whenOf, readInbox, KEEP_FILED_DAYS };
+module.exports = { abort, cleanTmp, setMeta, sniff, retryDownload, faxUrl, repairOnce, PART, sync, status, list, pdf, update, signIn, signOut, autoSignIn, forgetLogin, loginState, savedLogin, prune, whenOf, readInbox, KEEP_FILED_DAYS };

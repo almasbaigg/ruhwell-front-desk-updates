@@ -125,6 +125,7 @@ const recentOpen = (e, handledAt) => new Date(e.at).getTime() > (handledAt || 0)
 
 // Texts tab: one conversation per number (texts only), newest first.
 // "Needs reply" = their last text came after our last text, isn't STOP/confirm, and wasn't marked done.
+const CLOSER_RE = /^(?:(?:ok(?:ay)?|k|kk|thanks?(?: (?:so much|you(?: so much| very much)?))?|thank you(?: so much| very much)?|thx|ty|great|perfect|awesome|sounds good|got it|will do|see you(?: then| soon)?|you too|have a (?:good|great) (?:day|one|weekend)|appreciate it|cool|yes thanks?|ok thanks?|ok thank you|okay thank you)[\s!.,]*(?:-\s*\w+)?|[\p{Extended_Pictographic}\s]+)$/iu;
 function textThreads(days = 30) {
   const who = directory(), done = doneMap(), cbk = store.callbacks.get(), seen = cbk.seen || {}, force = cbk.unreadForce || {}, skip = ignored(), since = Date.now() - days * DAY, by = {};
   for (const e of events().filter((x) => x.type === 'text')) (by[e.phone] = by[e.phone] || []).push(e);
@@ -135,11 +136,13 @@ function textThreads(days = 30) {
     if (new Date(last.at) < since) continue;
     const lastOut = [...list].reverse().find((e) => !e.inbound), lastIn = [...list].reverse().find((e) => e.inbound);
     const open = list.filter((e) => e.inbound && (!lastOut || new Date(e.at) > new Date(lastOut.at)) && !STOP_RE.test(e.body) && !CONFIRM_RE.test(e.body) && recentOpen(e, done['t:' + phone]));
+    // "Thank you", "Ok", "👍", "Sounds good"... after we've texted them: a closer, not something to answer.
+    const closer = lastOut && open.length && open.every((e) => CLOSER_RE.test(String(e.body || '').trim()));
     const w = who(phone), spam = isSpam(phone, w);
     const answer = lastIn && last.inbound ? answerOf(lastIn, list, done['t:' + phone]) : lastIn ? answerOf(lastIn, list, done['t:' + phone]) : null;
     out.push({ phone, who: w, spam, answer, last: { inbound: last.inbound, at: last.at, body: last.body },
       lastIn: lastIn ? { at: lastIn.at, body: lastIn.body } : null,
-      lastSent: lastOut ? { at: lastOut.at, body: lastOut.body } : null, needs: open.length && !w.dnt && !skip.has(phone) && !spam ? 'reply' : null, ignored: skip.has(phone), needsAt: open.length ? open[open.length - 1].at : null, unread: spam ? 0 : Math.max(force[phone] ? 1 : 0, list.filter((e) => e.inbound && e.unread !== false && new Date(e.at) > (seen[phone] || 0)).length), readAt: seen[phone] || null, doneAt: done['t:' + phone] || null, count: list.length });
+      lastSent: lastOut ? { at: lastOut.at, body: lastOut.body } : null, needs: open.length && !closer && !w.dnt && !skip.has(phone) && !spam ? 'reply' : null, closer: !!closer, ignored: skip.has(phone), needsAt: open.length ? open[open.length - 1].at : null, unread: spam ? 0 : Math.max(force[phone] ? 1 : 0, list.filter((e) => e.inbound && e.unread !== false && new Date(e.at) > (seen[phone] || 0)).length), readAt: seen[phone] || null, doneAt: done['t:' + phone] || null, count: list.length });
   }
   return out.sort((a, b) => new Date(b.last.at) - new Date(a.last.at));
 }
@@ -167,6 +170,15 @@ function thread(phone) { return events().filter((e) => e.phone === phone && e.ty
 // kind: 't' (texts) or 'c' (calls)
 // Snooze (hide an item until a time) and ignore (a number never needs attention: sales, spam).
 function snooze(key, until) { const c = store.callbacks.get(); c.snooze = Object.fromEntries(Object.entries({ ...(c.snooze || {}), [key]: until }).filter(([, t]) => t > Date.now())); store.callbacks.set(c); }
+// Snoozes whose time has come: moved to "woke" so Today can tag them "Back from Later" for a few hours. Returns how many just woke.
+function snoozeTick() {
+  const c = store.callbacks.get(), now = Date.now(), due = Object.entries(c.snooze || {}).filter(([, t]) => t <= now);
+  c.woke = Object.fromEntries(Object.entries(c.woke || {}).filter(([, t]) => now - t < 4 * 3600e3));
+  if (!due.length) { store.callbacks.set(c); return 0; }
+  for (const [k, t] of due) { delete c.snooze[k]; c.woke[k] = t; }
+  store.callbacks.set(c); return due.length;
+}
+const woke = () => store.callbacks.get().woke || {};
 const snoozes = () => Object.fromEntries(Object.entries(store.callbacks.get().snooze || {}).filter(([, t]) => t > Date.now()));
 function ignore(phone, on = true) { const c = store.callbacks.get(), set = new Set(c.ignored || []); on ? set.add(phone) : set.delete(phone); c.ignored = [...set]; store.callbacks.set(c); }
 const ignored = () => new Set(store.callbacks.get().ignored || []);
@@ -267,4 +279,4 @@ function handleReplies(fresh, addEvents) {
 
 const status = () => { const h = store.ringrxHistory.get(), c = store.calls.get(); return { running, at: h.at, error: h.error || c.error, texts: (h.items || []).length, calls: (c.items || []).length }; };
 
-module.exports = { bust, unreadRingrxTexts, setRingrxRead, attachVoicemails, markSpam, spamList, spamCleanup, spamMap, markHeard, unmarkHeard, unmarkSeen, answerOf, unmarkDone, optedOut, clearOptOut, sync, textThreads, callList, thread, markDone, doneSince, markSeen, snooze, snoozes, ignore, counts, handleReplies, status, events, directory, d10 };
+module.exports = { snoozeTick, woke, bust, unreadRingrxTexts, setRingrxRead, attachVoicemails, markSpam, spamList, spamCleanup, spamMap, markHeard, unmarkHeard, unmarkSeen, answerOf, unmarkDone, optedOut, clearOptOut, sync, textThreads, callList, thread, markDone, doneSince, markSeen, snooze, snoozes, ignore, counts, handleReplies, status, events, directory, d10 };

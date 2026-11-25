@@ -14,7 +14,7 @@ function buildVisit(it, prev) {
   const t = tid && tplById(tid);
   v.templateId = t ? t.id : null; v.text = t ? fill(t.text, v) : '';
   const already = v.already.some((h) => h.templateId === v.templateId);
-  // Nothing is ticked on its own; "Select all who need a text" ticks these in one tap.
+  // Nothing is ticked on its own; "Select All Who Need a Text" ticks these in one tap.
   v.eligible = !!t && canText && !already && (cat === 'seen' ? mode !== 'future' && !(v.review && audienceOf(t) === 'after') : cat === 'pending' && mode === 'future' && !v.confirmed);
   v.why = !v.eligible ? '' : cat === 'seen' ? 'Seen today · no Google review asked yet' : `${currentDate === ymd(new Date(Date.now() + 864e5)) ? 'Tomorrow' : 'Upcoming'} · not confirmed`;
   v.selected = false;
@@ -22,7 +22,7 @@ function buildVisit(it, prev) {
 }
 function applyDay(d) {
   const prev = Object.fromEntries(visits.map((v) => [v.appointmentId, v]));
-  knownDays[d.date || currentDate] = (d.items || []).length; dayStore[d.date || currentDate] = d;
+  knownDays[d.date || currentDate] = (d.items || []).filter((v) => category(v) !== 'cancelled').length; knownCancels[d.date || currentDate] = (d.items || []).some((v) => category(v) === 'cancelled'); dayStore[d.date || currentDate] = d;
   visits = (d.items || []).map((it) => buildVisit(it, prev[it.appointmentId])).sort((a, b) => String(a.start).localeCompare(String(b.start)));
   visits.blocks = d.blocks || []; visits.closed = !!d.closed; visits.loaded = true;
   renderVisits();
@@ -34,8 +34,17 @@ function paintDayHeader() {
   $('day-title').textContent = d.toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' });
   $('day-today').disabled = mode === 'today';
 }
+// Week strip under the Day header: Mon–Sun with each day's date and visit count; one click jumps to that day.
+async function paintWeekStrip(date) {
+  const el = $('week-strip'); if (!el) return;
+  const mon = mondayOf(date), days = Array.from({ length: 7 }, (_, i) => addDays(mon, i));
+  const draw = () => { el.innerHTML = days.map((d) => { const dt = parseYmd(d), n = knownDays[d]; return `<button class="ws-day ${d === date ? 'on' : ''} ${d === ymd() ? 'today' : ''} ${knownCancels[d] ? 'has-cancel' : ''}" data-d="${d}"><span>${dt.toLocaleDateString([], { weekday: 'short' })}</span><b>${dt.getDate()}</b><em>${n == null ? '·' : n ? `${n} visit${n > 1 ? 's' : ''}` : 'None'}</em></button>`; }).join('');
+    el.querySelectorAll('.ws-day').forEach((b) => (b.onclick = () => loadDay(b.dataset.d))); };
+  draw();
+  try { const r = await window.api.rxntRange(mon, 7); for (const [d, v] of Object.entries(r || {})) { knownDays[d] = (v.items || []).filter((x) => category(x) !== 'cancelled').length; knownCancels[d] = (v.items || []).some((x) => category(x) === 'cancelled'); } draw(); } catch {}
+}
 async function loadDay(date, force) {
-  currentDate = date; paintDayHeader();
+  currentDate = date; paintDayHeader(); paintWeekStrip(date);
   const seq = (loadDay.seq = (loadDay.seq || 0) + 1);
   [history, patients, confirmed] = await Promise.all([window.api.history(), window.api.patients(), window.api.confirmed(), refreshCallsCache().catch(() => {})]);
   indexPatients(patients);
@@ -57,7 +66,7 @@ async function loadDay(date, force) {
   if (r.error) {
     if (!loadDay.retried) { loadDay.retried = true; return loadDay(date, true); }
     loadDay.retried = false;
-    $('visit-list').innerHTML = `<div class="empty-state"><h3>RxNT is slow to respond</h3><p style="margin:6px 0 14px">Give it a moment and try again.</p><button class="btn" id="retry-day">Try again</button></div>`;
+    $('visit-list').innerHTML = `<div class="empty-state"><h3>RxNT is slow to respond</h3><p style="margin:6px 0 14px">Give it a moment and try again.</p><button class="btn" id="retry-day">Try Again</button></div>`;
     $('retry-day').onclick = () => loadDay(currentDate, true);
     return;
   }
@@ -66,7 +75,7 @@ async function loadDay(date, force) {
   applyDay(r);
 }
 window.api.onDay((d) => {
-  knownDays[d.date] = (d.items || []).length; dayStore[d.date] = d;
+  knownDays[d.date] = (d.items || []).filter((v) => category(v) !== 'cancelled').length; knownCancels[d.date] = (d.items || []).some((v) => category(v) === 'cancelled'); dayStore[d.date] = d;
   if (d.date === currentDate && view === 'visits' && visits.loaded && !document.activeElement?.closest?.('.item textarea')) applyDay(d);
   if (weekStart && d.date >= weekStart && d.date <= addDays(weekStart, 6)) { weekData[d.date] = d; dayStore[d.date] = d; if (view === 'calendar') renderWeek(); }
 });
@@ -102,7 +111,7 @@ function renderVisits() {
   $('summary').innerHTML = (visits.length ? [
     [visits.length === 1 ? 'visit' : 'visits', visits.length, ''], ['checked in', n((v) => v.cat === 'seen'), 'seen'], ['booked', n((v) => stateOf(v) === 'booked' || stateOf(v) === 'confirmed'), 'pending'],
     ['not checked in', n((v) => stateOf(v) === 'notin'), 'notin'], ['cancelled', n((v) => v.cat === 'cancelled' && !v.movedTo), 'cancelled'], ['cancelled & moved', n((v) => !!v.movedTo), 'moved'], ['messaged', n((v) => v.already.length), 'sent'],
-  ].filter(([, c], i) => i < 2 || c).map(([l, c, k]) => `<span class="sum ${k}">${k ? '<i></i>' : ''}<b>${c}</b>${l}</span>`).join('') : '') + (elig ? `<button class="btn small" id="sel-elig">${I.check}Select all who need a text (${elig})</button>` : '');
+  ].filter(([, c], i) => i < 2 || c).map(([l, c, k]) => `<span class="sum ${k}">${k ? '<i></i>' : ''}<b>${c}</b>${l}</span>`).join('') : '') + (elig ? `<button class="btn small" id="sel-elig">${I.check}Select All Who Need a Text (${elig})</button>` : '');
   if ($('sel-elig')) $('sel-elig').onclick = () => { visits.forEach((v) => { if (v.eligible) v.selected = true; }); renderVisits(); };
   const blocks = mergedBlocks(visits.blocks);
   // One timeline: blocks and visits in time order.
@@ -118,6 +127,11 @@ function renderVisits() {
     const wrap = document.createElement('div'); wrap.className = 'trow';
     if (r.t === 'block') { wrap.innerHTML = rowHTML(r); L.appendChild(wrap); continue; }
     const v = r.v, st = stateOf(v);
+    // Moved to another time the same day: shown once, at the new time ("Moved from 2:20"); the old slot isn't listed.
+    if (v.movedTo && new Date(v.movedTo).toDateString() === new Date(v.start).toDateString()) continue;
+    // Two real visits for the same patient today: the later one says so.
+    const twin = rows.filter((x) => x.v && !x.v.movedTo && x.v.cat !== 'cancelled' && (x.v.patientId || fullName(x.v)) === (v.patientId || fullName(v)));
+    if (twin.length > 1 && twin[0].v !== v && !v.why) v.why = '2nd visit today';
     if (v.movedTo) {   // cancelled and booked again: muted, compact, nothing to send
       wrap.innerHTML = `<div class="tcol"><b>${esc(fmtTime(v.start))}</b></div><div class="item moved-item"><span></span><div class="avatar">${esc(initials(v))}</div><div class="main"><p class="name">${esc(fullName(v))} ${typeTag(v.visitType)}</p><p class="sub-line"><span class="moved-tag">${esc(movedLabel(v.movedTo, v.start))}</span></p></div><div class="actions"></div></div>`;
       L.appendChild(wrap); continue;
@@ -133,13 +147,13 @@ function renderVisits() {
         <div class="main">
           <p class="name">${esc(fullName(v))} ${typeTag(v.visitType)}</p>
           <p class="sub-line">${hasPhone ? `<span class="phone">${esc(fmtPhone(v.phone))}</span>` : `<span class="phone"><input placeholder="Add a phone number" value="${esc(v.phone)}"></span>`}${stateTag(v.confirmed && st === 'booked' ? 'confirmed' : st)}</p>
-          ${v.movedFrom ? `<div class="why-line">Moved from ${esc(new Date(v.movedFrom).toDateString() === new Date(v.start).toDateString() ? fmtTime(v.movedFrom) : fmtDateShort(v.movedFrom))}</div>` : ''}${v.why ? `<div class="why-line">${esc(v.why)}</div>` : ''}<div class="meta">${v.encounter && !v.encounter.started && /check-?in completed/i.test(v.statusText || '') ? '<span class="pill red">Chart not started</span>' : ''}${phoneBadge(v, v.rec)}${minorBadge(v, v.rec)}${dnt ? '<span class="pill red">Do not text</span>' : ''}${(() => { const c = lastCall(v.phone); return c && new Date(c.at) >= parseYmd(currentDate) ? `<span class="pill">${I.phone}${c.missed ? 'Missed call' : c.inbound ? 'Called in' : 'Called'} ${esc(fmtTime(c.at))}</span>` : ''; })()}${v.review ? `<span class="pill teal">Google review asked ${esc(v.review.toLocaleDateString([], { month: 'short', day: 'numeric' }))}</span>` : ''}</div>
+          ${v.movedFrom ? `<div class="why-line">Moved from ${esc(new Date(v.movedFrom).toDateString() === new Date(v.start).toDateString() ? fmtTime(v.movedFrom) : fmtDateShort(v.movedFrom))}</div>` : ''}${v.why ? `<div class="why-line">${esc(v.why)}</div>` : ''}<div class="meta">${v.encounter && !v.encounter.started && /check-?in completed/i.test(v.statusText || '') ? '<span class="pill red">Chart not started</span>' : ''}${phoneBadge(v, v.rec)}${minorBadge(v, v.rec)}${dnt ? '<span class="pill red">Do Not Text</span>' : ''}${(() => { const c = lastCall(v.phone); return c && new Date(c.at) >= parseYmd(currentDate) ? `<span class="pill">${I.phone}${c.missed ? 'Missed call' : c.inbound ? 'Called in' : 'Called'} ${esc(fmtTime(c.at))}</span>` : ''; })()}${v.review ? `<span class="pill teal">Google review asked ${esc(v.review.toLocaleDateString([], { month: 'short', day: 'numeric' }))}</span>` : ''}</div>
           ${v.editing ? composerHTML(v) : v.open ? `<div class="preview">${esc(finalMessage(v)) || '<span class="muted">No message</span>'}</div>` : ''}
           ${v.editing ? '<div class="row-actions"><button class="link-btn act-done">Done</button></div>' : ''}
         </div>
         <div class="actions">${dnt ? '' : sentThis && !v.editing
           ? `<span class="sent-note">${I.check}${esc((tplById(v.templateId) || {}).name || 'Message')} sent ${esc(fmtTime(sentThis.at))}</span><button class="type-btn act-type" title="Send something else">${I.down}</button>`
-          : `<button class="type-btn act-type">${esc(v.templateId ? (tplById(v.templateId) || {}).name || 'Message' : 'Message')}${I.down}</button><button class="btn send-btn act-send">${I.send}Send</button>`}</div>
+          : `<div class="send-split"><button class="btn send-btn act-send" title="Send ${esc(v.templateId ? (tplById(v.templateId) || {}).name || 'message' : 'message')}">${I.send}<span>${esc(v.templateId ? 'Send ' + ((tplById(v.templateId) || {}).name || 'Message') : 'Send Message')}</span></button><button class="type-btn act-type" title="Choose another template">${I.down}</button></div>`}</div>
       </div>`;
     const q = (x) => wrap.querySelector(x);
     const cb = q('input[type=checkbox]'); if (cb) cb.onchange = (e) => { v.selected = e.target.checked; q('.item').classList.toggle('selected', v.selected); updateBar(); };
@@ -218,7 +232,7 @@ function renderWeek() {
   const days = [...Array(7)].map((_, i) => addDays(weekStart, i)), today = ymd(), nowD = new Date();
   const s = parseYmd(days[0]), e = parseYmd(days[6]), sameMonth = s.getMonth() === e.getMonth();
   $('wk-title').textContent = `${s.toLocaleDateString([], { month: 'short', day: 'numeric' })} – ${sameMonth ? e.getDate() : e.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${e.getFullYear()}`;
-  $('wk-sub').textContent = days.includes(today) ? 'This week' : days[0] > today ? 'Upcoming week' : 'Past week';
+  $('wk-sub').textContent = days.includes(today) ? 'This Week' : days.includes(addDays(today, 7)) ? 'Next Week' : days.includes(addDays(today, -7)) ? 'Last Week' : days[0] > today ? 'Upcoming Week' : 'Past Week';
   const HH = inferHours();
   let lo = Math.min(HH.start, 9 * 60), hi = Math.max(HH.end, 17 * 60);
   days.forEach((d) => { const w = weekData[d]; if (!w) return; [...(w.items || []), ...(w.blocks || [])].forEach((x) => { const a = minsOf(x.start), z = minsOf(x.end); if (isFinite(a)) { lo = Math.min(lo, a); hi = Math.max(hi, (isFinite(z) ? z : a) + 20); } }); });
@@ -255,7 +269,7 @@ function renderWeek() {
     const v = (weekData[x.dataset.d].items || []).find((i) => String(i.appointmentId) === x.dataset.id); if (!v) return;
     const rec = recordFor(v), cat = category(v);
     openModal(`<div class="compose-top"><div class="avatar">${esc(initials(v))}</div><div><h2>${esc(fullName(v))}</h2><p class="muted small">${esc(parseYmd(x.dataset.d).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' }))} · ${esc(fmtTime(v.start))}–${esc(fmtTime(v.end))}</p></div></div>
-      <div class="meta">${stateTag(stateOf(v))}${v.encounter && !v.encounter.started && /check-?in completed/i.test(v.statusText || '') ? '<span class="pill red">Chart not started</span>' : ''}${stateOf(v) === 'notin' ? '<span class="pill">Still Pending in RxNT</span>' : ''}${v.visitType ? `<span class="pill">${esc(v.visitType)}</span>` : ''}${phoneBadge(v, rec)}${minorBadge(v, rec, false)}${rec && rec.dnt ? '<span class="pill red">Do not text</span>' : ''}${isConfirmed(v.phone, `${v.first || ''} ${v.last || ''}`.trim()) ? `<span class="pill green">${I.check}Confirmed</span>` : ''}</div>
+      <div class="meta">${stateTag(stateOf(v))}${v.encounter && !v.encounter.started && /check-?in completed/i.test(v.statusText || '') ? '<span class="pill red">Chart not started</span>' : ''}${stateOf(v) === 'notin' ? '<span class="pill">Still Pending in RxNT</span>' : ''}${v.visitType ? `<span class="pill">${esc(v.visitType)}</span>` : ''}${phoneBadge(v, rec)}${minorBadge(v, rec, false)}${rec && rec.dnt ? '<span class="pill red">Do Not Text</span>' : ''}${isConfirmed(v.phone, `${v.first || ''} ${v.last || ''}`.trim()) ? `<span class="pill green">${I.check}Confirmed</span>` : ''}</div>
       <p>${esc(fmtPhone(v.phone) || 'No phone in RxNT')}</p>
       <div class="actions"><button class="btn" id="ev-day">Open day</button>${rec && rec.dnt ? '' : `<button class="btn primary" id="ev-msg">${I.msg}Message</button>`}</div>`);
     $('ev-day').onclick = () => { closeModal(); go('visits'); loadDay(x.dataset.d); };
@@ -266,3 +280,11 @@ $('wk-prev').onclick = () => loadWeek(addDays(weekStart, -7));
 $('wk-next').onclick = () => loadWeek(addDays(weekStart, 7));
 $('wk-today').onclick = () => loadWeek(mondayOf(ymd()));
 
+// Arrow keys move a day (or a week) when nothing is being typed.
+document.addEventListener('keydown', (e) => {
+  if (e.target.closest('input, textarea, [contenteditable="true"], select') || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  const step = e.key === 'ArrowLeft' ? -1 : 1;
+  if (view === 'visits') { e.preventDefault(); loadDay(addDays(currentDate, step)); }
+  else if (view === 'calendar') { e.preventDefault(); loadWeek(addDays(weekStart, step * 7)); }
+});

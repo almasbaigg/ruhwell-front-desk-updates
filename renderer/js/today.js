@@ -1,3 +1,4 @@
+let todayFaxes = [];
 const FAX_IC = '<svg viewBox="0 0 24 24"><path d="M7 9V4h10v5"/><rect x="3" y="9" width="18" height="9" rx="2"/><path d="M7 14h10v6H7z"/></svg>';
 let todayHadItems = false;
 // Done on Today: one click counts once; if saving fails the row comes back and says so.
@@ -10,14 +11,14 @@ async function markTodayDone(it, btn, row) {
 }   // so clearing the last item gets a small celebration, but opening to an empty list doesn't
 /* Today: the home screen. The day at a glance, what needs attention, today's visits, checklist and notes. */
 const ALERT = {
-  new: { label: 'New booking', icon: '<path d="M12 5v14M5 12h14"/>', action: ['welcome', 'Send welcome'] },
+  new: { label: 'New booking', icon: '<path d="M12 5v14M5 12h14"/>', action: ['welcome', 'Send Welcome'] },
   rescheduled: { label: 'Rescheduled', icon: '<path d="M4 12a8 8 0 0 1 14-5.3L20 9M20 4v5h-5M20 12a8 8 0 0 1-14 5.3L4 15M4 20v-5h5"/>' },
-  cancelled: { label: 'Cancelled', icon: '<path d="M6 6l12 12M18 6L6 18"/>', action: ['reschedule', 'Offer new time'] },
-  noshow: { label: 'No-show', icon: '<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>', action: ['reschedule', 'Offer new time'] },
+  cancelled: { label: 'Cancelled', icon: '<path d="M6 6l12 12M18 6L6 18"/>', action: ['reschedule', 'Offer New Time'] },
+  noshow: { label: 'No-show', icon: '<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>', action: ['reschedule', 'Offer New Time'] },
   optout: { label: 'Opted out', icon: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>' },
   confirmed: { label: 'Confirmed', icon: '<path d="M5 12l5 5L20 7"/>' },
-  reply: { label: 'New text', icon: '<path d="M4 20l1.2-4A8 8 0 1 1 8 19z"/>' },
-  newpatient: { label: 'New patient', icon: '<circle cx="10" cy="8" r="4"/><path d="M3 21c.8-4 3.6-6 7-6s6.2 2 7 6M19 8v6M16 11h6"/>', action: ['open', 'Open patient'] },
+  reply: { label: 'New Text', icon: '<path d="M4 20l1.2-4A8 8 0 1 1 8 19z"/>' },
+  newpatient: { label: 'New Patient', icon: '<circle cx="10" cy="8" r="4"/><path d="M3 21c.8-4 3.6-6 7-6s6.2 2 7 6M19 8v6M16 11h6"/>', action: ['open', 'Open Patient'] },
   rebooked: { label: 'Rebooked', icon: '<path d="M4 12a8 8 0 0 1 14-5.3L20 9M20 4v5h-5"/>' },
   soon: { label: 'Starting soon', icon: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>' },
 };
@@ -35,9 +36,9 @@ function urgency(i) {
 
 async function gatherToday() {
   const today = ymd(), tomorrow = addDays(today, 1);
-  const [texts, calls, alerts, hist, pats, range, rx, st, snoozed, portal] = await Promise.all([
+  const [texts, calls, alerts, hist, pats, range, rx, st, snoozed, portal, woke] = await Promise.all([
     window.api.textThreads(30), window.api.callList(30), window.api.watchAlerts(), window.api.history(), window.api.patients(),
-    window.api.rxntRange(today, 8), window.api.rxList(), window.api.syncStatus(), window.api.snoozes(), window.api.portalList(),
+    window.api.rxntRange(today, 8), window.api.rxList(), window.api.syncStatus(), window.api.snoozes(), window.api.portalList(), window.api.woke ? window.api.woke() : {},
   ]);
   history = hist; patients = pats; indexPatients(patients); Object.assign(dayStore, range);
   const items = [];
@@ -49,7 +50,7 @@ async function gatherToday() {
   }
   for (const c of calls.filter((x) => x.due)) {
     const unk = c.who.kind === 'unknown'; if (unk && Date.now() - new Date(c.at) > WEEK) continue;
-    items.push({ key: 'c:' + c.phone, phone: c.phone, unk, sec: unk ? 'callers' : 'patients', at: c.at, kind: 'call', icon: I.phone, title: c.who.name || fmtPhone(c.phone), sub: `${c.voicemail ? 'Voicemail' + (c.transcription ? `: “${c.transcription.slice(0, 70)}”` : '') : 'Missed call'} · ${ago(c.at)}`, action: ['Text back', () => openThread(c.phone)], done: () => window.api.markDone('c', c.phone) });
+    items.push({ key: 'c:' + c.phone, phone: c.phone, unk, sec: unk ? 'callers' : 'patients', at: c.at, kind: 'call', icon: I.phone, title: c.who.name || fmtPhone(c.phone), sub: `${c.voicemail ? 'Voicemail' + (c.transcription ? `: “${c.transcription.slice(0, 70)}”` : '') : 'Missed call'} · ${ago(c.at)}`, action: ['Text Back', () => openThread(c.phone)], done: () => window.api.markDone('c', c.phone) });
   }
   // RxNT portal messages from patients (the RxNT sidebar chat); replies happen in RxNT
   for (const c of (portal.conversations || []).filter((x) => x.needsReply && !x.done)) {
@@ -76,7 +77,16 @@ async function gatherToday() {
   }
   // New faxes waiting to be filed into a chart.
   const fx = (st && st.faxes) || {};
-  if (fx.count) items.push({ key: 'faxes', urg: 'amber', sec: 'faxes', at: fx.lastNewAt || new Date().toISOString(), kind: 'fax', icon: FAX_IC, title: `${fx.count} new fax${fx.count > 1 ? 'es' : ''}`, tag: 'Doximity', sub: 'Pick the patient and add it to their chart', action: ['Open faxes', () => go('faxes')] });
+  todayFaxes = await window.api.faxList().catch(() => []);
+  // New referrals from faxes: first "add the patient in RxNT", then (once the app finds them) "save the fax".
+  for (const f of (todayFaxes || []).filter((x) => x.referral && x.status === 'new')) {
+    const ready = f.referral.status === 'ready';
+    items.push({ key: 'ref:' + f.id, urg: ready ? 'red' : 'amber', sec: 'faxes', at: f.referral.readyAt || f.referral.at, kind: 'fax', icon: FAX_IC,
+      title: ready ? 'Referred patient is in RxNT now' : 'New referral: add patient in RxNT', tag: 'Referral',
+      sub: ready ? 'Save their fax to the chart' : `${f.found && f.found.name ? 'Named on the fax · ' : ''}the app checks RxNT every 20 min`,
+      action: ready ? ['Save to Chart', () => { go('faxes'); setTimeout(() => openFax(f.id), 300); }] : ['Open in RxNT', () => window.api.openRxnt ? window.api.openRxnt('patients') : go('faxes')] });
+  }
+  if (fx.count) items.push({ key: 'faxes', urg: 'amber', sec: 'faxes', at: fx.lastNewAt || new Date().toISOString(), kind: 'fax', icon: FAX_IC, title: `${fx.count} new fax${fx.count > 1 ? 'es' : ''}`, tag: 'Doximity', sub: 'Pick the patient and add it to their chart', action: ['Open Faxes', () => go('faxes')] });
   for (const [k, one, many, lvl, tag] of TODO) {
     if (k === 'unsigned' && unsigned.length) continue;   // listed one by one above
     if (rc[k] > 0) items.push({ key: 'todo:' + k, urg: lvl, sec: 'rx', at: new Date().toISOString(), kind: 'rx', icon: I.check, title: `${rc[k]} ${rc[k] > 1 ? many : one}`, tag,
@@ -94,7 +104,7 @@ async function gatherToday() {
   const rebooked = (appt) => pool.some((v) => category(v) !== 'cancelled' && samePatient(v, appt) && v.appointmentId !== appt.appointmentId && Math.abs(new Date(v.start) - new Date(appt.start)) <= 14 * 864e5);
   for (const a of open.filter((x) => !((x.kind === 'new' && cxSlots.has(slot(x))) || (x.kind === 'cancelled' && (newSlots.has(slot(x)) || rebooked(x.appt || {})))))) {
     const A = ALERT[a.kind];
-    if (a.kind === 'newpatient') { const p = patients.find((x) => x.key === a.key); items.push({ key: 'a:' + a.id, sec: 'schedule', at: a.at, kind: 'change', icon: `<svg viewBox="0 0 24 24">${A.icon}</svg>`, title: a.text.replace('New patient in RxNT: ', ''), tag: 'New patient', sub: `Registered in RxNT · ${ago(a.at)}`, action: p ? ['Open patient', () => { go('patients'); openPatient(p); }] : null, done: () => window.api.watchHandle(a.id) }); continue; }
+    if (a.kind === 'newpatient') { const p = patients.find((x) => x.key === a.key); items.push({ key: 'a:' + a.id, sec: 'schedule', at: a.at, kind: 'change', icon: `<svg viewBox="0 0 24 24">${A.icon}</svg>`, title: a.text.replace('New patient in RxNT: ', ''), tag: 'New Patient', sub: `Registered in RxNT · ${ago(a.at)}`, action: p ? ['Open Patient', () => { go('patients'); openPatient(p); }] : null, done: () => window.api.watchHandle(a.id) }); continue; }
     const appt = a.appt || {}, rec = recordFor(appt);
     if (rec && rec.dnt) continue;
     items.push({ key: 'a:' + a.id, apptStart: appt.start, sec: 'schedule', at: a.at, kind: 'change', icon: `<svg viewBox="0 0 24 24">${A.icon}</svg>`, title: `${A.label}: ${fullName(appt)}`, sub: `${appt.start ? fmtDateShort(appt.start) + ', ' + fmtTime(appt.start) : ''} · ${ago(a.at)}`,
@@ -119,10 +129,12 @@ async function gatherToday() {
   items.sort((a, b) => new Date(b.at) - new Date(a.at));   // newest first within each group
   // Color by urgency (red: now, amber: today, green: when you can), hide snoozed, red first.
   const visible = items.filter((i) => !(i.key && snoozed[i.key]));
+  const later = items.filter((i) => i.key && snoozed[i.key]).map((i) => ({ ...i, until: snoozed[i.key] })).sort((a, b) => a.until - b.until);
+  visible.forEach((i) => { if (i.key && woke && woke[i.key]) { i.tag = 'Back from Later'; i.woke = true; } });
   visible.forEach((i) => { i.urg = i.urg || urgency(i); });
   const RANK = { red: 0, amber: 1, green: 2 };
   visible.sort((a, b) => RANK[a.urg] - RANK[b.urg] || new Date(b.at) - new Date(a.at));
-  return { items: visible, alerts, range, texts, calls, rx, st };
+  return { items: visible, later, alerts, range, texts, calls, rx, st };
 }
 
 async function loadToday() {
@@ -131,7 +143,7 @@ async function loadToday() {
   loadChecklist(); loadNotes();
   if (!$('today-list').children.length) $('today-list').innerHTML = '<div class="loading-line"><span class="spinner"></span>Getting your day ready…</div>';
   const d = await loading(gatherToday);
-  todayItems = d.items; todaySync = await window.api.syncStatus(); paintTiles(d); paintTodo(d.items); paintVisits(d.range); paintDone(); paintClosing(d);
+  todayItems = d.items; todayLater = d.later || []; todaySync = await window.api.syncStatus(); paintTiles(d); paintTodo(d.items); paintVisits(d.range); paintDone(); paintClosing(d);
   paintStale(todaySync); paintChanges(d.alerts); paintFresh(todaySync);
   window.api.watchRead();
 }
@@ -181,11 +193,12 @@ function paintTiles(d) {
 }
 
 // Needs attention, in groups (most important first). Each group shows 3, with the rest one click away.
-const SECTIONS = [['rx', 'Prescriptions & RxNT'], ['faxes', 'Faxes'], ['patients', 'Patients waiting'], ['schedule', 'Schedule changes'], ['send', 'Ready to send'], ['callers', 'New callers'], ['fix', 'Patient info to fix']];
+const SECTIONS = [['rx', 'Prescriptions & RxNT'], ['faxes', 'Faxes'], ['patients', 'Patients Waiting'], ['schedule', 'Schedule Changes'], ['send', 'Ready to Send'], ['callers', 'New Callers'], ['fix', 'Patient info to fix']];
 const openSecs = new Set();
+let todayLater = [];
 function paintTodo(items) {
   navBadge('nb-today', items.length);   // the same number as Needs attention
-  $('todo-count').textContent = items.length || '';
+  $('todo-count').innerHTML = `${items.length || (todayLater.length ? 0 : '')}${todayLater.length ? `<small> · ${todayLater.length} later</small>` : ''}`;
   const L = $('today-list'); L.innerHTML = '';
   // Next up: the single most urgent thing, so there's one clear place to start.
   const top = items[0], nextShown = !!(top && top.urg !== 'green');
@@ -209,7 +222,7 @@ function paintTodo(items) {
     const shown = openSecs.has(key) ? list : list.slice(0, 3);
     for (const it of shown) {
       const el = document.createElement('div'); el.className = `todo k-${it.kind} u-${it.urg}`;
-      el.innerHTML = `<div class="ic">${it.icon}</div><div class="body"><p class="t"><span class="nm">${esc(it.title)}</span>${it.tag ? `<span class="pill amber">${esc(it.tag)}</span>` : ''}</p><p class="d">${esc(it.sub)}</p></div>
+      el.innerHTML = `<div class="ic">${it.icon}</div><div class="body"><p class="t"><span class="nm">${esc(it.title)}</span>${it.tag ? `<span class="pill ${it.woke ? 'woke' : 'amber'}">${it.woke ? (I.clock || '') : ''}${esc(it.tag)}</span>` : ''}</p><p class="d">${esc(it.sub)}</p></div>
         <div class="acts">${it.action ? `<button class="btn soft act">${esc(it.action[0])}</button>` : ''}${it.key ? `<button class="icon-btn later" title="Later">${I.clock || I.bell}</button>` : ''}${it.done ? `<button class="icon-btn done" title="Mark as done">${I.check}</button>` : ''}</div>`;
       if (it.key) el.querySelector('.later').onclick = (e) => laterMenu(e.currentTarget, it);
       if (it.action) el.querySelector('.act').onclick = it.action[1];
@@ -223,6 +236,20 @@ function paintTodo(items) {
       L.appendChild(more);
     }
   }
+  // Later: what's snoozed, with when it comes back. Collapsed to one line until opened.
+  if (todayLater.length) {
+    const head = document.createElement('button'); head.className = 'todo-sec later-sec' + (openSecs.has('later') ? ' open' : '');
+    head.innerHTML = `<span>Later</span><b>${todayLater.length}</b><i class="chev"></i>`; head.onclick = () => { openSecs.has('later') ? openSecs.delete('later') : openSecs.add('later'); paintTodo(items); };
+    L.appendChild(head);
+    if (openSecs.has('later')) for (const it of todayLater) {
+      const el = document.createElement('div'); el.className = 'todo later-item';
+      el.innerHTML = `<div class="ic">${I.clock || I.bell}</div><div class="body"><p class="t"><span class="nm">${esc(it.title)}</span></p><p class="d">Back ${esc(new Date(it.until).toDateString() === new Date().toDateString() ? fmtTime(new Date(it.until)) : new Date(it.until).toLocaleDateString([], { weekday: 'short' }) + ' ' + fmtTime(new Date(it.until)))}</p></div>
+        <div class="acts"><button class="btn soft now">Bring Back Now</button><button class="icon-btn later" title="Change Time">${I.clock || I.bell}</button></div>`;
+      el.querySelector('.now').onclick = async () => { el.classList.add('pop-out'); await window.api.snooze(it.key, 0); setTimeout(loadToday, 220); };
+      el.querySelector('.later').onclick = (e) => laterMenu(e.currentTarget, it);
+      L.appendChild(el);
+    }
+  }
 }
 
 // "Later": snooze an item, or for numbers not in your patients, ignore them for good.
@@ -232,10 +259,10 @@ function laterMenu(anchor, it) {
   // Snoozing hides it for a while; "add to checklist" turns it into a task with a reminder and a link back.
   // "In 3 hours", or "Before closing" when closing comes sooner; each choice shows the exact time.
   const close = (() => { const [h, m] = ((settings.sync || {}).busyEnd || '17:00').split(':').map(Number); const d = new Date(); d.setHours(h, m - 30, 0, 0); return d.getTime(); })();
-  const mid = close > inHours(1) && close < inHours(3) ? ['Before closing', close] : ['In 3 hours', inHours(3)];
+  const mid = close > inHours(1) && close < inHours(3) ? ['Before Closing', close] : ['In 3 Hours', inHours(3)];
   const at = (t) => `<small>${esc(fmtTime(new Date(t)))}</small>`;
-  P.innerHTML = `<div class="menu when-menu"><button data-t="${inHours(1)}"><i></i>In 1 hour${at(inHours(1))}</button><button data-t="${mid[1]}"><i></i>${mid[0]}${at(mid[1])}</button><button data-t="${tomorrow()}"><i></i>Tomorrow morning<small>8:00 AM</small></button><hr><button data-cl="1"><i></i>Add to checklist</button>${it.unk && it.phone ? '<button data-ignore="1"><i></i>Ignore this number</button>' : ''}</div>`;
-  const r = anchor.getBoundingClientRect(); P.style.top = `${r.bottom + 6}px`; P.style.left = `${Math.max(12, r.right - 230)}px`; P.style.width = '230px'; P.classList.remove('hidden');
+  P.innerHTML = `<div class="menu when-menu"><button data-t="${inHours(1)}"><i></i>In 1 Hour${at(inHours(1))}</button><button data-t="${mid[1]}"><i></i>${mid[0]}${at(mid[1])}</button><button data-t="${tomorrow()}"><i></i>Tomorrow Morning<small>8:00 AM</small></button><hr><button data-cl="1"><i></i>Add to Checklist</button>${it.unk && it.phone ? '<button data-ignore="1"><i></i>Ignore this number</button>' : ''}</div>`;
+  const r = anchor.getBoundingClientRect(); P.style.top = `${r.bottom + 6}px`; P.style.left = `${Math.max(12, r.right - 270)}px`; P.style.width = '270px'; P.classList.remove('hidden');
   P.querySelectorAll('button').forEach((b) => (b.onclick = async () => {
     hidePopover(); P.style.width = '';
     if (b.dataset.cl) { await addToChecklist(it); await window.api.snooze(it.key, tomorrow()); loadToday(); return; }
@@ -297,7 +324,9 @@ function timeStrip(td) {
     const s = new Date(v.start).getTime(), e = endOf(v);
     if (s - cursor >= 30 * 60000) gaps.push([cursor, s]);
     const st = stateOf(v), cls = st === 'seen' ? 'in' : st === 'confirmed' || v.confirmed ? 'conf' : st === 'notin' ? 'notin' : 'booked';
-    html += `<button class="ts-b ${cls} ${e < now ? 'past' : s <= now && now < e ? 'live' : ''}" style="left:calc(${pct(s)}% + 1px);width:calc(${Math.max(0.8, pct(e) - pct(s))}% - 2px)" title="${esc(fmtTime(v.start))} · ${esc(fullName(v))} · ${esc(({ seen: 'Checked in', confirmed: 'Confirmed', notin: 'Not checked in', booked: 'Booked' })[cls === 'conf' ? 'confirmed' : st] || st)}"></button>`;
+    // Colour by status: teal = checked in / now, sage = done, terracotta = started but not checked in, neutral = upcoming.
+    const late = s < now && st !== 'seen' ? ' late' : '', done = st === 'seen' && e < now ? ' done' : '';
+    html += `<button class="ts-b ${cls}${late}${done} ${e < now ? 'past' : s <= now && now < e ? 'live' : ''}" style="left:calc(${pct(s)}% + 1px);width:calc(${Math.max(0.8, pct(e) - pct(s))}% - 2px)" title="${esc(fmtTime(v.start))} · ${esc(fullName(v))} · ${esc(({ seen: 'Checked In', confirmed: 'Confirmed', notin: 'Not Checked In', booked: 'Booked' })[cls === 'conf' ? 'confirmed' : st] || st)}"></button>`;
     cursor = Math.max(cursor, e);
   }
   if (to - cursor >= 30 * 60000) gaps.push([cursor, to]);
@@ -327,7 +356,12 @@ function paintClosing(d) {
     [n((i) => i.kind === 'text'), 'text', 'texts'], [n((i) => i.kind === 'call'), 'call', 'calls'], [n((i) => i.sec === 'rx' && i.rxItem), 'prescription', 'prescriptions'],
     [n((i) => i.sec === 'rx' && !i.rxItem), 'RxNT item', 'RxNT items'], [n((i) => i.sec === 'schedule'), 'schedule change', 'schedule changes'], [n((i) => ['send', 'fix'].includes(i.sec)), 'to send or fix', 'to send or fix'],
   ].filter(([c]) => c).map(([c, one, many]) => `${c} ${c > 1 ? many : one}`);
-  el.innerHTML = (red.length ? `<b>Before you go</b><span>${esc(parts.join(' · '))}</span>` : `${I.check}<b>All done for today</b><span>Nothing urgent left.</span>`) + tomorrow;
+  // Each item is its own chip (count + label) that opens the right place.
+  const CHIP = { text: ['texts', I.msg], call: ['calls', I.phone || I.msg], prescription: ['rx', I.pill || I.check], 'RxNT item': ['rx', I.pill || I.check], 'schedule change': ['today', I.cal || I.check], 'to send or fix': ['today', I.send || I.check] };
+  const chips = parts.map((p) => { const [, c, ...w] = p.match(/^(\d+) (.*)$/) || [, '', p]; const label = w.join(' '); const key = Object.keys(CHIP).find((k) => label.startsWith(k.replace(/s$/, ''))) || 'to send or fix';
+    return `<button class="bg-chip" data-go="${CHIP[key][0]}">${CHIP[key][1] || ''}<b>${c}</b><span>${esc(label.replace(/\b\w/g, (m) => m.toUpperCase()).replace(/\bTo\b/, 'to').replace(/\bOr\b/, 'or'))}</span></button>`; }).join('');
+  el.innerHTML = (red.length ? `<div class="bg-title"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 16.5v.5"/><circle cx="12" cy="12" r="9"/></svg><b>Before You Go</b></div><div class="bg-chips">${chips}</div>` : `<div class="bg-title">${I.check}<b>All Done for Today</b></div><span class="bg-sub">Nothing urgent left.</span>`) + tomorrow;
+  el.querySelectorAll('.bg-chip').forEach((b) => (b.onclick = () => go(b.dataset.go)));
 }
 
 $('tv-open').onclick = () => { go('visits'); loadDay(ymd()); };
@@ -355,7 +389,7 @@ function paintStale(st) {
   const el = $('today-stale'), v = st && st.scheduleStale;
   if (!v) { el.classList.add('hidden'); return; }
   const rx = ((st.accounts || {}).rxnt || {});
-  el.innerHTML = `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span><b>Schedule not checked ${v === 'never' ? 'yet' : 'since ' + esc(fmtTime(new Date(v)))}</b> · ${esc(rx.level === 'red' ? 'RxNT needs you to sign in' : 'changes may be missing')}</span><button class="btn small" id="stale-fix">${rx.level === 'red' ? 'Sign in' : 'Check now'}</button>`;
+  el.innerHTML = `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span><b>Schedule not checked ${v === 'never' ? 'yet' : 'since ' + esc(fmtTime(new Date(v)))}</b> · ${esc(rx.level === 'red' ? 'RxNT needs you to sign in' : 'changes may be missing')}</span><button class="btn small" id="stale-fix">${rx.level === 'red' ? 'Sign In' : 'Check now'}</button>`;
   el.classList.remove('hidden');
   $('stale-fix').onclick = () => (rx.level === 'red' ? go('settings') : syncEverything(['schedule']));
 }
@@ -367,6 +401,9 @@ function paintChanges(alerts) {
   if (!list.length) { el.innerHTML = ''; el.classList.add('hidden'); return; }
   el.classList.remove('hidden');
   const wasOpen = el.open;
-  el.innerHTML = `<summary>Changes today <em>${list.length}</em></summary><div class="ch-list">${list.map((a) => `<div class="ch-row ${a.quiet ? 'quiet' : ''}"><time>${esc(fmtTime(new Date(a.at)))}</time><span>${esc(a.text)}</span></div>`).join('')}</div>`;
+  // Coloured by what happened (new = teal, cancelled/removed/no-show = terracotta, checked in = sage); changes
+  // found after the app was offline get a small marker instead of a repeated "While disconnected:".
+  const tone = (k) => (['new', 'rebooked', 'backon'].includes(k) ? 'new' : ['cancelled', 'noshow'].includes(k) ? 'gone' : ['checkin'].includes(k) ? 'done' : 'info');
+  el.innerHTML = `<summary>Changes Today <em>${list.length}</em></summary><div class="ch-list">${list.map((a) => `<div class="ch-row ${a.quiet ? 'quiet' : ''} t-${tone(a.kind)}"><time>${esc(fmtTime(new Date(a.at)))}</time><i class="ch-dot"></i><span>${esc(String(a.text || '').replace(/^While disconnected:\s*/, ''))}${a.late ? '<em class="ch-late" title="Found when the app reconnected">while offline</em>' : ''}</span></div>`).join('')}</div>`;
   el.open = wasOpen;
 }

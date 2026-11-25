@@ -1,3 +1,4 @@
+let esSavedFiles = [];
 /* Settings → Email (connection, sender name, signature, welcome packet, email templates) and Sending hours. */
 async function loadEmailSettings() {
   if ($('em-pane') && $('em-pane').querySelector('#em-key')) $('em-pane').innerHTML = '';
@@ -19,6 +20,13 @@ async function loadEmailSettings() {
   $('es-packet-open').onclick = () => window.api.emailPacketOpen();
   $('es-packet-replace').onclick = async () => { const r = await window.api.emailPacketReplace(); if (r.error) toast(r.error); else if (r.ok) toast('Welcome packet replaced'); loadEmailSettings(); };
   $('es-packet-reset').onclick = async () => { await window.api.emailPacketReset(); toast('Back to the original packet'); loadEmailSettings(); };
+  // Saved files library.
+  const files = await window.api.filesList().catch(() => []);
+  esSavedFiles = files;
+  $('es-files').innerHTML = files.length ? files.map((f) => `<div class="file-row"><span class="fr-ic">${I.mail}</span><span class="fr-main"><b>${esc(f.name)}</b><em>${esc(fmtSize(f.size))} · added ${esc(fmtDateShort(f.at))}</em></span><button class="btn small" data-open="${esc(f.id)}">Open</button><button class="icon-btn" title="Remove" data-rm="${esc(f.id)}">${I.x}</button></div>`).join('') : '<p class="muted small">No saved files yet. Add forms, policies or directions you often attach.</p>';
+  $('es-files').querySelectorAll('[data-open]').forEach((b) => (b.onclick = () => window.api.filesOpen(b.dataset.open)));
+  $('es-files').querySelectorAll('[data-rm]').forEach((b) => (b.onclick = async () => { if (!confirm('Remove this saved file? Templates that attach it will stop attaching it.')) return; await window.api.filesRemove(b.dataset.rm); loadEmailSettings(); }));
+  $('es-files-add').onclick = async () => { const r = await window.api.filesAdd(); if (r.skipped && r.skipped.length) toast(`Too large (over 20 MB): ${r.skipped.length} file(s)`); loadEmailSettings(); };
   emTemplates = await window.api.emailTemplates();
   $('es-tpls').innerHTML = emTemplates.map((t, i) => `<div class="conn-row"><div class="conn-main"><strong>${esc(t.name)}</strong><span class="muted small">${esc(t.subject)}${t.packet ? ' · welcome packet attached' : ''}</span></div><div class="row-gap"><button class="btn small" data-e="${i}">Edit</button><button class="icon-btn" data-d="${i}" title="Delete">${I.x}</button></div></div>`).join('');
   $('es-tpls').querySelectorAll('[data-e]').forEach((b) => (b.onclick = () => editEmailTemplate(+b.dataset.e)));
@@ -50,6 +58,7 @@ function editEmailTemplate(i) {
     <div class="ec-body" id="et-body" contenteditable="true">${cleanHtml(t.html)}</div>
     <p class="muted small">Write <b>{first}</b> where the patient's first name goes.</p>
     <label class="welcome-row on"><input type="checkbox" id="et-packet" ${t.packet ? 'checked' : ''}><span>Attach the welcome packet</span></label>
+    ${esSavedFiles.length ? `<div class="et-files"><span class="muted small">Also attach</span>${esSavedFiles.map((f) => `<label class="welcome-row ${ (t.files || []).includes(f.id) ? 'on' : ''}"><input type="checkbox" class="et-file" value="${esc(f.id)}" ${(t.files || []).includes(f.id) ? 'checked' : ''}><span>${esc(f.name)}</span></label>`).join('')}</div>` : ''}
     <div class="actions"><span style="flex:1"></span><button class="btn" id="et-cancel">Cancel</button><button class="btn primary" id="et-save">Save template</button></div></div>`);
   const body = $('et-body');
   document.querySelectorAll('.em-compose .ec-tools button').forEach((b) => (b.onmousedown = (e) => {
@@ -62,7 +71,7 @@ function editEmailTemplate(i) {
   }));
   $('et-x').onclick = $('et-cancel').onclick = closeModal;
   $('et-save').onclick = async () => {
-    t.name = $('et-name').value.trim(); t.subject = $('et-subject').value.trim(); t.html = cleanHtml(body.innerHTML); t.packet = $('et-packet').checked;
+    t.name = $('et-name').value.trim(); t.subject = $('et-subject').value.trim(); t.html = cleanHtml(body.innerHTML); t.packet = $('et-packet').checked; t.files = [...document.querySelectorAll('.et-file:checked')].map((x) => x.value);
     if (!t.name || !t.subject) return toast('Add a name and a subject.');
     if (i >= 0) emTemplates[i] = t; else emTemplates.push(t);
     await window.api.emailTemplatesSave(emTemplates); closeModal(); toast('Template saved'); loadEmailSettings();

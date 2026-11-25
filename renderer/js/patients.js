@@ -1,8 +1,18 @@
 /* Patients list, patient details, New patient and New message. */
 /* ---------- Patients ---------- */
 const isMinor = (p) => p.age != null && p.age < 18;
+// Sort: First Name (default), Last Name or DOB; the choice is remembered. Names always show First Last.
+let pSort = (() => { try { return localStorage.getItem('pSort') || 'first'; } catch { return 'first'; } })();
+const dobKey = (p) => { const m = String(p.dob || '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/); return m ? `${m[3]}${m[1].padStart(2, '0')}${m[2].padStart(2, '0')}` : '99999999'; };
+function sortPatients(list) {
+  const n = (x) => niceCase(x || '').toLowerCase();
+  const by = { first: (a, b) => `${n(a.first)} ${n(a.last)}`.localeCompare(`${n(b.first)} ${n(b.last)}`), last: (a, b) => `${n(a.last)} ${n(a.first)}`.localeCompare(`${n(b.last)} ${n(b.first)}`), dob: (a, b) => dobKey(a).localeCompare(dobKey(b)) || by.first(a, b) };
+  return [...list].sort(by[pSort] || by.first);
+}
+const isNewPt = (p) => p.pending || (p.firstSeenAt && Date.now() - new Date(p.firstSeenAt) < 7 * 864e5);
+const groupOf = (p) => pSort === 'dob' ? (dobKey(p) === '99999999' ? 'No DOB' : dobKey(p).slice(0, 3) + '0s') : ((niceCase(pSort === 'last' ? p.last : p.first) || '#')[0].toUpperCase().replace(/[^A-Z]/, '#'));
 async function loadPatients(keep) {
-  patients = (await window.api.patients()).sort((a, b) => `${a.last} ${a.first}`.localeCompare(`${b.last} ${b.first}`));
+  patients = sortPatients(await window.api.patients());
   indexPatients(patients); history = await window.api.history(); await refreshCallsCache().catch(() => {});
   if (keep && activePatient) { const r = patients.find((p) => p.key === activePatient.key); if (r) Object.assign(activePatient, { ...r, text: activePatient.text, templateId: activePatient.templateId }); }
   renderPatients();
@@ -25,11 +35,22 @@ function renderPatients() {
   $('p-chips').innerHTML = pTab === 'dnt' ? '' : [['all', 'All'], ['nophone', 'No phone'], ['notcell', 'Not cell'], ['edited', 'Edited'], ['minor', 'Minors']].map(([k, l]) => `<button class="chip ${pFilter === k ? 'on' : ''}" data-k="${k}">${l}<b>${pool.filter(F[k]).length}</b></button>`).join('');
   $('p-chips').querySelectorAll('.chip').forEach((c) => (c.onclick = () => { pFilter = c.dataset.k; renderPatients(); }));
   const q = $('p-search').value.trim().toLowerCase(), qd = digits(q);
+  if (!$('p-sort')) {
+    $('p-chips').insertAdjacentHTML('beforebegin', `<div class="p-sortbar"><span>Sort</span><div class="seg-toggle mini" id="p-sort">${[['first', 'First Name'], ['last', 'Last Name'], ['dob', 'DOB']].map(([k, l]) => `<button data-s="${k}">${l}</button>`).join('')}</div></div>`);
+    $('p-sort').querySelectorAll('button').forEach((b) => (b.onclick = () => { pSort = b.dataset.s; try { localStorage.setItem('pSort', pSort); } catch {} patients = sortPatients(patients); renderPatients(); $('p-list').scrollTop = 0; }));
+  }
+  $('p-sort').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.s === pSort));
   const list = pool.filter(F[pFilter] || F.all).filter((p) => !q || `${p.first} ${p.last}`.toLowerCase().includes(q) || `${p.last}, ${p.first}`.toLowerCase().includes(q) || (qd.length >= 3 && digits(p.phone).includes(qd)));
-  $('p-list').innerHTML = list.length ? list.slice(0, 600).map((p) => `
+  let lastG = null;
+  $('p-list').innerHTML = list.length ? list.slice(0, 600).map((p) => { const g = q ? null : groupOf(p), head = g && g !== lastG ? `<div class="p-group" data-g="${esc(g)}">${esc(g)}</div>` : ''; lastG = g || lastG; return head + `
     <div class="prow ${activePatient && activePatient.key === p.key ? 'active' : ''}" data-key="${esc(p.key)}"><div class="avatar">${esc(initials(p))}</div>
-    <div style="min-width:0"><strong>${esc(fullName(p))}</strong><p class="small ${p.phone ? 'muted' : 'bad'}">${p.phone ? esc(fmtPhone(p.phone)) : 'No phone'}${p.phoneSource === 'Typed' ? ' · edited' : /home/i.test(p.phoneSource || '') ? ' · home' : ''}${isMinor(p) ? ' · minor' : ''}${p.pending ? ' · not in RxNT yet' : ''}${dupes.has(p.key) ? ' · possible duplicate' : ''}${p.dnt && p.dntReason ? ' · ' + esc(p.dntReason) : ''}</p></div></div>`).join('')
+    <div style="min-width:0"><strong>${esc(fullName(p))}</strong>${isNewPt(p) ? '<span class="tag new-pt">New</span>' : ''}<p class="small ${p.phone ? 'muted' : 'bad'}">${p.phone ? esc(fmtPhone(p.phone)) : 'No phone'}${p.phoneSource === 'Typed' ? ' · edited' : /home/i.test(p.phoneSource || '') ? ' · home' : ''}${isMinor(p) ? ' · minor' : ''}${p.pending ? ' · not in RxNT yet' : ''}${dupes.has(p.key) ? ' · possible duplicate' : ''}${p.dnt && p.dntReason ? ' · ' + esc(p.dntReason) : ''}</p></div></div>`; }).join('')
     : `<p class="muted small" style="padding:10px">${patients.length ? 'No matches' : 'Syncing from RxNT…'}</p>`;
+  // A–Z jump strip beside the list (letters, or decades for DOB)
+  let jump = $('p-jump'); if (!jump) { $('p-list').insertAdjacentHTML('afterend', '<nav class="p-jump" id="p-jump"></nav>'); jump = $('p-jump'); }
+  const groups = [...$('p-list').querySelectorAll('.p-group')]; jump.style.top = `${$('p-list').offsetTop + 6}px`;
+  jump.innerHTML = groups.length > 3 ? groups.map((g) => `<button data-g="${esc(g.dataset.g)}">${esc(pSort === 'dob' ? g.dataset.g.replace(/^\d\d/, '’').replace('No DOB', '—') : g.dataset.g)}</button>`).join('') : '';
+  jump.querySelectorAll('button').forEach((b) => (b.onclick = () => { const t = groups.find((g) => g.dataset.g === b.dataset.g); if (t) $('p-list').scrollTo({ top: t.offsetTop - $('p-list').offsetTop, behavior: 'smooth' }); }));
   $('p-list').querySelectorAll('.prow').forEach((r) => (r.onclick = () => { const rec = patients.find((p) => p.key === r.dataset.key); activePatient = { ...rec, text: '', templateId: null }; renderPatients(); renderCompose(); }));
   if (activePatient && !patients.find((p) => p.key === activePatient.key)) activePatient = null;
 }
@@ -42,7 +63,7 @@ function renderCompose() {
   $('p-compose').innerHTML = `
     <div class="compose-top"><div class="avatar">${esc(initials(p))}</div>
       <div><h2>${esc(fullName(p))}</h2><p class="muted small">${[p.dob ? 'DOB ' + esc(p.dob) : '', p.age != null ? esc(p.age) + ' yrs' : '', p.chart ? 'Chart ' + esc(p.chart) : '', p.lastVisit ? 'Last visit ' + esc(new Date(p.lastVisit).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })) : '', p.nextVisit ? 'Next visit ' + esc(new Date(p.nextVisit).toLocaleDateString([], { month: 'short', day: 'numeric' })) + ' ' + esc(fmtTime(p.nextVisit)) : ''].filter(Boolean).join(' · ') || 'Added in app'}</p></div>
-      <label class="switch"><input type="checkbox" id="c-dnt" ${p.dnt ? 'checked' : ''}><span></span><b class="small">Do not text</b></label></div>
+      <label class="switch"><input type="checkbox" id="c-dnt" ${p.dnt ? 'checked' : ''}><span></span><b class="small">Do Not Text</b></label></div>
     <div class="meta" style="margin-top:-4px">${phoneBadge(p, p)}${minorBadge(p, p)}${p.pending ? '<span class="pill blue">Not in RxNT yet</span>' : ''}${dupes.has(p.key) ? '<span class="pill amber" title="Another record has the same phone and a similar name">Possible duplicate</span>' : ''}${(p.otherPhones || []).length ? `<span class="pill">Also texts from ${esc(p.otherPhones.map(fmtPhone).join(', '))}</span>` : ''}${p.dnt && p.dntReason ? `<span class="pill red">${esc(p.dntReason)}</span>` : ''}${rv ? `<span class="pill teal">Google review asked ${esc(rv.toLocaleDateString([], { month: 'short', day: 'numeric' }))}</span>` : ''}${last ? `<span class="pill">Last contact: ${esc(last.label)} · ${esc(new Date(last.at).toLocaleDateString([], { month: 'short', day: 'numeric' }))}</span>` : ''}</div>
     <div class="field-grid">
       <label class="field"><span>Phone${p.phoneSource ? ' · ' + esc(p.phoneSource === 'Typed' ? 'edited in app' : p.phoneSource) : ''}</span><input id="c-phone" value="${esc(fmtPhone(p.phone))}" placeholder="No phone in RxNT"></label>
@@ -87,7 +108,7 @@ function renderCompose() {
   }
 }
 function patientForm(onSave, preset = {}) {
-  openModal(`<h2>New patient</h2>${preset.pending ? '<p class="muted small">Saved here until they\'re registered in RxNT, then linked automatically by phone.</p>' : ''}
+  openModal(`<h2>New Patient</h2>${preset.pending ? '<p class="muted small">Saved here until they\'re registered in RxNT, then linked automatically by phone.</p>' : ''}
     <div class="field-grid"><label class="field"><span>First name</span><input id="n-first"></label><label class="field"><span>Last name</span><input id="n-last"></label></div>
     <label class="field"><span>Phone</span><input id="n-phone" placeholder="(555) 555-5555" value="${esc(preset.phone ? fmtPhone(preset.phone) : '')}"></label>
     <div class="field-grid"><label class="field"><span>Date of birth (optional)</span><input id="n-dob" type="date"></label><label class="field"><span>Texts go to</span><select id="n-to"><option value="patient">Patient</option><option value="parent">Parent / guardian</option></select></label></div>
@@ -115,7 +136,7 @@ const newText = async () => {
   [patients, history] = await Promise.all([window.api.patients(), window.api.history()]); indexPatients(patients);
   const p = { first: '', last: '', phone: '', text: '', templateId: null };
   let picked = null;
-  openModal(`<h2>New text</h2>
+  openModal(`<h2>New Text</h2>
     <label class="field"><span>To</span><input id="q-to" placeholder="Search a patient or type a phone number" autocomplete="off"></label>
     <div id="q-suggest"></div>
     <div class="field-grid" id="q-names"><label class="field"><span>First name</span><input id="q-first"></label><label class="field"><span>Last name</span><input id="q-last"></label></div>
