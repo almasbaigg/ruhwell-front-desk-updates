@@ -278,19 +278,22 @@ function bindConnect() {
 }
 // Categories, worked out here on the computer from the sender and subject (nothing is sent anywhere).
 // Appointments come first so booking emails (ZocDoc and the like) are never missed.
+// Three categories (Almas): Appointments first, then Billing & Payments, then Other.
+// Appointments means a real booking event: a patient booked, requested, moved or cancelled a visit, usually through
+// a booking service (ZocDoc, Psychology Today, Headway…). Generic emails that merely mention a "schedule" don't count.
+// Judged from the sender and subject only (not the preview text, which caused false matches).
+const BOOKING_SENDERS = /zocdoc|psychologytoday|headway|\balma\b|helloalma|sondermind|growtherapy|grow therapy|rula|spring ?health|nirvana|simplepractice|therapyden|calendly|acuity|setmore|appointy/i;
+const BOOKING_SUBJECT = /(new|upcoming|cancel(l?ed)?|resched\w*|confirm(ed)?|requested|request(ed)? (an? )?)\s*(appointment|appt|visit|booking|session|consultation)|appointment (request|booked|scheduled|cancel\w*|reschedul\w*|confirm\w*)|booked (an? )?(appointment|visit|session)|(has|just) (booked|scheduled|cancel\w*|reschedul\w*)|wants? to (be seen|schedule|book)|new patient (request|inquiry|booking)|booking (request|confirm\w*)|(resched\w*|cancel\w*|move|change|push back) (my |our |the |an? )?(appointment|appt|visit|session)/i;
+const NOT_BOOKING = /webinar|newsletter|digest|unsubscribe|tips|marketing|promo|survey|tax|invoice|statement|payment/i;
 const EM_CATS = [
-  ['appt', 'Appointments', (m, t) => /zocdoc|zoc doc|psychologytoday|headway|alma\.|sondermind|grow ?therapy|appointment|\bappt\b|schedul|book(ed|ing)?\b|reschedul|cancel(l?ed|lation)?|availability|new patient|be seen|consult(ation)?|request(ing)? (an? )?(visit|appointment)|first visit|telehealth visit/i.test(t)],
-  ['delivery', 'Delivery Problems', (m, t) => /mailer-daemon|postmaster/i.test(m.from.email || '') || /delivery (status|incomplete|failure|has failed)|undeliverable|returned mail|couldn.t be delivered/i.test(t)],
-  ['patients', 'Patients', (m) => !!onlyPatient(m.from.email)],
-  ['pharmacy', 'Pharmacy & Rx', (m, t) => /pharmacy|cvs|walgreens|heb\b|kroger|surescripts|covermymeds|prior auth|refill|prescription|\brx\b/i.test(t)],
-  ['billing', 'Insurance & Billing', (m, t) => /insurance|claim|\beob\b|billing|invoice|payment|statement|aetna|cigna|bcbs|blue ?cross|united ?health|uhc|humana|medicaid|medicare|availity|tricare|copay/i.test(t)],
-  ['records', 'Records & Labs', (m, t) => /records?\b|\blabs?\b|results?\b|referral|labcorp|quest diag/i.test(t)],
-  ['updates', 'Updates', (m, t) => /no-?reply|newsletter|unsubscribe|digest|webinar|weekly|monthly|summary|announcement/i.test(t)],
+  ['appt', 'Appointments', (m, from, subj) => !NOT_BOOKING.test(subj) && (BOOKING_SUBJECT.test(subj) || (BOOKING_SENDERS.test(from) && /appointment|appt|book|visit|session|patient|request|cancel|resched/i.test(subj)))],
+  ['money', 'Billing & Payments', (m, from, subj) => /insurance|claim|\beob\b|remittance|\bera\b|billing|invoice|receipt|payment|paid|payout|deposit|refund|charge|statement|transaction|bank|credit card|card ending|payroll|\btax(es)?\b|1099|w-?2|subscription|renewal|balance|copay|deductible|superbill/i.test(subj) || /stripe|square|paypal|venmo|zelle|intuit|quickbooks|gusto|adp|chase|wellsfargo|bankofamerica|amex|americanexpress|capitalone|availity|officeally|waystar|aetna|cigna|bcbs|bluecross|uhc|unitedhealth|optum|humana|tricare|medicaid|medicare|rxnt.*bill/i.test(from)],
 ];
+const bounced = (m) => /mailer-daemon|postmaster/i.test(m.from.email || '') || /delivery (status|incomplete|failure|has failed)|undeliverable|returned mail|couldn.t be delivered/i.test(decodeEnt(m.subject || ''));
 function emCatOf(m) {
   if (m._cat) return m._cat;
-  const t = `${m.from.name || ''} ${m.from.email || ''} ${decodeEnt(m.subject || '')} ${decodeEnt(m.snippet || '')}`;
-  const hit = EM_CATS.find(([, , f]) => f(m, t));
+  const from = `${m.from.name || ''} ${m.from.email || ''}`, subj = decodeEnt(m.subject || '');
+  const hit = EM_CATS.find(([, , f]) => f(m, from, subj));
   return (m._cat = hit ? hit[0] : 'other');
 }
 let emCat = recall('em-cat', 'all');
@@ -314,7 +317,7 @@ function renderEmailList() {
     return `${head}<button class="em-row ${m.unread ? 'unread' : ''} ${emOpen === m.id ? 'on' : ''}" data-id="${esc(m.id)}">
       <span class="em-av">${esc(initialsOf(who))}</span>
       <span class="em-main"><span class="tr-top"><b>${emFolder === 'sent' ? '<em class="to">To</em> ' : ''}${esc(who)}</b>${m.count > 1 ? `<em class="cnt">${m.count}</em>` : ''}<span class="t">${esc(shortWhen(m.at))}</span></span>
-      <span class="em-subj">${esc(decodeEnt(m.subject))}</span><span class="tr-snip">${esc(decodeEnt(m.snippet))}</span></span></button>`;
+      <span class="em-subj">${emCatOf(m) === 'appt' ? '<i class="em-flag appt">Appointment</i>' : bounced(m) ? '<i class="em-flag bounce">Not Delivered</i>' : ''}${esc(decodeEnt(m.subject))}</span><span class="tr-snip">${esc(decodeEnt(m.snippet))}</span></span></button>`;
   }).join('')
     : emData.missing ? '' : `<div class="all-clear small-clear">${I.check}<b>${{ needs: emData.next ? 'Nothing waiting in these emails' : 'Nothing waiting for you', sent: 'Nothing sent', spam: 'No spam' }[emFolder] || 'No emails'}</b></div>`;
   if (emData.next) $('em-list').insertAdjacentHTML('beforeend', '<button class="btn small em-more" id="em-loadmore">Load Older Emails</button>');

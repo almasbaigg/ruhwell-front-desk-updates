@@ -237,7 +237,7 @@ $('s-activity').onclick = async () => {
     const det = (r) => Object.entries(r).filter(([k]) => !['at', 'source', 'type', 'ok'].includes(k)).map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`).join(' · ');
     $('al-list').innerHTML = rows.slice(0, 400).map((r) => `<div class="al-row ${r.ok ? '' : 'bad'}"><time>${esc(new Date(r.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</time><b>${esc(r.source)}</b><span>${esc(LBL[r.type] || r.type)}${r.ok ? '' : ' · failed'}</span><em>${esc(det(r))}</em></div>`).join('') || '<p class="muted small">Nothing yet.</p>';
   };
-  openModal(`<h2>Activity log</h2><p class="muted small">Last 90 days, newest first.</p>
+  openModal(`<h2>Activity Log</h2><p class="muted small">Last 90 days, newest first.</p>
     <div class="row-gap"><select id="al-src"><option value="">Everything</option><option>RxNT</option><option>Doximity</option><option>RingRx</option><option>Gmail</option></select><span style="flex:1"></span><button class="btn" id="al-csv">Export CSV</button></div>
     <div class="al-list" id="al-list"></div><div class="actions"><button class="btn" id="al-close">Close</button></div>`);
   $('al-src').onchange = draw; $('al-close').onclick = closeModal;
@@ -250,7 +250,7 @@ $('s-spam').onclick = async () => {
     $('sp-list').innerHTML = list.map((x) => `<div class="line"><div><strong>${esc(fmtPhone(x.phone))}</strong><div class="muted small">${x.who && x.who.name ? esc(x.who.name) + ' · ' : ''}marked ${esc(new Date(x.at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }))}</div></div><button class="btn" data-p="${esc(x.phone)}">Not Spam</button></div>`).join('') || '<p class="muted small">No spam numbers.</p>';
     $('sp-list').querySelectorAll('button[data-p]').forEach((b) => (b.onclick = async () => { await window.api.markSpam(b.dataset.p, false); toast('Removed from spam'); draw(); }));
   };
-  openModal(`<h2>Spam numbers</h2><p class="muted small">Calls, voicemails and texts from these go straight to Spam, with no alerts.</p><div class="lines" id="sp-list" style="max-height:340px;overflow:auto"></div><div class="actions"><button class="btn" id="sp-close">Close</button></div>`);
+  openModal(`<h2>Spam Numbers</h2><p class="muted small">Calls, voicemails and texts from these go straight to Spam, with no alerts.</p><div class="lines" id="sp-list" style="max-height:340px;overflow:auto"></div><div class="actions"><button class="btn" id="sp-close">Close</button></div>`);
   $('sp-close').onclick = closeModal; draw();
 };
 

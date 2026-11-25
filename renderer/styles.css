@@ -1212,10 +1212,10 @@ h1 { font-size: 32px; letter-spacing: -.012em; }
 @media (max-height: 800px) { .clock b { font-size: 30px; } .clock { padding: 10px 12px; } }
 
 /* (i): what a setting does, on hover or keyboard focus. */
-.info { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; border: 1px solid rgba(0, 87, 88, .25); color: var(--teal); font: italic 700 10px/1 Georgia, serif; cursor: help; position: relative; vertical-align: middle; margin-left: 4px; flex: none; }
-.info:hover, .info:focus { background: var(--teal); color: #fff; border-color: var(--teal); outline: none; }
-.info::after { content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%) translateY(4px); width: max-content; max-width: 260px; padding: 9px 12px; border-radius: 10px; background: #12302f; color: #fff; font: 500 12px/1.45 var(--sans); font-style: normal; white-space: normal; text-align: left; box-shadow: var(--shadow-3); opacity: 0; pointer-events: none; transition: opacity .15s, transform .15s; z-index: 30; }
-.info:hover::after, .info:focus::after { opacity: 1; transform: translateX(-50%) translateY(0); }
+i.info { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; border: 1px solid rgba(0, 87, 88, .25); color: var(--teal); font: italic 700 10px/1 Georgia, serif; cursor: help; position: relative; vertical-align: middle; margin-left: 4px; flex: none; }
+i.info:hover, i.info:focus { background: var(--teal); color: #fff; border-color: var(--teal); outline: none; }
+i.info::after { content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%) translateY(4px); width: max-content; max-width: 260px; padding: 9px 12px; border-radius: 10px; background: #12302f; color: #fff; font: 500 12px/1.45 var(--sans); font-style: normal; white-space: normal; text-align: left; box-shadow: var(--shadow-3); opacity: 0; pointer-events: none; transition: opacity .15s, transform .15s; z-index: 30; }
+i.info:hover::after, i.info:focus::after { opacity: 1; transform: translateX(-50%) translateY(0); }
 #view-settings .card { max-width: 860px; }
 #view-settings .row-line strong { display: inline-flex; align-items: center; }
 #view-settings .sub-h { margin: 18px 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
@@ -1390,11 +1390,11 @@ h1 { font-size: 32px; letter-spacing: -.012em; }
 .new-split .btn + .btn:hover { background: var(--teal-50); }
 .tpl-open svg { width: 17px; height: 17px; }
 /* Info icon: a drawn circle-i (not a letter in a font), same size everywhere. */
-.info { font-size: 0; color: transparent; width: 15px; height: 15px; border: 0; background: none; }
-.info::before { content: ""; width: 15px; height: 15px; background: var(--teal); opacity: .55; transition: opacity .15s;
+i.info { font-size: 0; color: transparent; width: 15px; height: 15px; border: 0; background: none; }
+i.info::before { content: ""; width: 15px; height: 15px; background: var(--teal); opacity: .55; transition: opacity .15s;
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='9.5'/%3E%3Cpath d='M12 11v6'/%3E%3Ccircle cx='12' cy='7.6' r='.6' fill='black'/%3E%3C/svg%3E") center / contain no-repeat; }
-.info:hover, .info:focus { background: none; color: transparent; border: 0; }
-.info:hover::before, .info:focus::before { opacity: 1; }
+i.info:hover, i.info:focus { background: none; color: transparent; border: 0; }
+i.info:hover::before, i.info:focus::before { opacity: 1; }
 /* Focus rings only when using the keyboard. */
 :focus:not(:focus-visible) { outline: none; }
 .btn:focus-visible, .icon-btn:focus-visible, .trow-btn:focus-visible, .em-row:focus-visible, .seg-toggle button:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
@@ -1849,7 +1849,7 @@ body.mac .gate { background: var(--page); }
 .tpl-row .info { margin-left: 2px; }
 .tpl-row .chev { margin-left: auto; }
 .conn-sub { display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 6px 10px; border-radius: 10px; background: var(--teal-50); font-size: 12.5px; color: var(--ink-2); width: fit-content; max-width: 100%; flex-wrap: wrap; }
-.conn-sub .health { width: 8px; height: 8px; flex: none; }
+.conn-sub .health { flex: none; transform: scale(.9); transform-origin: left center; }
 .conn-sub b { color: var(--teal-deep); }
 .conn-sub em { font-style: normal; color: var(--muted); }
 .conn-sub em::before { content: "·"; margin-right: 8px; }
@@ -1937,3 +1937,57 @@ body.rail #day-track .ticks { display: none; }
 #ns-list .ns-hit { width: 100%; text-align: left; padding: 7px 8px; border-radius: 10px; }
 #ns-list .ns-hit:hover { background: var(--teal-50); }
 #nt-find.on { background: var(--teal); color: #fff; }
+/* Email categories: Appointments stand out; Billing & Payments in sage; a flag on appointment and bounced rows */
+.cat-chip.c-money:not(.on) { background: rgba(163,177,138,.22); border-color: transparent; color: #3d5325; }
+.em-flag { display: inline-block; margin-right: 6px; padding: 0 7px; border-radius: 999px; font: 700 10.5px/18px var(--sans); font-style: normal; vertical-align: 1px; }
+.em-flag.appt { background: var(--teal); color: #fff; }
+.em-flag.bounce { background: var(--terra-soft); color: var(--terra-ink); }
+/* Icon rail (narrow windows): sync status and Sync button fit the rail; the wordmark logo is hidden */
+@media (max-width: 1280px) {
+  .sidebar .side-foot, .sidebar .side-sync-row { min-width: 0; width: 100%; }
+  .sidebar .status-line { width: 100%; min-width: 0; padding: 0; height: 30px; justify-content: center; box-sizing: border-box; }
+  .sidebar .status-line #status-text { display: none; }
+  .sidebar .side-sync { width: 100%; min-width: 0; padding: 0; box-sizing: border-box; }
+  .sidebar .brand-foot { display: none; }
+}
+/* Today on narrower windows: Needs Attention keeps the full height on the left; Visits, Checklist and Notes stack on the right */
+@media (max-width: 1100px) {
+  .board { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) !important; grid-template-rows: minmax(0, 1.25fr) minmax(0, 1.5fr) !important; }
+  .board > .attn { grid-row: 1 / span 2; }
+  .board-col { grid-column: 2 !important; grid-row: 2; grid-template-columns: none !important; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr) !important; gap: 14px; }
+}
+/* Greeting: slower and more deliberate (about 2.8 s) */
+#greet { transition: opacity .6s ease, transform .6s ease; }
+#greet .g-logo { animation: g-in 1s cubic-bezier(.2,1,.3,1) both; }
+#greet h1 { animation: g-in 1.1s .35s cubic-bezier(.2,1,.3,1) both; }
+#greet p { animation: g-in 1s .7s cubic-bezier(.2,1,.3,1) both; }
+#greet .g-line { animation: g-line 1.6s .6s cubic-bezier(.5,0,.2,1) forwards; }
+.todo-sec.flash { animation: sec-flash 1.4s ease; border-radius: 8px; }
+@keyframes sec-flash { 0%, 40% { background: rgba(228,146,110,.22); } 100% { background: transparent; } }
+/* Windows: spring in, shrink out; backdrop fades */
+.overlay:not(.hidden) { animation: veil-in .22s ease both; }
+.overlay.closing { animation: veil-out .19s ease forwards; }
+.overlay.closing .modal { animation: sheet-out .19s cubic-bezier(.4,0,1,1) forwards !important; }
+.modal { animation: sheet-pop .34s cubic-bezier(.2,1.25,.35,1) both; }
+@keyframes sheet-pop { from { opacity: 0; transform: translateY(18px) scale(.94); } to { opacity: 1; transform: none; } }
+@keyframes sheet-out { to { opacity: 0; transform: translateY(8px) scale(.96); } }
+@keyframes veil-in { from { background: rgba(10,40,40,0); backdrop-filter: blur(0); } }
+@keyframes veil-out { to { background: rgba(10,40,40,0); backdrop-filter: blur(0); } }
+@media (prefers-reduced-motion: reduce) { .overlay, .overlay .modal { animation: none !important; } }
+/* Text preview: a phone-style thread with one outgoing bubble (light, readable), not a solid teal block */
+.msg-preview { margin: 6px 0 2px; padding: 16px 16px 10px; border-radius: 18px; background: var(--porcelain, #fcf7f5); border: 1px solid var(--line-2); display: flex; flex-direction: column; align-items: flex-end; }
+.mp-bubble { max-width: 88%; white-space: pre-wrap; word-break: break-word; padding: 11px 15px; border-radius: 20px 20px 6px 20px; background: #e2efed; color: var(--ink); font-size: 14px; line-height: 1.5; box-shadow: 0 1px 0 rgba(0,87,88,.08); border: 1px solid rgba(0,87,88,.10); transform-origin: right bottom; }
+.mp-meta { margin-top: 6px; font-size: 11.5px; color: #6a7b77; }
+.mp-bubble.fly { animation: bubble-fly .42s cubic-bezier(.5,0,.75,0) forwards; }
+@keyframes bubble-fly { 0% { transform: none; } 25% { transform: translateY(4px) scale(.98); } 100% { transform: translate(40px, -160px) scale(.6); opacity: 0; } }
+.modal.sending .send-foot .btn:not(#m-now) { opacity: .5; pointer-events: none; }
+.modal.sending #m-now { pointer-events: none; }
+/* Remind Me If No Reply: one line, label left, menu right */
+.follow-row { display: flex; align-items: center; gap: 10px; margin: 12px 2px 2px; font-size: 13.5px; }
+.follow-row span { white-space: nowrap; }
+.modal .follow-row select { width: auto; min-width: 170px; margin-left: auto; height: 34px; }
+/* Outside sending hours: a calm single line, icon centred with the text */
+.quiet-line { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 12px; background: var(--teal-50); color: var(--teal-deep); font-size: 13px; }
+.quiet-line svg { flex: none; width: 18px; height: 18px; color: var(--teal); margin: 0; }
+.fx-sheet:not(.open) { visibility: hidden; transition: transform .32s cubic-bezier(.2,.8,.2,1), opacity .25s ease, visibility 0s .32s; }
+.fx-sheet.open { visibility: visible; }

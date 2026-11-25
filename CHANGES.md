@@ -176,8 +176,12 @@
 - Splitting main.js into smaller files (no behavior change): saved for a quiet release, so it can't mix with these fixes.
 
 ## Logged for later (not built)
+- From the Windows log (Nov 24, 3.0.0): one schedule read ran 76 s and failed with "RxNT didn't finish loading" (the next one worked). Schedule reads are 14–20 s and Prescriptions 18–40 s; still the slowest parts (see the speed-up item below). The 3.0 sign-in step trace hasn't fired yet because no quiet sign-in has failed on 3.0; check the next log after a restart.
 - Speed up the schedule read (all 7 days in one pass, Availability only for today and tomorrow) and the Prescriptions read further.
-- Week view: side-by-side layout for visits at the same time.
+- **Week view overlaps (checked in the code).** The Week grid draws every visit in its original slot, including cancelled, no-show and moved ones (moved visits appear twice: the old slot and the new one). When a new patient is booked into a freed slot, the blocks stack and one hides the other. Fix:
+  - Leave cancelled and moved visits out of the Week grid (they stay in Changes Today and the Day view).
+  - If two active visits still overlap, mark it "Double-booked" in terracotta instead of stacking (one provider, so it's a real conflict).
+  - A long visit running into the next one (e.g. a 40-min intake at 9:00 with the next patient at 9:20): shorten the first block to end at the next start so both stay readable.
 - **RxNT authenticator codes filled in automatically.** Almas: one-time setup, then no typing. Plan:
   - The user re-sets up RxNT's authenticator and pastes the setup key into Settings → Accounts → RxNT. It's stored encrypted, like the password.
   - When RxNT asks for a code, the app makes the 6-digit code and finishes signing in. The phone authenticator keeps working (same key).
@@ -187,6 +191,33 @@
 - Optionally: a one-time "copy sign-ins from my other computer" step.
 - **Future project:** a browser/iPhone companion served by an always-on computer (e.g. a Mac mini), reached privately (e.g. Tailscale). Start read-only (Today, texts, alerts). Cloud hosting was ruled out for now (about $50–150/month on AWS doing the security ourselves, or $550+/month on a managed medical host, and RxNT sign-ins from a data center).
 - Connections stage 3: "Check connections" self-test, office-hours watchdog, stricter diagnostics.
+
+## 3.0.1 (Windows + Mac): fixes from testing 3.0.0
+- Calls and Texts: the grey "Not a Patient" tag was drawn as a tiny circle, with its text spilling over the call details. It shared a class name with the (i) info icons. The info-icon style now applies only to the icons.
+- Settings → Accounts: the Patient List's status pill was squeezed the same way, so "Working" overlapped "Patient List". Fixed.
+- Settings → Communication and App: a stray closing tag from the 3.0 Alerts redesign left those cards outside the scrolling panel, leaving a big empty gap above them on tall windows. Fixed; every Settings tab now starts right under the header.
+- Settings → App: labels in Title Case (Daily Backup, Backup File, Keep Sent History, Activity Log, Spam Numbers, Data Folder).
+- Narrow windows (icon rail): the sync status pill and the Sync button spilled past the rail, and the logo was cut off. They now fit, and the logo is hidden in the rail.
+- Today on narrower windows: Needs Attention keeps the full height on the left; Today's Visits, Checklist and Notes stack on the right (it used to squeeze Needs Attention to make room for a second row).
+- Opening greeting lasts about 2.8 s instead of 1.3 s, with slower, calmer motion (still skippable with a click or any key).
+- Before You Go: the "to Send or Fix" chip lumped two unrelated things together and clicking it did nothing (it opened Today, where you already are). Now:
+  - It's split into "Ready to Send" (tomorrow's reminders, Google review requests) and "Patients Missing Info" (an upcoming patient with no phone, or a minor without a parent set).
+  - Clicking those chips, or "Schedule Changes", opens that section in Needs Attention, scrolls to it and briefly highlights it.
+  - Needs Attention section names now match the chips ("Ready to Send", "Patients Missing Info").
+- Text preview window redesigned:
+  - The message shows as a light outgoing bubble in a phone-style thread (not a solid teal block), with a character count and how many parts it goes as.
+  - "Remind Me If No Reply" sits on one line with the menu on the right.
+  - The outside-sending-hours note is one line with its icon centred.
+  - "Send now anyway" is now "Send Now".
+- Motion:
+  - Windows spring open and shrink away when closed; the backdrop fades.
+  - Sending one text stays on the preview ("Sending…" on the button), then the bubble flies off before the window closes.
+  - All instant with Reduce Motion.
+- Diagnostics: the layout checker no longer reports the closed Faxes picker (it sits off screen on purpose); the closed picker is now hidden properly.
+- **Email categories simplified** (Almas: the old set was confusing). Now just three:
+  - **Appointments** (first): real booking events only, like a patient who booked, requested, moved or cancelled a visit through ZocDoc, Psychology Today, Headway or another booking service, or a patient emailing to reschedule or cancel. Judged from the sender and subject, so newsletters or emails that merely mention a "schedule" no longer count. These rows also get a teal "Appointment" flag.
+  - **Billing & Payments**: insurance, claims and EOBs, invoices, receipts, payouts, bank statements, payroll and tax.
+  - **Other**: everything else. Bounced emails stay in Other with a terracotta "Not Delivered" flag on the row.
 
 ## 3.0.0 (Windows + Mac): one big release of everything from testing 2.4.1
 **RxNT sign-in and syncing**

@@ -94,8 +94,13 @@ function toast(msg, undo) {
   if (undo) { const b = document.createElement('button'); b.className = 'toast-undo'; b.textContent = 'Undo'; b.onclick = async () => { t.classList.add('hidden'); await undo(); }; t.append(b); }
   t.classList.remove('hidden'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add('hidden'), undo ? 6000 : 3200);
 }
-function openModal(html) { $('modal').innerHTML = html; $('overlay').classList.remove('hidden'); }
-function closeModal() { $('overlay').classList.add('hidden'); }
+// Windows open with a spring and close by shrinking and fading (instant with Reduce Motion).
+function openModal(html) { clearTimeout(closeModal.t); $('overlay').classList.remove('closing'); $('modal').innerHTML = html; $('modal').style.animation = 'none'; void $('modal').offsetWidth; $('modal').style.animation = ''; $('overlay').classList.remove('hidden'); }
+function closeModal() {
+  const o = $('overlay'); if (o.classList.contains('hidden')) return;
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) { o.classList.add('hidden'); return; }
+  o.classList.add('closing'); clearTimeout(closeModal.t); closeModal.t = setTimeout(() => { o.classList.add('hidden'); o.classList.remove('closing'); }, 190);
+}
 const modalLocked = () => !!$('modal').querySelector('.ring.counting, .send-list.live, .em-compose') || !!document.querySelector('.sub-overlay, .ec-prev-wrap');
 $('overlay').addEventListener('mousedown', (e) => { if (e.target === $('overlay') && !modalLocked()) closeModal(); });
 function paintTopbar() { $('topbar').classList.toggle('on', busy.high > 0 || localLoading > 0); }
@@ -345,6 +350,7 @@ function layoutCheck(screenName) {
     for (const el of root.querySelectorAll('*')) {
       if (issues.length > 6) break;
       const r = el.getBoundingClientRect(); if (!r.width || !r.height) continue;
+      if (el.checkVisibility && !el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) continue;   // closed slide-in panels sit off screen on purpose
       if (r.right > innerWidth + 2 && getComputedStyle(el).position !== 'fixed') { issues.push(`off right ${partName(el)}`); continue; }
       // Letter-by-letter wrapping: a narrow element with text taking 3+ lines.
       if (el.children.length === 0 && (el.textContent || '').trim().length > 6 && r.width < 70) { const lh = parseFloat(getComputedStyle(el).lineHeight) || 18; if (r.height > lh * 2.6) issues.push(`squeezed ${partName(el)}`); }

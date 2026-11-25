@@ -193,7 +193,7 @@ function paintTiles(d) {
 }
 
 // Needs attention, in groups (most important first). Each group shows 3, with the rest one click away.
-const SECTIONS = [['rx', 'Prescriptions & RxNT'], ['faxes', 'Faxes'], ['patients', 'Patients Waiting'], ['schedule', 'Schedule Changes'], ['send', 'Ready to Send'], ['callers', 'New Callers'], ['fix', 'Patient info to fix']];
+const SECTIONS = [['rx', 'Prescriptions & RxNT'], ['faxes', 'Faxes'], ['patients', 'Patients Waiting'], ['schedule', 'Schedule Changes'], ['send', 'Ready to Send'], ['callers', 'New Callers'], ['fix', 'Patients Missing Info']];
 const openSecs = new Set();
 let todayLater = [];
 function paintTodo(items) {
@@ -218,7 +218,7 @@ function paintTodo(items) {
   if (!items.length) { L.insertAdjacentHTML('beforeend', stale.length ? `<div class="all-clear partial">${I.check}<b>Nothing waiting from what loaded</b><span>The app keeps retrying the rest.</span></div>` : (stillChecking.length ? `<div class="all-clear partial">${I.check}<b>Nothing waiting so far</b><span>Still checking ${esc(stillChecking.join(', '))}.</span></div>` : '') || `<div class="all-clear ${hadItems ? 'cheer' : ''}">${I.check}<b>All caught up</b><span>Texts, calls, schedule changes and prescriptions that need you show up here.</span></div>`); return; }
   for (const [key, label] of SECTIONS) {
     const list = items.filter((i) => i.sec === key && !(nextShown && i === top)); if (!list.length) continue;   // Next up isn't repeated below
-    const head = document.createElement('div'); head.className = 'todo-sec'; head.innerHTML = `<span>${esc(label)}</span><b>${list.length}</b>`; L.appendChild(head);
+    const head = document.createElement('div'); head.className = 'todo-sec'; head.dataset.sec = key; head.innerHTML = `<span>${esc(label)}</span><b>${list.length}</b>`; L.appendChild(head);
     const shown = openSecs.has(key) ? list : list.slice(0, 3);
     for (const it of shown) {
       const el = document.createElement('div'); el.className = `todo k-${it.kind} u-${it.urg}`;
@@ -354,14 +354,20 @@ function paintClosing(d) {
   // Counts, not a run-on list of names: easy to take in at a glance.
   const n = (f) => red.filter(f).length, parts = [
     [n((i) => i.kind === 'text'), 'text', 'texts'], [n((i) => i.kind === 'call'), 'call', 'calls'], [n((i) => i.sec === 'rx' && i.rxItem), 'prescription', 'prescriptions'],
-    [n((i) => i.sec === 'rx' && !i.rxItem), 'RxNT item', 'RxNT items'], [n((i) => i.sec === 'schedule'), 'schedule change', 'schedule changes'], [n((i) => ['send', 'fix'].includes(i.sec)), 'to send or fix', 'to send or fix'],
+    [n((i) => i.sec === 'rx' && !i.rxItem), 'RxNT item', 'RxNT items'], [n((i) => i.sec === 'schedule'), 'schedule change', 'schedule changes'], [n((i) => i.sec === 'send'), 'ready to send', 'ready to send'], [n((i) => i.sec === 'fix'), 'patient missing info', 'patients missing info'],
   ].filter(([c]) => c).map(([c, one, many]) => `${c} ${c > 1 ? many : one}`);
   // Each item is its own chip (count + label) that opens the right place.
-  const CHIP = { text: ['texts', I.msg], call: ['calls', I.phone || I.msg], prescription: ['rx', I.pill || I.check], 'RxNT item': ['rx', I.pill || I.check], 'schedule change': ['today', I.cal || I.check], 'to send or fix': ['today', I.send || I.check] };
-  const chips = parts.map((p) => { const [, c, ...w] = p.match(/^(\d+) (.*)$/) || [, '', p]; const label = w.join(' '); const key = Object.keys(CHIP).find((k) => label.startsWith(k.replace(/s$/, ''))) || 'to send or fix';
+  const CHIP = { text: ['texts', I.msg], call: ['calls', I.phone || I.msg], prescription: ['rx', I.pill || I.check], 'RxNT item': ['rx', I.pill || I.check], 'schedule change': ['sec:schedule', I.cal || I.check], 'ready to send': ['sec:send', I.send || I.check], 'patient': ['sec:fix', I.edit || I.check] };
+  const chips = parts.map((p) => { const [, c, ...w] = p.match(/^(\d+) (.*)$/) || [, '', p]; const label = w.join(' '); const key = Object.keys(CHIP).find((k) => label.startsWith(k.replace(/s$/, ''))) || 'schedule change';
     return `<button class="bg-chip" data-go="${CHIP[key][0]}">${CHIP[key][1] || ''}<b>${c}</b><span>${esc(label.replace(/\b\w/g, (m) => m.toUpperCase()).replace(/\bTo\b/, 'to').replace(/\bOr\b/, 'or'))}</span></button>`; }).join('');
   el.innerHTML = (red.length ? `<div class="bg-title"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 16.5v.5"/><circle cx="12" cy="12" r="9"/></svg><b>Before You Go</b></div><div class="bg-chips">${chips}</div>` : `<div class="bg-title">${I.check}<b>All Done for Today</b></div><span class="bg-sub">Nothing urgent left.</span>`) + tomorrow;
-  el.querySelectorAll('.bg-chip').forEach((b) => (b.onclick = () => go(b.dataset.go)));
+  el.querySelectorAll('.bg-chip').forEach((b) => (b.onclick = () => {
+    const g = b.dataset.go; if (!g.startsWith('sec:')) return go(g);
+    // A Today section: open it fully in Needs Attention, scroll to it and flash it.
+    const key = g.slice(4); openSecs.add(key); paintTodo(todayItems);
+    const h = $('today-list').querySelector(`.todo-sec[data-sec="${key}"]`); if (!h) return;
+    h.scrollIntoView({ behavior: 'smooth', block: 'start' }); h.classList.remove('flash'); void h.offsetWidth; h.classList.add('flash');
+  }));
 }
 
 $('tv-open').onclick = () => { go('visits'); loadDay(ymd()); };

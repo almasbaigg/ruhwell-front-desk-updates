@@ -74,8 +74,8 @@ function greet() {
   const el = document.createElement('div'); el.id = 'greet'; el.className = reduce ? 'still' : '';
   el.innerHTML = `<div class="g-card"><img src="../assets/logo.svg" alt="" class="g-logo"><h1>${esc(word)}${n ? `,<br><em>${esc(n)}</em>` : ''}</h1><p>${esc(new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }))}</p><i class="g-line"></i></div>`;
   document.body.appendChild(el);
-  const end = () => { if (!el.isConnected || el.classList.contains('out')) return; el.classList.add('out'); setTimeout(() => el.remove(), 420); removeEventListener('keydown', end, true); };
-  el.onclick = end; addEventListener('keydown', end, true); setTimeout(end, reduce ? 700 : 1300);
+  const end = () => { if (!el.isConnected || el.classList.contains('out')) return; el.classList.add('out'); setTimeout(() => el.remove(), 650); removeEventListener('keydown', end, true); };
+  el.onclick = end; addEventListener('keydown', end, true); setTimeout(end, reduce ? 1400 : 2800);
   uiLog && uiLog('greet', { shown: true });
 }
 function showShell() {

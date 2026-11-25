@@ -90,13 +90,13 @@ async function confirmAndSend(items, after) {
   let stop = false;
   openModal(`<div class="send-head"><h2>${single ? esc(items[0].name) : `Send ${items.length} texts`}</h2><button class="icon-btn" id="m-x" aria-label="Cancel">${I.x}</button></div>
     <p class="muted small">${single ? `To ${esc(fmtPhone(items[0].phone))} · ${esc(items[0].templateName)}` : esc([...new Set(items.map((i) => i.templateName))].join(', '))}${sendFrom ? ` · from ${esc(fmtPhone(sendFrom))}` : ''}</p>
-    ${single ? `<div class="bubble">${esc(items[0].message)}</div>` : `<div class="lines">${items.map((i) => `<div class="line"><div><strong>${esc(i.name)}</strong>${i.warn.length ? `<div class="warnline">${esc(i.warn.join(' · '))}</div>` : ''}</div><span class="r">${esc(fmtPhone(i.phone))}</span></div>`).join('')}</div>`}
+    ${single ? `<div class="msg-preview"><div class="mp-bubble" id="m-bubble">${esc(items[0].message)}</div><div class="mp-meta">${items[0].message.length} characters${items[0].message.length > 160 ? ` · sent as ${Math.ceil(items[0].message.length / 153)} parts` : ''}</div></div>` : `<div class="lines">${items.map((i) => `<div class="line"><div><strong>${esc(i.name)}</strong>${i.warn.length ? `<div class="warnline">${esc(i.warn.join(' · '))}</div>` : ''}</div><span class="r">${esc(fmtPhone(i.phone))}</span></div>`).join('')}</div>`}
     ${flagged.length ? `<div class="warnbox">${I.bell}<span>${single ? esc(items[0].warn.join(' · ')) : `Check ${flagged.length === 1 ? 'the flagged patient' : `the ${flagged.length} flagged patients`} first.`}</span></div>` : ''}
-    ${single ? `<label class="follow-row">${I.bell}<span>Remind me if no reply</span><select id="m-follow"><option value="">Off</option><option value="4">In 4 hours</option><option value="t">Tomorrow 9 AM</option><option value="48">In 2 days</option></select></label>` : ''}
-    ${quietNow ? `<div class="warnbox quiet">${I.moon}<span>It's ${esc(fmtTime(new Date()))}, outside sending hours.</span></div>` : ''}
+    ${single ? `<label class="follow-row">${I.bell}<span>Remind Me If No Reply</span><select id="m-follow"><option value="">Off</option><option value="4">In 4 Hours</option><option value="t">Tomorrow 9 AM</option><option value="48">In 2 Days</option></select></label>` : ''}
+    ${quietNow ? `<div class="quiet-line">${I.moon}<span>It's ${esc(fmtTime(new Date()))}, outside sending hours. It can wait until ${esc(fmtWhen(q.next))}.</span></div>` : ''}
     <div class="send-foot"><button class="btn ghost" id="m-cancel">Cancel</button><span style="flex:1"></span>
-      ${quietNow ? `<button class="btn" id="m-now">Send now anyway</button><button class="btn primary" id="m-wait">${I.clock}Send ${esc(fmtWhen(q.next))}</button>`
-        : `<button class="btn" id="m-later">${I.clock}Send Later</button><button class="btn primary" id="m-now">${I.send}${flagged.length ? 'Send anyway' : 'Send'}</button>`}</div>`);
+      ${quietNow ? `<button class="btn" id="m-now">Send Now</button><button class="btn primary" id="m-wait">${I.clock}Send ${esc(fmtWhen(q.next))}</button>`
+        : `<button class="btn" id="m-later">${I.clock}Send Later</button><button class="btn primary" id="m-now">${I.send}${flagged.length ? 'Send Anyway' : 'Send'}</button>`}</div>`);
   const cancel = () => { stop = true; closeModal(); toast('Cancelled. Nothing was sent.'); };
   if ($('m-follow')) $('m-follow').onchange = (e) => { items[0].follow = e.target.value; };
   $('m-x').onclick = $('m-cancel').onclick = cancel;
@@ -111,7 +111,10 @@ async function confirmAndSend(items, after) {
 async function doSend(items, after) {
   if (doSend.busy) return; doSend.busy = true; setTimeout(() => { doSend.busy = false; }, 3000);   // one confirmed send = one operation
   const opId = `op-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-  openModal(`<h2>Sending…</h2><div class="progress"><div id="m-bar"></div></div>
+  // One text from the preview window: stay on it, show "Sending…" on the button, then the message flies off.
+  const inPlace = items.length === 1 && $('m-bubble');
+  if (inPlace) { $('modal').classList.add('sending'); const b = $('m-now'); if (b) b.innerHTML = '<span class="spinner"></span>Sending…'; }
+  else openModal(`<h2>Sending…</h2><div class="progress"><div id="m-bar"></div></div>
     <div class="send-list live">${items.map((i, k) => `<div class="send-item" id="si-${k}"><strong>${esc(i.name)}</strong><span class="muted small">${esc(fmtPhone(i.phone))}</span><span class="st">${k === 0 ? '<span class="spinner"></span>Sending' : 'Waiting'}</span></div>`).join('')}</div>`);
   const results = await window.api.sendBatch(items, opId, { respectQuiet: !doSend.anyway, opId });
   doSend.anyway = false;
@@ -126,7 +129,11 @@ async function doSend(items, after) {
   }
   const ok = results.filter((r) => r.ok).length, out = results.find((r) => r.code === 'SIGNED_OUT'), all = ok === items.length;
   if (out) paintConnections();
-  if (all && items.length === 1) { closeModal(); toast(`Sent to ${results[0].name}`); if (after) after(results); return; }
+  if (all && items.length === 1) {
+    if (inPlace && !matchMedia('(prefers-reduced-motion: reduce)').matches) { $('m-bubble').classList.add('fly'); await new Promise((r) => setTimeout(r, 420)); }
+    $('modal').classList.remove('sending'); closeModal(); toast(`Sent to ${results[0].name}`); if (after) after(results); return;
+  }
+  $('modal').classList.remove('sending');
   openModal(`<div class="center-text">${ring(RING_C * (1 - ok / items.length), all ? I.check.replace('<svg', '<svg style="width:34px;height:34px;transform:none"') : ok, '', all ? '' : 'stroke:var(--amber)')}
     <h2>${all ? `${ok} sent` : `${ok} of ${items.length} sent`}</h2></div>
     <div class="send-list">${results.map((r) => `<div class="send-item"><strong>${esc(r.name)}</strong><span class="st ${r.ok ? 'ok' : 'bad'}">${r.ok ? I.check + 'Sent' : esc(r.error)}</span></div>`).join('')}</div>
